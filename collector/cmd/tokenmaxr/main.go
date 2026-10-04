@@ -279,11 +279,19 @@ func migrate(a *app.App, legacy, cmd string, stderr io.Writer) (int, bool) {
 	if _, err := os.Stat(legacy); err != nil {
 		return 0, false
 	}
-	if err := a.OpenLog(nil); err != nil {
-		return 0, false
-	}
+	// The log opens only after the move: it lives in the new home, and an
+	// open file there cannot be replaced by the old home's log on Windows.
 	res, err := a.Migrate(legacy)
-	a.Log.Close()
+	if res.Moved || err != nil {
+		if a.OpenLog(nil) == nil {
+			if err != nil {
+				a.Log.Printf("migrate: %v", err)
+			} else {
+				a.Log.Printf("migrate: moved %s to %s", legacy, a.Home)
+			}
+			a.Log.Close()
+		}
+	}
 	switch {
 	case err != nil:
 		fmt.Fprintf(stderr, "error: moving the d0m1-collector install to %s: %v\n", buildinfo.Product, err)

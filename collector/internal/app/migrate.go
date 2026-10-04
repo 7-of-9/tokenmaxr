@@ -29,7 +29,7 @@ import (
 
 // legacyUpdateURL is the old channel; a config naming it is reset to the
 // default so updates come from tokenmaxr's releases.
-const legacyUpdateURL = "https://github.com/7-of-9/tokenmaxr/collector/latest.json"
+const legacyUpdateURL = "https://d0m1.com/collector/latest.json"
 
 // migratedMark in the old home says it was moved, and where to.
 const migratedMark = "MOVED-TO-TOKENMAXR.txt"
@@ -37,7 +37,8 @@ const migratedMark = "MOVED-TO-TOKENMAXR.txt"
 // skipOnMigrate are the old home's entries that are not state: locks and
 // mailboxes of the old process, its binaries, and the view dump.
 var skipOnMigrate = map[string]bool{
-	"bin": true, "app.lock": true, "collector.lock": true, "app.view.txt": true, migratedMark: true,
+	"collector.log.migrating": true,
+	"bin":                     true, "app.lock": true, "collector.lock": true, "app.view.txt": true, migratedMark: true,
 }
 
 // MigrateResult says what Migrate did.
@@ -64,17 +65,17 @@ func (a *App) Migrate(legacy string) (MigrateResult, error) {
 	if err != nil || !info.IsDir() {
 		return res, nil
 	}
-	if fileExists(filepath.Join(legacy, migratedMark)) {
-		// Moved before: once nothing runs from it any more, remove it.
-		if !instance.Running(legacy) && !runningFrom(paths.Bin(legacy)) {
-			if err := os.RemoveAll(legacy); err == nil {
+	hasState := fileExists(filepath.Join(legacy, "secrets.json")) || fileExists(filepath.Join(legacy, "config.json"))
+	if moved := fileExists(filepath.Join(legacy, migratedMark)); moved || !hasState {
+		// Moved before (or only leftovers of a move remain): once nothing
+		// runs from it any more, remove it, the mark last so an interrupted
+		// removal is retried.
+		if !instance.Running(legacy) && !runningFrom(paths.Bin(legacy)) && (moved || fileExists(filepath.Join(a.Home, "secrets.json"))) {
+			if removeExcept(legacy, migratedMark) == nil && os.RemoveAll(legacy) == nil {
 				res.Cleaned = true
 				a.Log.Printf("migrate: removed the old home %s", legacy)
 			}
 		}
-		return res, nil
-	}
-	if !fileExists(filepath.Join(legacy, "secrets.json")) && !fileExists(filepath.Join(legacy, "config.json")) {
 		return res, nil
 	}
 	if fileExists(filepath.Join(a.Home, "secrets.json")) {
@@ -167,6 +168,24 @@ func (a *App) Migrate(legacy string) (MigrateResult, error) {
 	return res, nil
 }
 
+// removeExcept removes everything in dir but keep.
+func removeExcept(dir, keep string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, e := range entries {
+		if e.Name() == keep {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
 // copyState copies the old home's state files and folders (the outbox) into
 // dst, leaving out skipOnMigrate.
 func copyState(src, dst string) error {
@@ -189,7 +208,13 @@ func copyState(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(out, 0o700)
 		}
-		return copyFile(p, out)
+		if err := copyFile(p, out); err != nil {
+			if rel == "collector.log" {
+				return nil // history only: never worth failing the move
+			}
+			return err
+		}
+		return nil
 	})
 }
 

@@ -120,3 +120,48 @@ func TestMigrateKeepsAnExistingTokenmaxr(t *testing.T) {
 		t.Fatal("an explicit --home never migrates")
 	}
 }
+
+// The new home's log may already be open (on Windows an open file cannot be
+// replaced): the move still completes.
+func TestMigrateWithTheNewLogOpen(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	legacy := filepath.Join(t.TempDir(), "d0m1-collector")
+	k := make([]byte, 32)
+	store.SaveConfig(legacy, store.Config{Endpoint: "https://d0m1.com"})
+	store.SaveSecrets(legacy, store.Secrets{Token: "tok", MachineID: "m_old", K: base64.StdEncoding.EncodeToString(k)})
+	os.WriteFile(filepath.Join(legacy, "collector.log"), []byte("old log\n"), 0o600)
+	os.MkdirAll(a.Home, 0o700)
+	f, err := os.OpenFile(filepath.Join(a.Home, "collector.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	res, err := a.Migrate(legacy)
+	if err != nil || !res.Moved {
+		t.Fatalf("migrate with an open log: %+v %v", res, err)
+	}
+	if s, _ := store.LoadSecrets(a.Home); s.MachineID != "m_old" {
+		t.Fatal("secrets not moved")
+	}
+}
+
+// The old channel is d0m1.com's manifest: a config naming it updates from
+// tokenmaxr's releases (a literal on purpose: renames must not touch it).
+func TestLegacyUpdateURL(t *testing.T) {
+	if legacyUpdateURL != "https://d0m1.com/collector/latest.json" {
+		t.Fatalf("legacyUpdateURL %q", legacyUpdateURL)
+	}
+}
+
+// Leftovers of a move (no state, no mark) are removed once tokenmaxr runs.
+func TestMigrateRemovesLeftovers(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	localKey(t, a)
+	legacy := filepath.Join(t.TempDir(), "d0m1-collector")
+	os.MkdirAll(filepath.Join(legacy, "bin"), 0o700)
+	os.WriteFile(filepath.Join(legacy, "bin", "d0m1-collector.exe"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(legacy, "collector.lock"), nil, 0o600)
+	if res, err := a.Migrate(legacy); err != nil || !res.Cleaned || fileExists(legacy) {
+		t.Fatalf("leftovers: %+v %v", res, err)
+	}
+}

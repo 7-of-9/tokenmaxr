@@ -419,7 +419,13 @@ func (a *App) checkUpdate(ctx context.Context, cfg *store.Config, st *store.Stat
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	client := &http.Client{Timeout: 2 * time.Minute}
-	m, err := selfupdate.Fetch(ctx, client, cfg.UpdateURL, selfupdate.ReleaseKey())
+	url := cfg.UpdateURL
+	if url == legacyUpdateURL {
+		// A config from before the move to tokenmaxr: its channel is signed
+		// with another key; tokenmaxr's releases are the update channel.
+		url = store.DefaultUpdateURL
+	}
+	m, err := selfupdate.Fetch(ctx, client, url, selfupdate.ReleaseKey())
 	if err != nil {
 		st.LastUpdateErr = err.Error()
 		a.Log.Printf("update: %v", err)

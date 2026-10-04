@@ -136,7 +136,7 @@ func TestDownloadPrefix(t *testing.T) {
 		"https://cdn.d0m1.com/d0m1-media/collector/v0.2.0-x/x",
 		"https://cdn.d0m1.com/d0m1-media/collector/v0.1.0/x",
 		"https://cdn.d0m1.com/d0m1-media/other/x",
-		"https://github.com/7-of-9/tokenmaxr/collector/x",
+		"https://d0m1.com/collector/x",
 		"HTTPS://CDN.D0M1.COM/d0m1-media/collector/v0.2.0/x",
 	}
 	for _, u := range bad {
