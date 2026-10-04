@@ -165,9 +165,11 @@ func TestDesktopApp(t *testing.T) {
 	})
 
 	// The first tick runs at start: green, sent, and the provider line.
+	// "Up to date" also shows while the first scan runs (nothing queued
+	// yet): wait for what the tick produced, the provider line.
 	waitFor(t, "green after the first tick", func() bool {
 		c, tip := ui.state()
-		return c == tray.Green && tip == "tokenmaxr · Up to date"
+		return c == tray.Green && tip == "tokenmaxr · Up to date" && strings.HasPrefix(ui.line("provider:anthropic"), "Claude   ")
 	})
 	if got := ui.line("machine"); got != "● STUDIO" {
 		t.Fatalf("status %q", got)
