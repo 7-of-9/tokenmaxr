@@ -143,7 +143,7 @@ func TestCollectThisHome(t *testing.T) {
 	}
 	got := Collect(env)
 	if len(got) == 0 {
-		t.Fatal("no meters")
+		t.Skip("no AI tool has written a usage meter on this machine (CI)")
 	}
 	for _, s := range got {
 		pct := "—"
