@@ -87,6 +87,8 @@ function render() {
     }
     setInput("gh-every", String(g.publishEveryMinutes));
     setInput("gh-quota", !g.noQuota);
+    setInput("gh-country", !!g.showCountry);
+    setInput("gh-history", !!g.showAccountHistory);
   }
 
   // Server.
@@ -151,7 +153,7 @@ function alertIn(btn, msg) {
   setTimeout(() => p.remove(), 8000);
 }
 
-for (const id of ["gh-new-label", "gh-label", "gh-every", "gh-quota", "sv-input", "sv-join"]) {
+for (const id of ["gh-new-label", "gh-label", "gh-every", "gh-quota", "gh-country", "gh-history", "sv-input", "sv-join"]) {
   $(id).addEventListener("input", () => dirty.add(id));
   $(id).addEventListener("change", () => dirty.add(id));
 }
@@ -163,8 +165,12 @@ $("gh-signin").addEventListener("click", busy($("gh-signin"), async () => {
 $("gh-cancel").addEventListener("click", busy($("gh-cancel"), () => api("github/cancel", {})));
 $("gh-copy").addEventListener("click", () => navigator.clipboard?.writeText($("gh-code").textContent));
 $("gh-save").addEventListener("click", busy($("gh-save"), async () => {
-  await api("github/options", { label: $("gh-label").value, publishEveryMinutes: +$("gh-every").value, noQuota: !$("gh-quota").checked });
-  ["gh-label", "gh-every", "gh-quota"].forEach((id) => dirty.delete(id));
+  await api("github/options", {
+    label: $("gh-label").value, publishEveryMinutes: +$("gh-every").value,
+    noQuota: !$("gh-quota").checked, showCountry: $("gh-country").checked,
+    showAccountHistory: $("gh-history").checked,
+  });
+  ["gh-label", "gh-every", "gh-quota", "gh-country", "gh-history"].forEach((id) => dirty.delete(id));
 }));
 $("gh-publish").addEventListener("click", busy($("gh-publish"), () => api("sync", {})));
 $("gh-signout").addEventListener("click", busy($("gh-signout"), async () => {

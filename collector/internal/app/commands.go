@@ -11,13 +11,11 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/accounts"
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
-	"github.com/7-of-9/tokenmaxr/collector/internal/configfix"
 	"github.com/7-of-9/tokenmaxr/collector/internal/evidence"
 	"github.com/7-of-9/tokenmaxr/collector/internal/lock"
 	"github.com/7-of-9/tokenmaxr/collector/internal/outbox"
@@ -25,7 +23,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/scan"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
-	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
+	"github.com/7-of-9/tokenmaxr/collector/internal/termfmt"
 	"github.com/7-of-9/tokenmaxr/collector/internal/upload"
 	"github.com/7-of-9/tokenmaxr/collector/internal/userpath"
 )
@@ -225,239 +223,128 @@ func ago(t time.Time, now time.Time) string {
 	return fmt.Sprintf("%s (%dd ago)", s, int(d.Hours()/24))
 }
 
-// Status prints collector health from local files only.
-func (a *App) Status() error {
-	now := a.Now()
-	cfg, cerr := store.LoadConfig(a.Home)
-	sec, _ := store.LoadSecrets(a.Home)
-	st, serr := store.LoadState(a.Home)
-	w := a.Out
-	fmt.Fprintf(w, buildinfo.Product+" %s (%s/%s)\n", a.Version, runtime.GOOS, runtime.GOARCH)
-	fmt.Fprintf(w, "state dir     %s\n", a.Home)
-	if cerr != nil {
-		fmt.Fprintf(w, "config        ERROR: %v\n", cerr)
-	}
-	if serr != nil {
-		fmt.Fprintf(w, "state         %v\n", serr)
-	}
-	switch {
-	case cfg.Server() == "":
-		fmt.Fprintf(w, "server        none (GitHub or local only)\n")
-	case sec.Enrolled():
-		fmt.Fprintf(w, "server        %s, enrolled as %s\n", cfg.Server(), sec.MachineID)
-	default:
-		fmt.Fprintf(w, "server        %s, not enrolled: run `"+buildinfo.Product+" install`\n", cfg.Server())
-	}
-	if !sec.HasFleet() {
-		fmt.Fprintf(w, "set up        no: run `"+buildinfo.Product+" install`\n")
-	}
-	a.printGitHubStatus(cfg, sec, st, now)
-	fmt.Fprintf(w, "machine       %s (%s; rename: "+buildinfo.Product+" label NEW_NAME)\n", cfg.MachineLabel, publicNote)
-	fmt.Fprintf(w, "time zone     %s\n", tzLine(machineTZ()))
-	fmt.Fprintf(w, "prompts       %s", onOff(cfg.Prompts))
-	if n := len(cfg.PromptExcludeAccts); n > 0 {
-		fmt.Fprintf(w, " (%d accounts excluded)", n)
-	}
-	fmt.Fprintln(w)
-	running := ""
-	if lock.Held(paths.Lock(a.Home)) {
-		running = "  [a tick is running now]"
-	}
-	fmt.Fprintf(w, "last tick     %s, took %.1fs%s\n", ago(st.LastTick, now), float64(st.LastTickMs)/1000, running)
-	fmt.Fprintf(w, "last upload   %s\n", ago(st.LastUploadOK, now))
-	if history := st.AccountHistory; !history.LastAttempt.IsZero() {
-		if history.LastError != "" {
-			fmt.Fprintf(w, "Codex history %s (checked %s; local collection continues)\n", history.LastError, ago(history.LastAttempt, now))
-		} else {
-			fmt.Fprintf(w, "Codex history %d UTC days, %s account tokens; read %s (automatic every 15m)\n", history.Days, tray.Compact(history.TotalTokens), ago(history.LastSuccess, now))
-		}
-	}
-	if st.Unauthorized {
-		fmt.Fprintf(w, "uploads       PAUSED: token rejected (401) at %s; collection continues. Re-run install with a fresh join code.\n", ago(st.UnauthorizedAt, now))
-	} else if st.LastUploadErr != "" {
-		fmt.Fprintf(w, "upload error  %s\n", st.LastUploadErr)
-	}
-	if st.Backoff.Failures > 0 {
-		fmt.Fprintf(w, "backoff       %d failures, next try %s, batch limit %d\n", st.Backoff.Failures, st.Backoff.Until.Local().Format("15:04:05"), st.Backoff.Limit)
-	}
-	ob := outbox.New(paths.Outbox(a.Home))
-	files, events := ob.Count()
-	fmt.Fprintf(w, "outbox        %d files, %d events\n", files, events)
-	if dfiles, devents := ob.DeadCount(); devents > 0 {
-		fmt.Fprintf(w, "dead-letter   %d files, %d events (outbox/%s: rejected by the server or retried %d times; inspect or delete by hand)\n", dfiles, devents, outbox.DeadDir, upload.MaxAttempts)
-	}
-	fmt.Fprintf(w, "heartbeat     %s (clock skew %dms)\n", ago(st.LastHeartbeat, now), st.ClockSkewMs)
-	fmt.Fprintf(w, "sources\n")
-	names := make([]string, 0, len(st.Sources))
-	for n := range st.Sources {
-		names = append(names, n)
-	}
-	slices.Sort(names)
-	if len(names) == 0 {
-		fmt.Fprintf(w, "  (not scanned yet)\n")
-	}
-	for _, n := range names {
-		s := st.Sources[n]
-		line := fmt.Sprintf("  %-12s %6d files", n, s.Files)
-		if !cfg.SourceEnabled(n) {
-			line += "  disabled"
-		}
-		if s.LastEventTS != nil {
-			line += "  last event " + ago(*s.LastEventTS, now)
-		}
-		if s.Pending > 0 {
-			line += fmt.Sprintf("  [backfill: %d files left]", s.Pending)
-		}
-		if s.LastError != "" {
-			line += "  error: " + s.LastError
-		}
-		fmt.Fprintln(w, line)
-	}
-	fmt.Fprintf(w, "homes         (scan roots of the last tick)\n")
-	if len(st.Homes) == 0 {
-		fmt.Fprintf(w, "  (not scanned yet)\n")
-	}
-	for _, h := range st.Homes {
-		fmt.Fprintln(w, homeLine(h))
-	}
-	for _, d := range st.WSLSkipped {
-		fmt.Fprintln(w, skippedLine(d))
-	}
-	fmt.Fprintf(w, "evidence      %s\n", evidenceLine(st))
-	fmt.Fprintf(w, "checks        (%s)\n", ago(st.LastConfigCheck, now))
-	keys := make([]string, 0, len(st.Checks))
-	for k := range st.Checks {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	for _, k := range keys {
-		fmt.Fprintf(w, "  %-16s %s\n", k, st.Checks[k])
-	}
-	fmt.Fprintf(w, "autostart     %s\n", a.autostartLine(&cfg))
-	fmt.Fprintf(w, "app           %s\n", a.appLine(&cfg))
-	if sac, detail, ok := configfix.SmartAppControl(); ok {
-		fmt.Fprintln(w, strings.TrimSpace("smart app ctl "+sac+" "+detail))
-	}
-	upd := "update check  " + ago(st.LastUpdateCheck, now)
-	if a.Version == "dev" {
-		upd += " (dev build: never self-updates)"
-	}
-	if st.LastUpdateErr != "" {
-		upd += "; error: " + st.LastUpdateErr
-	}
-	fmt.Fprintln(w, upd)
-	return nil
-}
-
 // Doctor is status plus live checks (report-only), account detection,
 // binaries, PATH, scheduler details, endpoint reachability and the log tail.
 func (a *App) Doctor(ctx context.Context) error {
 	if err := a.Status(); err != nil {
 		return err
 	}
-	w := a.Out
+	p := termfmt.New(a.Out)
+	fmt.Fprintln(a.Out) // a blank line after the status report
 	cfg, _ := store.LoadConfig(a.Home)
 	sec, _ := store.LoadSecrets(a.Home)
 	st, _ := store.LoadState(a.Home)
+	ok := func(s string) string {
+		switch s {
+		case "ok", "fixed", "yes":
+			return p.Good(s)
+		case "", "missing", "no":
+			return p.Bad(s)
+		}
+		return p.Warn(s)
+	}
 
-	fmt.Fprintf(w, "\nhomes (live discovery; a stopped WSL distro is never started)\n")
+	p.Section("Homes " + p.Dim("(live discovery; a stopped WSL distro is never started)"))
 	hr := a.homes(&cfg)
 	for _, h := range hr.Homes {
-		fmt.Fprintf(w, "  %-18s %s\n", h.Label(), h.Path)
+		p.Item(h.Label(), 20, h.Path)
 	}
 	for _, d := range hr.Skipped {
-		fmt.Fprintln(w, skippedLine(d))
+		p.Item("wsl:"+d, 20, p.Dim("not running, skipped"))
 	}
 	for _, n := range hr.Notes {
-		fmt.Fprintf(w, "  - %s\n", n)
+		p.Line(p.Dim("· " + n))
 	}
 
-	fmt.Fprintf(w, "live config checks (no changes made)\n")
+	p.Section("Config checks " + p.Dim("(live, nothing changed)"))
 	res := a.runChecksIn(false, hr.Homes)
 	for _, h := range hr.Homes {
 		for _, k := range []string{"claudeRetention", "grokRetention", "codexHistory"} {
 			key := checkKey(k, h)
-			fmt.Fprintf(w, "  %-40s %s\n", key, res.Checks[key])
+			p.Item(key, 34, ok(res.Checks[key]))
 		}
 	}
 	for _, n := range res.Notes {
-		fmt.Fprintf(w, "  - %s\n", n)
+		p.Line(p.Dim("· " + n))
 	}
 
-	fmt.Fprintf(w, "accounts\n")
+	p.Section("Accounts")
 	found := 0
 	for _, h := range hr.Homes {
 		for _, o := range accounts.Probe(h.Path, h.CodexHome(a.CodexHome)) {
 			found++
-			line := "  " + h.Label() + "  " + o.Provider
+			v := fmt.Sprintf("%-10s", o.Provider)
 			if k := sec.Key(); k != nil {
 				acct := accounts.Hash(k, o)
-				line += "  " + acct
+				v += "  " + p.Dim(acct)
 				if cfg.AccountLabels[acct] != "" {
-					line += "  (label set)"
+					v += "  label set"
 				}
 				if cfg.PromptExcluded(acct) {
-					line += "  (prompts excluded)"
+					v += "  " + p.Warn("prompts excluded")
 				}
 			} else {
-				line += "  detected (hash needs enrollment)"
+				v += "  " + p.Dim("detected (hash needs set-up)")
 			}
-			fmt.Fprintln(w, line)
+			p.Item(h.Label(), 20, v)
 		}
 	}
 	if found == 0 {
-		fmt.Fprintf(w, "  none detected (no Claude/Codex/Grok/Cursor/Gemini login found)\n")
+		p.Line(p.Dim("none detected (no Claude/Codex/Grok/Cursor/Gemini login found)"))
 	}
-	fmt.Fprintf(w, "  timeline: %d intervals\n", len(st.Accounts))
+	p.Item("timeline", 20, count(len(st.Accounts), "interval", "intervals"))
 
-	fmt.Fprintf(w, "binaries\n")
+	p.Section("Binaries")
 	variants := []bool{false}
 	if runtime.GOOS == "windows" {
 		variants = []bool{false, true}
 	}
-	bins := []string{}
 	for _, gui := range variants {
-		bins = append(bins, a.binPath(gui))
-	}
-	for _, p := range bins {
+		bp := a.binPath(gui)
 		state := "missing"
-		if fileExists(p) {
+		if fileExists(bp) {
 			state = "ok"
 		}
-		fmt.Fprintf(w, "  %-40s %s\n", p, state)
+		p.Item(paths.ExeName(gui), 20, ok(state)+p.Dim("  "+bp))
 	}
 	onPath := "no"
 	if userpath.Contains(paths.Bin(a.Home)) {
 		onPath = "yes"
 	}
-	fmt.Fprintf(w, "  bin on PATH: %s\n", onPath)
+	p.Item("bin on PATH", 20, ok(onPath))
 
 	if lines := a.autostartSys().Describe(a.autostartOptions(&cfg, false)); len(lines) > 0 {
-		fmt.Fprintf(w, "autostart entries\n")
+		p.Section("Autostart entries")
 		for _, l := range lines {
-			fmt.Fprintf(w, "  %s\n", l)
+			p.Line(l)
 		}
 	}
 
-	fmt.Fprintf(w, "server\n")
+	p.Section("Server")
 	if cfg.Server() == "" {
-		fmt.Fprintf(w, "  none (GitHub or local only)\n")
+		p.Line(p.Dim("none (GitHub or local only)"))
 	} else {
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		req, _ := http.NewRequestWithContext(cctx, http.MethodGet, strings.TrimRight(cfg.Server(), "/")+"/api/usage?days=1", nil)
 		start := time.Now()
 		if resp, err := http.DefaultClient.Do(req); err != nil {
-			fmt.Fprintf(w, "  unreachable: %v\n", err)
+			p.Item(cfg.Server(), 20, p.Bad("unreachable: "+err.Error()))
 		} else {
 			resp.Body.Close()
-			fmt.Fprintf(w, "  GET /api/usage: HTTP %d in %dms\n", resp.StatusCode, time.Since(start).Milliseconds())
+			code := fmt.Sprintf("HTTP %d", resp.StatusCode)
+			if resp.StatusCode == http.StatusOK {
+				code = p.Good(code)
+			} else {
+				code = p.Bad(code)
+			}
+			p.Item(cfg.Server(), 20, "GET /api/usage "+code+p.Dim(fmt.Sprintf(" in %dms", time.Since(start).Milliseconds())))
 		}
 	}
 
-	fmt.Fprintf(w, "log tail (%s)\n", paths.Log(a.Home))
+	p.Section("Log " + p.Dim(paths.Log(a.Home)))
 	for _, l := range tail(paths.Log(a.Home), 8) {
-		fmt.Fprintf(w, "  %s\n", l)
+		p.Line(p.Dim(l))
 	}
 	return nil
 }

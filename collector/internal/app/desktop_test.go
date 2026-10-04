@@ -371,7 +371,7 @@ func TestInstallAutostartModes(t *testing.T) {
 	if err := a.Status(); err != nil {
 		t.Fatal(err)
 	}
-	if s := out.String(); !strings.Contains(s, "autostart     app at login, kept running") || !strings.Contains(s, "app           not running") {
+	if s := out.String(); !strings.Contains(s, "app at login, kept running") || !strings.Contains(s, "not running") {
 		t.Fatalf("status:\n%s", s)
 	}
 
@@ -388,7 +388,7 @@ func TestInstallAutostartModes(t *testing.T) {
 	}
 	out.Reset()
 	a.Status()
-	if !strings.Contains(out.String(), "app           running (app.lock held)") {
+	if !strings.Contains(out.String(), "running (app.lock held)") {
 		t.Fatalf("status:\n%s", out)
 	}
 

@@ -1,0 +1,852 @@
+/* /tokens: GitHub's profile contribution graph and "Contribution activity" feed, in GitHub's dark theme, on one
+   static green sheet inside the site shell. The background is left exactly as every other page shows it. */
+
+/* GitHub's type: the system sans at 14 px for everything on the sheet (the header keeps the site's faces). */
+.agents-gh {
+  --ag-num: var(--gh-font);
+  --ag-display: var(--gh-font);
+
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 14px;
+}
+
+.agents-gh .agents-testdata {
+  font-family: var(--gh-font);
+}
+
+/* The sheet's headings are GitHub's 16 px regular, never the /projects tile heading (agents-base.css). */
+.agents-gh .agents-sheet h2 {
+  margin: 0;
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-shadow: none;
+}
+
+.agents-page .agents-sheet {
+  margin-top: 0;
+  padding: 24px 24px 28px;
+}
+
+.agents-testdata + .agents-sheet {
+  margin-top: 1.25rem;
+}
+
+/* The content column beside the year list, as on a GitHub profile. The column's width never depends on the
+   period shown (Heatmap.tsx always lays out 53 weeks and sizes the cells to this box). */
+.agents-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 24px;
+  align-items: start;
+}
+
+.agents-main {
+  min-width: 0;
+}
+
+/* "45,312,345,678 tokens in the last year" over the graph, the view switch where GitHub puts its settings. */
+.agents-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+/* The rate per day with recorded tokens leads; the smaller second line gives the period totals. */
+.agents-headline-block {
+  min-width: 0;
+  transition: opacity 0.2s ease;
+}
+
+.agents-headline {
+  margin: 0;
+  color: var(--gh-muted);
+  font-family: var(--gh-font);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-headline__figure {
+  color: var(--gh-fg);
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.agents-headline__figure .agents-numeral__punct {
+  margin: 0;
+}
+
+.agents-headline__totals {
+  margin: 2px 0 0;
+  color: var(--gh-muted);
+  font-family: var(--gh-font);
+  font-size: 15px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-headline__total {
+  color: var(--gh-fg);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.agents-headline__days {
+  color: var(--gh-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.agents-headline__separator {
+  color: var(--gh-muted);
+}
+
+/* The view switch, with the estimate toggle before it. */
+.agents-top__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.agents-machine {
+  max-width: 200px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  background: var(--gh-control);
+  color: var(--gh-fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* The page's headline figures: tokens and cost per active day. */
+.agents-figure {
+  color: var(--gh-fg);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-gh .agents-figure .agents-numeral__punct {
+  margin: 0;
+}
+
+/* A headline figure's unit, close beside it. */
+.agents-figure__unit {
+  color: var(--gh-muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+/* The words beside a headline figure: "$11,718 over the last year". */
+.agents-figure-caption {
+  color: var(--gh-muted);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+/* Detail's filters: one row of small segmented controls between the headline and the graph they filter. */
+.agents-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px 0 12px;
+}
+
+.agents-seg--small {
+  height: 28px;
+}
+
+.agents-page .agents-seg--small .agents-seg__btn {
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.agents-gh .agents-check {
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 12px;
+}
+
+.agents-gh .agents-check input {
+  accent-color: var(--gh-green-btn);
+}
+
+/* GitHub's graph box: a 1 px border, 6 px corners, the graph on the page colour. */
+.agents-graph {
+  box-sizing: border-box;
+  padding: 12px 16px 10px;
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  transition: opacity 0.2s ease;
+}
+
+/* The year list: GitHub's filter list, sticky beside the content as the feed scrolls under the fixed header. */
+.agents-years {
+  position: sticky;
+  top: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 36px;
+}
+
+/* Inside a pinned sheet the list sticks to the top of the sheet's own scroll box. */
+.tokens-shell--pinned .agents-years {
+  top: 0;
+}
+
+.agents-page .agents-years__btn {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gh-muted);
+  font-family: var(--gh-font);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background-color 80ms ease,
+    color 80ms ease;
+}
+
+.agents-page .agents-years__btn:hover {
+  background: var(--gh-control-hover);
+  color: var(--gh-fg);
+}
+
+/* GitHub marks the chosen year with its accent; here the accent is GitHub's own button green. */
+.agents-page .agents-years__btn[aria-pressed='true'] {
+  background: var(--gh-green-btn);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Heatmap */
+.agents-heat {
+  position: relative;
+  margin: 0;
+}
+
+/* Pinned weekday labels over a scrolling graph (phones): the weeks fade out beneath them. */
+.agents-heat__weekdays {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.agents-heat__scroll {
+  padding: 2px;
+  margin: -2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  overscroll-behavior-x: contain;
+}
+
+.agents-heat__scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.agents-heat__scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+/* Phones: 53 week columns at GitHub's 10 px are wider than the box, so the graph scrolls (it opens on the newest
+   week) and the older weeks fade out under the pinned weekday labels. */
+.agents-heat__scroll.is-scrollable {
+  overflow: auto hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent var(--heat-left), #000 calc(var(--heat-left) + 14px));
+  mask-image: linear-gradient(90deg, transparent var(--heat-left), #000 calc(var(--heat-left) + 14px));
+}
+
+.agents-heat__svg {
+  display: block;
+  overflow: visible;
+}
+
+/* GitHub's labels: 12 px in the default ink. */
+.agents-heat__label {
+  fill: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 12px;
+}
+
+.agents-heat__day {
+  cursor: pointer;
+  outline: none;
+}
+
+/* GitHub's palette (heat.ts GH_LEVELS) with its faint cell outline. */
+.agents-heat__cell {
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 1;
+}
+
+.agents-heat__cell--l0 {
+  fill: #151b23;
+}
+
+.agents-heat__cell--l1 {
+  fill: #033a16;
+}
+
+.agents-heat__cell--l2 {
+  fill: #196c2e;
+}
+
+.agents-heat__cell--l3 {
+  fill: #2ea043;
+}
+
+.agents-heat__cell--l4 {
+  fill: #56d364;
+}
+
+/* Prompts on a day whose tokens were never recorded: no fill (there is no count to colour), a green outline. */
+.agents-heat__cell--untracked {
+  stroke: rgba(46, 160, 67, 0.4);
+}
+
+/* "Estimate unrecorded": a day mostly inferred from prompts keeps its level but is drawn hollow, so a guess never
+   reads as a count. */
+.agents-heat__cell--inferred {
+  fill-opacity: 0.45;
+  stroke: rgba(86, 211, 100, 0.75);
+}
+
+/* The rest of the current year: the year's shape, quieter than a recorded empty day. */
+.agents-heat__pads {
+  opacity: 0.4;
+}
+
+/* The day under the pointer or keyboard: a light outline, as the tooltip opens. */
+.agents-heat__day:hover .agents-heat__cell,
+.agents-heat__day:focus-visible .agents-heat__cell,
+.agents-heat__day.is-active .agents-heat__cell {
+  stroke: rgba(240, 246, 252, 0.7);
+}
+
+.agents-heat__day:focus-visible .agents-heat__cell {
+  stroke: var(--gh-green-fg);
+  stroke-width: 2;
+}
+
+/* GitHub's footer row: the note on the left ("Learn how we count contributions"), "Less ▪▪▪▪▪ More" on the right. */
+.agents-heat__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  margin-top: 8px;
+  color: var(--gh-muted);
+  font-family: var(--gh-font);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.agents-heat__footnote {
+  min-width: 0;
+}
+
+.agents-heat__scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.agents-heat__swatches {
+  display: inline-flex;
+  gap: 3px;
+  margin: 0 2px;
+}
+
+.agents-heat__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 12px;
+}
+
+.agents-heat__swatches svg,
+.agents-heat__key svg {
+  display: block;
+}
+
+/* Summary figures in the footer's left slot. */
+.agents-subline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-subline > span + span::before {
+  content: '·';
+  margin: 0 0.5em;
+}
+
+.agents-subline__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+
+.agents-subline__live::before {
+  margin-right: 0.15em !important;
+}
+
+.agents-gh .agents-live {
+  background: var(--gh-green-fg);
+  box-shadow: none;
+}
+
+/* ---- Token activity: GitHub's "Contribution activity" ---- */
+.gh-activity {
+  margin-top: 32px;
+}
+
+.agents-gh .gh-activity__title {
+  margin: 0 0 8px;
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.gh-activity__empty {
+  margin: 8px 0 0;
+  color: var(--gh-muted);
+}
+
+/* "September 2026" and a rule to the edge. */
+.gh-activity__divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 16px 0 0;
+  padding: 0 0 0 8px;
+  color: var(--gh-muted);
+  font-family: var(--gh-font);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.gh-activity__divider::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--gh-border);
+}
+
+.gh-activity__divider strong {
+  color: var(--gh-fg);
+  font-weight: 600;
+}
+
+/* Primer's Timeline: a 2 px rail at 16 px, a 32 px round badge on it, the body 8 px after the badge. */
+.gh-timeline {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gh-timeline__item {
+  position: relative;
+  display: flex;
+  margin-left: 16px;
+  padding: 16px 0;
+}
+
+.gh-timeline__item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--gh-border);
+}
+
+.gh-timeline__badge {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  margin-left: -15px;
+  border: 2px solid rgba(5, 15, 10, 1);
+  border-radius: 50%;
+  background: var(--gh-control);
+  color: var(--gh-muted);
+}
+
+.gh-icon {
+  display: block;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gh-timeline__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gh-timeline__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.gh-timeline__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.gh-timeline__title .gh-timeline__context {
+  color: var(--gh-muted);
+}
+
+.gh-timeline__title strong,
+.gh-row__count strong {
+  color: var(--gh-fg);
+  font-weight: 600;
+}
+
+/* The fold toggle: an invisible button until the pointer finds it, like GitHub's. */
+.agents-page .gh-fold {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gh-muted);
+}
+
+.agents-page .gh-fold:hover {
+  background: var(--gh-control-hover);
+  color: var(--gh-fg);
+}
+
+/* Per-model and per-machine rows: name and count on the left, the share bar in a right-hand column. */
+/* The bars stop short of the fold toggle's column, as on GitHub. */
+.gh-rows {
+  margin: 4px 0 0;
+  padding: 0 40px 0 0;
+  list-style: none;
+}
+
+.gh-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 24%);
+  align-items: center;
+  gap: 16px;
+  min-height: 26px;
+}
+
+.gh-row--started {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.gh-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gh-row__main .agents-flag {
+  flex: none;
+}
+
+.gh-row__name {
+  overflow: hidden;
+  color: var(--gh-fg);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gh-row__count {
+  flex: none;
+  color: var(--gh-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gh-bar {
+  display: block;
+  height: 8px;
+}
+
+/* GitHub's bars: the leading row in the emphasis green, the rest in its light green. */
+.gh-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--gh-green-light);
+}
+
+.gh-bar__fill.is-lead {
+  background: var(--gh-green);
+}
+
+/* "Started using": the provider where GitHub puts a repository's language, the date flush right. */
+.gh-row__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--gh-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gh-row__dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.gh-row__date {
+  min-width: 3.5em;
+  color: var(--gh-muted);
+  font-size: 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.agents-page .gh-link-btn {
+  margin-top: 4px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--gh-green-fg);
+  font-family: var(--gh-font);
+  font-size: 12px;
+}
+
+.agents-page .gh-link-btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* "Show more activity": GitHub's full-width outline button. */
+.agents-page .gh-more {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  margin-top: 16px;
+  padding: 0 12px;
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gh-green-fg);
+  font-family: var(--gh-font);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color 80ms ease;
+}
+
+.agents-page .gh-more:hover {
+  background: var(--gh-control-hover);
+}
+
+.agents-gh .agents-empty {
+  color: var(--gh-muted);
+}
+
+.agents-gh .agents-foot {
+  margin-top: 16px;
+  color: var(--gh-muted);
+  font-size: 12px;
+}
+
+.agents-foot {
+  margin-top: 2.5rem;
+  color: var(--ag-muted);
+  font-size: 0.875rem;
+}
+
+.agents-page .agents-foot a {
+  color: var(--gh-muted);
+  text-decoration-color: rgba(145, 152, 161, 0.4);
+}
+
+.agents-page .agents-foot a:hover {
+  color: var(--gh-green-fg);
+  text-decoration-color: currentcolor;
+}
+
+/* Tablets and phones: the year list becomes a row above the graph, and the graph takes the sheet's width. */
+@media (max-width: 1024px) {
+  .agents-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .agents-years {
+    position: static;
+    order: -1;
+    flex-direction: row;
+    margin-top: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .agents-years::-webkit-scrollbar {
+    display: none;
+  }
+
+  .agents-page .agents-years__btn {
+    width: auto;
+    padding: 6px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .agents-page .agents-sheet {
+    padding: 14px 12px 18px;
+  }
+
+  .agents-testdata + .agents-sheet {
+    margin-top: 1rem;
+  }
+
+  .agents-graph {
+    padding: 10px 10px 8px;
+  }
+
+  .agents-page .agents-seg__btn {
+    padding: 0 10px;
+  }
+
+  .agents-controls {
+    gap: 8px;
+  }
+
+  .agents-controls > .agents-seg {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 28px;
+  }
+
+  .agents-page .agents-controls .agents-seg__btn {
+    min-height: 28px;
+  }
+
+  .agents-heat__legend {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .agents-heat__scale {
+    justify-content: flex-end;
+  }
+
+  .agents-heat__key-long {
+    display: none;
+  }
+
+  /* A wrapped summary line would start its second row with a separator: use space instead. */
+  .agents-subline {
+    column-gap: 10px;
+  }
+
+  .agents-subline > span + span::before {
+    display: none;
+  }
+
+  .gh-timeline__title {
+    font-size: 14px;
+  }
+
+  .gh-rows {
+    padding-right: 0;
+  }
+
+  .gh-row {
+    grid-template-columns: minmax(0, 1fr) 64px;
+    gap: 10px;
+  }
+
+  /* Name over count, so long model ids and full counts both fit a 390 px phone. */
+  .gh-row:not(.gh-row--started) .gh-row__main {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding: 3px 0;
+  }
+
+  .gh-row:not(.gh-row--started) .gh-row__count {
+    flex-basis: 100%;
+  }
+
+  .gh-row__main:has(.agents-flag) .gh-row__count {
+    padding-left: 26px;
+  }
+
+  .gh-row--started {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .gh-row--started .gh-row__lang {
+    display: none;
+  }
+}
+
+/* Provider keys in the Detail filters: GitHub's language dots. */
+.agents-gh .agents-seg .agents-key {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}

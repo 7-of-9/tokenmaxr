@@ -2,7 +2,7 @@
   "name": "tokenmaxr-server",
   "version": "1.0.0",
   "private": true,
-  "description": "tokenmaxr server: Azure Static Web Apps managed Functions (Node 22, Functions v4 programming model).",
+  "description": "tokenmaxr server (d0m1.com runs it): Azure Static Web Apps managed Functions (Node 22, Functions v4 programming model).",
   "type": "module",
   "main": "src/functions/*.js",
   "engines": {

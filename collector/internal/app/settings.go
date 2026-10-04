@@ -171,9 +171,11 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Label               string
 			PublishEveryMinutes int
 			NoQuota             bool
+			ShowCountry         bool
+			ShowAccountHistory  bool
 		}
 		if s.decode(w, r, &in) {
-			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.NoQuota))
+			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.NoQuota, in.ShowCountry, in.ShowAccountHistory))
 		}
 	case "api/server":
 		var in struct{ Server, Join string }
@@ -246,6 +248,8 @@ type settingsState struct {
 		Label               string `json:"label,omitempty"`
 		PublishEveryMinutes int    `json:"publishEveryMinutes"`
 		NoQuota             bool   `json:"noQuota"`
+		ShowCountry         bool   `json:"showCountry"`
+		ShowAccountHistory  bool   `json:"showAccountHistory"`
 		LastPublish         string `json:"lastPublish,omitempty"`
 		LastError           string `json:"lastError,omitempty"`
 		PagesURL            string `json:"pagesUrl,omitempty"`
@@ -314,6 +318,7 @@ func (s *Settings) state() (settingsState, error) {
 	if githubEnabled(&cfg, sec) {
 		g.On, g.Repo, g.Login, g.Label = true, cfg.GitHub.Repo, sec.GitHub.Login, cfg.GitHub.Label
 		g.PublishEveryMinutes, g.NoQuota = int(cfg.GitHub.PublishEvery()/time.Minute), cfg.GitHub.NoQuota
+		g.ShowCountry, g.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
 	}
 	if st != nil {
 		g.LastPublish, g.LastError, g.PagesURL = rfc(st.GitHub.LastPublish), st.GitHub.LastError, st.GitHub.PagesURL
@@ -412,9 +417,10 @@ func (s *Settings) cancelLogin() {
 	}
 }
 
-// saveGitHubOptions changes the GitHub label, cadence and quota opt-out. A
-// new label is published with the next publish, which is made due now.
-func (s *Settings) saveGitHubOptions(label string, every int, noQuota bool) error {
+// saveGitHubOptions changes the GitHub label, cadence, quota opt-out and
+// the country and account-history opt-ins. A new label or choice is
+// published with the next publish, which is made due now.
+func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCountry, showAccountHistory bool) error {
 	a := s.a
 	label = strings.TrimSpace(label)
 	if label != "" {
@@ -445,6 +451,10 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota bool) erro
 		cfg.GitHub.PublishEveryMinutes = every
 	}
 	cfg.GitHub.NoQuota = noQuota
+	recountry := showCountry != cfg.GitHub.ShowCountry
+	cfg.GitHub.ShowCountry = showCountry
+	readHistory := showAccountHistory && !cfg.GitHub.ShowAccountHistory
+	cfg.GitHub.ShowAccountHistory = showAccountHistory
 	if err := store.SaveConfig(a.Home, cfg); err != nil {
 		return err
 	}
@@ -454,8 +464,11 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota bool) erro
 	}
 	// Due now; a new label refreshes meta.json even without new data.
 	st.GitHub.LastAttempt = time.Time{}
-	if relabel {
+	if relabel || recountry {
 		st.GitHub.LastPublish = time.Time{}
+	}
+	if readHistory {
+		st.AccountHistory.LastAttempt = time.Time{} // read the totals with that publish
 	}
 	if err := store.SaveState(a.Home, st); err != nil {
 		return err

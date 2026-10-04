@@ -79,6 +79,14 @@ type GitHubConfig struct {
 	PublishEveryMinutes int `json:"publishEveryMinutes,omitempty"`
 	// NoQuota leaves quota meters (plan, % used, reset time) unpublished.
 	NoQuota bool `json:"noQuota,omitempty"`
+	// ShowCountry publishes the country of this machine's time zone (a flag
+	// on the dashboard). Off by default: the repository is public and tied to
+	// its owner. Never the zone itself, only the two-letter country.
+	ShowCountry bool `json:"showCountry,omitempty"`
+	// ShowAccountHistory publishes account-usage.json: Codex's account-wide
+	// daily totals and this machine's tokens per UTC day. Off by default:
+	// next to the local-date rows, UTC days reveal the time zone's offset.
+	ShowAccountHistory bool `json:"showAccountHistory,omitempty"`
 }
 
 // PublishEvery returns the effective publishing interval.
@@ -476,6 +484,12 @@ type GitHubState struct {
 	// files are never committed again.
 	Published map[string]string `json:"published,omitempty"`
 	PagesURL  string            `json:"pagesUrl,omitempty"`
+	// Site is the hash of the dashboard build this collector carries, as of
+	// when it last found the repository's site/ at that build or a newer one
+	// (SiteChecked); a new build or a day later, the repository is checked
+	// again.
+	Site        string    `json:"site,omitempty"`
+	SiteChecked time.Time `json:"siteChecked,omitzero"`
 	// Rebuild: the rollup is being rebuilt from all history with its own
 	// cursors, so nothing is queued for the server again (the main cursors
 	// stay where they are).

@@ -2,12 +2,11 @@ package app
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
 	"github.com/7-of-9/tokenmaxr/collector/internal/instance"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
+	"github.com/7-of-9/tokenmaxr/collector/internal/termfmt"
 )
 
 // cliLoginUI prints the GitHub sign-in steps on the terminal.
@@ -74,27 +73,6 @@ func (a *App) GitHubStatusCLI() error {
 	cfg, _ := store.LoadConfig(a.Home)
 	sec, _ := store.LoadSecrets(a.Home)
 	st, _ := store.LoadState(a.Home)
-	a.printGitHubStatus(cfg, sec, st, a.Now())
+	a.githubRows(termfmt.New(a.Out), cfg, sec, st, a.Now())
 	return nil
-}
-
-func (a *App) printGitHubStatus(cfg store.Config, sec store.Secrets, st *store.State, now time.Time) {
-	w := a.Out
-	if !githubEnabled(&cfg, sec) {
-		fmt.Fprintf(w, "github        off (publish to your own GitHub: "+buildinfo.Product+" github login)\n")
-		return
-	}
-	fmt.Fprintf(w, "github        %s as %q, signed in as %s\n", cfg.GitHub.Repo, cfg.GitHub.Label, sec.GitHub.Login)
-	if st != nil {
-		fmt.Fprintf(w, "  published   %s (every %s)\n", ago(st.GitHub.LastPublish, now), cfg.GitHub.PublishEvery())
-		if st.GitHub.LastError != "" {
-			fmt.Fprintf(w, "  error       %s (%s)\n", st.GitHub.LastError, ago(st.GitHub.LastAttempt, now))
-		}
-		if st.GitHub.PagesURL != "" {
-			fmt.Fprintf(w, "  dashboard   %s\n", st.GitHub.PagesURL)
-		}
-	}
-	if cfg.GitHub.NoQuota {
-		fmt.Fprintf(w, "  quota       not published\n")
-	}
 }

@@ -125,6 +125,10 @@ func machineTZ() *model.TZInfo {
 	return &model.TZInfo{IANA: info.IANA, WindowsID: info.WindowsID, Country: info.Country, Source: info.Source}
 }
 
+// machineCountry is the country of this machine's time zone ("" unknown),
+// published to GitHub only on opt-in (replaced in tests).
+var machineCountry = func() string { return tzinfo.Detect().Country }
+
 // tzLine renders the time zone for status and doctor.
 func tzLine(tz *model.TZInfo) string {
 	s := tz.IANA

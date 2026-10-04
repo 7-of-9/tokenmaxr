@@ -7,6 +7,8 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/accountusage"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/outbox"
+	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
+	"github.com/7-of-9/tokenmaxr/collector/internal/rollup"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 )
 
@@ -18,7 +20,12 @@ const accountUsageRefreshEvery = time.Hour
 // provider snapshot is account-wide and deliberately excluded from the tray's
 // local-machine counters. API reconciliation prevents multiple machines or
 // later recovered transcripts from counting the same tokens again.
-func (a *App) collectAccountUsage(ctx context.Context, cfg *store.Config, key []byte, st *store.State, ob *outbox.Outbox, deadline time.Time, onRead func()) (int, error) {
+//
+// It runs for either destination, on the same schedule: a server (ob) is
+// sent what changed, as before; the GitHub publisher (ru) keeps the newest
+// totals in the rollup, beside the account ledger they are reconciled
+// against on the published dashboard. Either may be nil.
+func (a *App) collectAccountUsage(ctx context.Context, cfg *store.Config, key []byte, st *store.State, ob *outbox.Outbox, ru *rollup.Rollup, deadline time.Time, onRead func()) (int, error) {
 	if a.ReadAccountUsage == nil || !cfg.SourceEnabled(model.SourceCodex) {
 		return 0, nil
 	}
@@ -59,6 +66,43 @@ func (a *App) collectAccountUsage(ctx context.Context, cfg *store.Config, key []
 		a.Log.Printf("account history: %v; local collection continues", err)
 		return 0, nil
 	}
+	queued, err := a.queueAccountUsage(state, ob, rows, now)
+	if err != nil {
+		return 0, err
+	}
+	if ru != nil {
+		// Saved before the state, like the outbox: the next read repeats it.
+		ru.AddAccountUsage(rows)
+		if ru.Dirty() {
+			if err := ru.Save(paths.Rollup(a.Home)); err != nil {
+				return queued, err
+			}
+		}
+	}
+	state.LastSuccess, state.LastError = now, ""
+	state.Days, state.TotalTokens = len(rows), 0
+	for _, row := range rows {
+		state.TotalTokens += row.TotalTokens
+	}
+	st.Checks["codexAccountHistory"] = "ok"
+	if ob != nil {
+		a.Log.Printf("account history: Codex read %d UTC days, %d account tokens; %d daily totals queued", state.Days, state.TotalTokens, queued)
+	} else {
+		a.Log.Printf("account history: Codex read %d UTC days, %d account tokens", state.Days, state.TotalTokens)
+	}
+	if err := store.SaveState(a.Home, st); err != nil {
+		return queued, err
+	}
+	return queued, nil
+}
+
+// queueAccountUsage writes the changed daily totals to the server's outbox
+// (none without a server) and returns how many it queued.
+func (a *App) queueAccountUsage(state *store.AccountHistoryState, ob *outbox.Outbox, rows []model.AccountUsageSnapshot, now time.Time) (int, error) {
+	if ob == nil {
+		// Queued is what the server was sent: without one it stays as it is.
+		return 0, nil
+	}
 	if state.Queued == nil {
 		state.Queued = map[string]int64{}
 	}
@@ -82,18 +126,8 @@ func (a *App) collectAccountUsage(ctx context.Context, cfg *store.Config, key []
 	for _, row := range changed {
 		state.Queued[row.ID] = row.TotalTokens
 	}
-	state.LastSuccess, state.LastError = now, ""
 	if refresh {
 		state.LastRefresh = now
-	}
-	state.Days, state.TotalTokens = len(rows), 0
-	for _, row := range rows {
-		state.TotalTokens += row.TotalTokens
-	}
-	st.Checks["codexAccountHistory"] = "ok"
-	a.Log.Printf("account history: Codex read %d UTC days, %d account tokens; %d daily totals queued", state.Days, state.TotalTokens, len(changed))
-	if err := store.SaveState(a.Home, st); err != nil {
-		return len(changed), err
 	}
 	return len(changed), nil
 }

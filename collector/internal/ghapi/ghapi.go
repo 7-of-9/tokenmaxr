@@ -277,13 +277,23 @@ func (c *Client) InstallationRepos(ctx context.Context, installationID int64) ([
 
 // --- contents ---
 
-// GetFile returns a file's bytes (nil, nil when it does not exist).
+// GetFile returns a file's bytes on the default branch (nil, nil when it
+// does not exist).
 func (c *Client) GetFile(ctx context.Context, repo, path string) ([]byte, error) {
+	return c.GetFileAt(ctx, repo, path, "")
+}
+
+// GetFileAt is GetFile on ref (a branch; "" is the default branch).
+func (c *Client) GetFileAt(ctx context.Context, repo, path, ref string) ([]byte, error) {
 	var r struct {
 		Content  string `json:"content"`
 		Encoding string `json:"encoding"`
 	}
-	err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/contents/"+escapePath(path), nil, &r)
+	q := ""
+	if ref != "" {
+		q = "?ref=" + url.QueryEscape(ref)
+	}
+	err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/contents/"+escapePath(path)+q, nil, &r)
 	if StatusOf(err) == http.StatusNotFound {
 		return nil, nil
 	}
@@ -306,19 +316,56 @@ func escapePath(p string) string {
 
 // --- one commit with several files (Git data API) ---
 
-// File is one path to write in a commit.
+// File is one path to write in a commit, or with Delete to remove (a tree
+// entry with sha null; the path must exist on the branch).
 type File struct {
 	Path    string
 	Content []byte
+	Delete  bool
+}
+
+// TreePaths lists every file (blob) path on ref, recursively. A tree too big
+// for one listing is an error rather than a partial list.
+func (c *Client) TreePaths(ctx context.Context, repo, ref string) ([]string, error) {
+	var t struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+		Truncated bool `json:"truncated"`
+	}
+	if err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/git/trees/"+url.PathEscape(ref)+"?recursive=1", nil, &t); err != nil {
+		return nil, err
+	}
+	if t.Truncated {
+		return nil, errors.New("the repository's file list is too long to read in one request")
+	}
+	var out []string
+	for _, e := range t.Tree {
+		if e.Type == "blob" {
+			out = append(out, e.Path)
+		}
+	}
+	return out, nil
 }
 
 // ErrConflict: the branch moved while committing (another machine published).
 var ErrConflict = errors.New("branch moved during commit")
 
-// Commit writes files on branch in a single commit on top of its head. It
-// returns ErrConflict when another writer moved the branch first; callers
-// retry, which is safe because each machine writes only its own paths.
+// Commit writes (and with File.Delete removes) files on branch in a single
+// commit on top of its head. It returns ErrConflict when another writer moved
+// the branch first; callers retry, which is safe because each machine writes
+// only its own paths.
 func (c *Client) Commit(ctx context.Context, repo, branch, message string, files []File) (string, error) {
+	head, err := c.Head(ctx, repo, branch)
+	if err != nil {
+		return "", err
+	}
+	return c.CommitOn(ctx, repo, branch, head, message, files)
+}
+
+// Head is the commit branch points at.
+func (c *Client) Head(ctx context.Context, repo, branch string) (string, error) {
 	var ref struct {
 		Object struct {
 			SHA string `json:"sha"`
@@ -327,40 +374,60 @@ func (c *Client) Commit(ctx context.Context, repo, branch, message string, files
 	if err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/git/ref/heads/"+url.PathEscape(branch), nil, &ref); err != nil {
 		return "", err
 	}
-	var head struct {
+	return ref.Object.SHA, nil
+}
+
+// TreeOf is the tree of commit sha.
+func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
+	var commit struct {
 		Tree struct {
 			SHA string `json:"sha"`
 		} `json:"tree"`
 	}
-	if err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/git/commits/"+ref.Object.SHA, nil, &head); err != nil {
+	if err := c.do(ctx, http.MethodGet, c.API, "/repos/"+repo+"/git/commits/"+url.PathEscape(sha), nil, &commit); err != nil {
 		return "", err
 	}
-	type entry struct {
-		Path    string `json:"path"`
-		Mode    string `json:"mode"`
-		Type    string `json:"type"`
-		Content string `json:"content"`
+	return commit.Tree.SHA, nil
+}
+
+// CommitOn is Commit on top of commit parent, which must still be the head of
+// branch: when it is not (another writer committed since the caller read
+// parent), nothing lands and it returns ErrConflict. A caller that decided
+// what to write from what parent holds is never applied on top of a newer one.
+func (c *Client) CommitOn(ctx context.Context, repo, branch, parent, message string, files []File) (string, error) {
+	base, err := c.TreeOf(ctx, repo, parent)
+	if err != nil {
+		return "", err
 	}
-	entries := make([]entry, 0, len(files))
+	// A deletion is "sha": null; a write sends its content and no sha.
+	entries := make([]map[string]any, 0, len(files))
 	for _, f := range files {
-		entries = append(entries, entry{Path: f.Path, Mode: "100644", Type: "blob", Content: string(f.Content)})
+		e := map[string]any{"path": f.Path, "mode": "100644", "type": "blob"}
+		if f.Delete {
+			e["sha"] = nil
+		} else {
+			e["content"] = string(f.Content)
+		}
+		entries = append(entries, e)
 	}
 	var tree struct {
 		SHA string `json:"sha"`
 	}
-	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/trees", map[string]any{"base_tree": head.Tree.SHA, "tree": entries}, &tree); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/trees", map[string]any{"base_tree": base, "tree": entries}, &tree); err != nil {
 		return "", err
 	}
-	if tree.SHA == head.Tree.SHA {
-		return ref.Object.SHA, nil // nothing changed
+	if tree.SHA == base {
+		return parent, nil // nothing changed
 	}
 	var commit struct {
 		SHA string `json:"sha"`
 	}
-	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{ref.Object.SHA}}, &commit); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{parent}}, &commit); err != nil {
 		return "", err
 	}
-	err := c.do(ctx, http.MethodPatch, c.API, "/repos/"+repo+"/git/refs/heads/"+url.PathEscape(branch), map[string]any{"sha": commit.SHA, "force": false}, nil)
+	// Not forced: GitHub refuses (422) anything but a fast-forward from the
+	// branch's current head, so a moved branch is a conflict.
+	err = c.do(ctx, http.MethodPatch, c.API, "/repos/"+repo+"/git/refs/heads/"+url.PathEscape(branch), map[string]any{"sha": commit.SHA, "force": false}, nil)
 	if s := StatusOf(err); s == http.StatusUnprocessableEntity || s == http.StatusConflict {
 		return "", ErrConflict
 	}

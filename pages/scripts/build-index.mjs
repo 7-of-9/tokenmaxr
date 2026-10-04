@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 const root = process.argv[2] || ".";
 const dir = join(root, "data", "machines");
-const ok = /^(meta|quota)\.json$|^usage-\d{4}-\d{2}\.json$/;
+const ok = /^(meta|quota|account-usage)\.json$|^usage-\d{4}-\d{2}\.json$/;
 
 let title;
 try {
@@ -22,6 +22,8 @@ const machines = existsSync(dir)
       .filter((m) => m.files.length)
   : [];
 
-const index = { schema: 1, title: typeof title === "string" ? title.slice(0, 120) : undefined, generatedAt: new Date().toISOString(), machines };
+// Schema 2 lists account-usage.json; a schema 1 index (repositories made from the first
+// template) did not, so the dashboard looks for that file itself there.
+const index = { schema: 2, title: typeof title === "string" ? title.slice(0, 120) : undefined, generatedAt: new Date().toISOString(), machines };
 writeFileSync(join(root, "data", "index.json"), JSON.stringify(index, null, 1) + "\n");
 console.log(`index: ${machines.length} machine(s)`);

@@ -112,9 +112,14 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	var ru *rollup.Rollup
 	if githubEnabled(&cfg, sec) {
 		if ru, err = rollup.Load(paths.Rollup(a.Home)); err != nil {
+			// The old file's totals stay as the rebuild's floor: it is the only
+			// record of history whose logs are gone.
 			a.Log.Printf("rollup: %v; rebuilding it from all history", err)
-			ru = rollup.New()
+			ru = rollup.Salvage(paths.Rollup(a.Home))
 			st.GitHub.StartRebuild()
+			if ru.AccountsStale() {
+				st.AccountHistory.LastAttempt = time.Time{} // read the account totals again now
+			}
 		}
 	}
 	// Only a server destination drains the outbox; without one nothing is
@@ -256,12 +261,14 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 
 	// Account totals supplement file history. Read after local scanning so the
 	// desktop's provider summary is available before any provider network wait.
-	// Its own bounded deadline always reserves the normal upload budget.
-	if ob != nil {
-		n, err := a.collectAccountUsage(ctx, &cfg, sec.Key(), st, ob, deadline.Add(-uploadReserve), func() { progress("account-history", upload.Progress{}) })
+	// Its own bounded deadline always reserves the normal upload budget. It
+	// runs for a server (the outbox) and for the GitHub publisher (the rollup)
+	// when the owner opted in to publishing account history.
+	if ob != nil || ru != nil && cfg.GitHub.ShowAccountHistory {
+		n, err := a.collectAccountUsage(ctx, &cfg, sec.Key(), st, ob, ru, deadline.Add(-uploadReserve), func() { progress("account-history", upload.Progress{}) })
 		rep.Queued += n
 		if err != nil {
-			return rep, err // durable outbox failure, not a provider read failure
+			return rep, err // durable outbox or rollup failure, not a provider read failure
 		}
 	}
 
@@ -526,6 +533,15 @@ func (a *App) persist(ob *outbox.Outbox, cfg *store.Config, since *scan.Bound, b
 		}
 		for _, e := range out.Activity {
 			ru.AddActivity(e)
+		}
+		// Prompts per model, whether or not prompts upload: only the
+		// record's id, time, model and account are counted, never its text
+		// (the sources emit none while prompt capture is off). Accounts
+		// excluded from prompts are left out, as the server never gets them.
+		for _, p := range b.Prompts {
+			if !cfg.PromptExcluded(p.Acct) && scan.InRange(since, nil, p.TS, p.TZOffsetMin) {
+				ru.AddPrompt(p)
+			}
 		}
 		if ru.Dirty() {
 			if err := ru.Save(paths.Rollup(a.Home)); err != nil {

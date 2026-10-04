@@ -212,6 +212,51 @@ func TestSettingsGitHubSignIn(t *testing.T) {
 	if stt, _ = store.LoadState(a.Home); !stt.GitHub.LastAttempt.IsZero() || !stt.GitHub.LastPublish.IsZero() {
 		t.Fatal("a new label must publish now, meta included")
 	}
+	// The country is off until switched on; switching it republishes meta.
+	if st, _ = getState(t, base); st.GitHub.ShowCountry || cfg.GitHub.ShowCountry {
+		t.Fatal("the country must be off by default")
+	}
+	stt.GitHub.LastAttempt, stt.GitHub.LastPublish = time.Now(), time.Now()
+	store.SaveState(a.Home, stt)
+	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "noQuota": true, "showCountry": true}); code != 200 {
+		t.Fatalf("country option: %d %v", code, out)
+	}
+	if cfg, _ = store.LoadConfig(a.Home); !cfg.GitHub.ShowCountry {
+		t.Fatal("country option not saved")
+	}
+	if stt, _ = store.LoadState(a.Home); !stt.GitHub.LastPublish.IsZero() {
+		t.Fatal("a changed country choice must republish meta")
+	}
+	if st, _ = getState(t, base); !st.GitHub.ShowCountry {
+		t.Fatal("the page must show the country choice")
+	}
+	// The page's checkbox starts unchecked.
+	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-country">`) {
+		t.Fatal("the country checkbox must exist and be unchecked by default")
+	}
+	// Account history too is off until switched on; switching it on reads
+	// the totals with the publish it makes due.
+	if st, _ = getState(t, base); st.GitHub.ShowAccountHistory || cfg.GitHub.ShowAccountHistory {
+		t.Fatal("account history must be off by default")
+	}
+	stt, _ = store.LoadState(a.Home)
+	stt.GitHub.LastAttempt, stt.AccountHistory.LastAttempt = time.Now(), time.Now()
+	store.SaveState(a.Home, stt)
+	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "noQuota": true, "showCountry": true, "showAccountHistory": true}); code != 200 {
+		t.Fatalf("account history option: %d %v", code, out)
+	}
+	if cfg, _ = store.LoadConfig(a.Home); !cfg.GitHub.ShowAccountHistory || !cfg.GitHub.ShowCountry {
+		t.Fatalf("account history option not saved: %+v", cfg.GitHub)
+	}
+	if stt, _ = store.LoadState(a.Home); !stt.GitHub.LastAttempt.IsZero() || !stt.AccountHistory.LastAttempt.IsZero() {
+		t.Fatal("opting in must publish now, with a fresh read")
+	}
+	if st, _ = getState(t, base); !st.GitHub.ShowAccountHistory {
+		t.Fatal("the page must show the account-history choice")
+	}
+	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-history">`) {
+		t.Fatal("the account-history checkbox must exist and be unchecked by default")
+	}
 
 	// Signing out keeps the fleet key; the page offers sign-in again.
 	if code, _ := postJSON(t, base, "api/github/logout", struct{}{}); code != 200 {
@@ -336,4 +381,14 @@ func TestDesktopOpensSettings(t *testing.T) {
 	if _, err := http.Get(got + "api/state"); err == nil {
 		t.Fatal("the page outlived the app")
 	}
+}
+
+// embeddedSettingsPage is the settings page as the binary serves it.
+func embeddedSettingsPage(t *testing.T) string {
+	t.Helper()
+	b, err := settingsFiles.ReadFile("settings/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

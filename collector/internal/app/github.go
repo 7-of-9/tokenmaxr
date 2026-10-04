@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -189,6 +190,7 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	gh := &store.GitHubConfig{Repo: res.Repo, Branch: g.Repo.DefaultBranch}
 	if cfg.GitHub != nil {
 		gh.Label, gh.PublishEveryMinutes, gh.NoQuota = cfg.GitHub.Label, cfg.GitHub.PublishEveryMinutes, cfg.GitHub.NoQuota
+		gh.ShowCountry, gh.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
 	}
 	if label = strings.TrimSpace(label); label != "" {
 		gh.Label = label
@@ -215,6 +217,7 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	}
 	if res.Rehash {
 		os.Remove(paths.Rollup(a.Home))
+		st.AccountHistory.LastAttempt = time.Time{} // account totals under the new key, before the next publish
 	}
 	if _, err := os.Stat(paths.Rollup(a.Home)); errors.Is(err, os.ErrNotExist) && !res.Rehash && local != nil {
 		// First publish needs the whole history in the rollup: re-read it
@@ -222,6 +225,7 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 		st.GitHub.StartRebuild()
 	}
 	st.GitHub.Published, st.GitHub.LastAttempt, st.GitHub.LastError = nil, time.Time{}, ""
+	st.GitHub.Site, st.GitHub.SiteChecked = "", time.Time{} // maybe another repository: check its dashboard
 	if err := c.EnablePages(ctx, res.Repo); err != nil {
 		ui.Progress("Could not switch GitHub Pages on (" + err.Error() + "): enable it in the repository's Settings → Pages, source \"GitHub Actions\"")
 	}
@@ -270,6 +274,11 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	if !githubEnabled(cfg, sec) || ru == nil || len(ru.Rows()) == 0 {
 		return // nothing read yet (e.g. the first tick only harvests evidence)
 	}
+	if st.GitHub.Rebuild {
+		// Half a rebuild would publish part of the history over the whole
+		// of it: the dashboard keeps the last complete totals until it ends.
+		return
+	}
 	now := a.Now()
 	if !force && !st.GitHub.LastAttempt.IsZero() && now.Sub(st.GitHub.LastAttempt) < cfg.GitHub.PublishEvery() {
 		return
@@ -288,8 +297,21 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		}
 		meters = limits.Dedupe(meters)
 	}
-	m := ghpub.Machine{ID: st.GitHub.MachineID, Label: cfg.GitHub.Label, OS: runtime.GOOS, Collector: a.Version}
-	files := ghpub.Files(m, ru.Rows(), meters, now)
+	m := ghpub.Machine{ID: st.GitHub.MachineID, Label: cfg.GitHub.Label, OS: runtime.GOOS, Collector: a.Version, LastEventAt: ru.LastEvent()}
+	if cfg.GitHub.ShowCountry {
+		// The country alone, never the zone, its Windows id or the offset.
+		m.CC = machineCountry()
+	}
+	var history ghpub.AccountHistory
+	if cfg.GitHub.ShowAccountHistory {
+		history = accountHistory(ru, st)
+	}
+	files := ghpub.Files(m, ru.Rows(), meters, history, now)
+	if p := ghpub.AccountUsagePath(m.ID); !cfg.GitHub.ShowAccountHistory && st.GitHub.Published[p] != "" {
+		// Opted out: the account history this machine published goes too.
+		files = append(files, ghapi.File{Path: p, Delete: true})
+	}
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	c := newGitHubClient(sec.GitHub.Token, a.Version)
@@ -306,7 +328,11 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 			st.GitHub.Published = map[string]string{}
 		}
 		for p, h := range changed {
-			st.GitHub.Published[p] = h
+			if h == "" {
+				delete(st.GitHub.Published, p) // deleted
+			} else {
+				st.GitHub.Published[p] = h
+			}
 		}
 		st.GitHub.LastPublish = now
 		a.Log.Printf("github: published %d file(s) to %s", len(changed), cfg.GitHub.Repo)
@@ -316,6 +342,82 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 			st.GitHub.PagesURL = u
 		}
 	}
+	a.publishSite(parent, c, cfg, st, now, force)
+}
+
+// siteBuild is the dashboard this collector carries (replaced in tests).
+var siteBuild = ghpub.Site
+
+// siteCheckEvery is how often the repository's dashboard version is read
+// again while it is this collector's build (or newer).
+const siteCheckEvery = 24 * time.Hour
+
+// publishSite updates the repository's dashboard (site/) to the build this
+// collector carries when the repository's is older, so a usage repository
+// follows tokenmaxr releases instead of keeping the dashboard its template
+// had. Data and every other path are left alone; a failure is recorded and
+// retried with the next publish.
+func (a *App) publishSite(ctx context.Context, c *ghapi.Client, cfg *store.Config, st *store.State, now time.Time, force bool) {
+	v, files, err := siteBuild()
+	if err != nil {
+		a.Log.Printf("github: dashboard: %v", err)
+		return
+	}
+	if !force && st.GitHub.Site == v.Hash && now.Sub(st.GitHub.SiteChecked) < siteCheckEvery {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	updated, err := ghpub.PublishSite(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), v, files)
+	if err != nil {
+		st.GitHub.LastError = "dashboard update: " + githubErrorText(err)
+		a.Log.Printf("github: %s", st.GitHub.LastError)
+		return
+	}
+	st.GitHub.Site, st.GitHub.SiteChecked = v.Hash, now
+	if updated {
+		a.Log.Printf("github: dashboard updated to the build of %s in %s", v.BuiltAt.UTC().Format(time.RFC3339), cfg.GitHub.Repo)
+	}
+}
+
+// accountHistorySources are the sources whose provider account totals the
+// collector reads (internal/accountusage) and the server accepts.
+var accountHistorySources = []string{model.SourceCodex}
+
+// accountHistory is what account-usage.json publishes: the newest account
+// totals and the account ledger of the account-history sources. The ledger
+// goes out when this machine has totals or a signed-in account (whose reader
+// may be failing here while another machine publishes its totals), so the
+// dashboard can tell that this machine's local tokens are covered; a machine
+// with neither publishes no ledger. Dates whose totals an older rollup filled
+// in (rollup.Unledgered) are listed, as the ledger does not cover them. While
+// a rebuild's account totals are not read again, nothing is published, so the
+// file already in the repository stays as it is.
+func accountHistory(ru *rollup.Rollup, st *store.State) ghpub.AccountHistory {
+	if ru.AccountsStale() {
+		return ghpub.AccountHistory{}
+	}
+	h := ghpub.AccountHistory{Snapshots: ru.AccountUsage()}
+	if len(h.Snapshots) == 0 && st.AccountHistory.Account == "" {
+		return h
+	}
+	sources := slices.Clone(accountHistorySources)
+	for _, s := range h.Snapshots {
+		if !slices.Contains(sources, s.Source) {
+			sources = append(sources, s.Source)
+		}
+	}
+	for _, l := range ru.LedgerRows() {
+		if slices.Contains(sources, l.Source) {
+			h.Ledger = append(h.Ledger, l)
+		}
+	}
+	for _, u := range ru.Unledgered() {
+		if slices.Contains(sources, u.Source) && !slices.Contains(h.Unledgered, u.Date) {
+			h.Unledgered = append(h.Unledgered, u.Date)
+		}
+	}
+	return h
 }
 
 // githubErrorText turns GitHub failures into actionable, credential-free text.
@@ -373,6 +475,7 @@ func (a *App) rebuildRollup(cfg *store.Config, sec store.Secrets, st *store.Stat
 	}
 	if stats.Complete {
 		st.GitHub.Rebuild, st.GitHub.RebuildCursors = false, nil
+		ru.ApplyFloor() // what the logs no longer hold, from the older file
 		ru.Settle(a.Now(), true)
 		a.Log.Printf("github: history re-read for the dashboard")
 	}

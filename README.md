@@ -7,8 +7,16 @@ tokenmaxr is a small background app (a tray icon on Windows, a menu-bar item on
 macOS) that reads the local logs your AI coding tools already write, works out
 how many tokens each day cost per provider and model, and publishes daily totals
 to a repository in **your** GitHub account. GitHub Pages turns that repository
-into a dashboard: a year heatmap, totals, per-model breakdown, per-machine
-status and your plans' weekly quota meters.
+into a dashboard, the same one [d0m1.com/tokens](https://d0m1.com/tokens) runs:
+
+- tokens and prompts per active day, with every period from 30 days to each year;
+- a year heatmap (or a month calendar), including days with prompts but no
+  recorded tokens;
+- a monthly activity feed: models used, models started, prompts without token
+  records;
+- a detail view: providers, total/effective/output tokens, API-equivalent cost
+  per model, tokens over time, per machine;
+- per-machine views, and your plans' weekly quota meters.
 
 Supported tools: **Claude Code**, **OpenAI Codex CLI**, **Grok CLI**, **Cursor**
 and **Gemini CLI**.
@@ -59,13 +67,23 @@ Only what the dashboard shows, and only to your repository:
 | Published | Never published |
 | --- | --- |
 | Daily token totals per provider, tool, model and anonymous account id | Prompts, responses, code, file names or paths |
-| Daily prompt counts | Project or workspace names |
+| Daily prompt counts (per model, and those without token records) | Project or workspace names |
 | Quota meters: % of a plan's limit used, plan name, reset time | Account emails, organisation names, API keys |
-| A machine label you choose, its OS and the tokenmaxr version | Hostname (the label defaults to a random name) |
+| A machine label you choose, its OS, the tokenmaxr version, and when it last saw activity | Hostname (the label defaults to a random name), time zone |
+| Only if you opt in: the machine's country (a flag), Codex account history | |
 
 Account ids are an HMAC of the provider's account id with your fleet key, so
-they cannot be reversed or matched across fleets. The repository is public
-(GitHub Pages needs that on free plans); it holds nothing but the above.
+they cannot be reversed or matched across fleets, and the dashboard shows them
+only as "account 1, 2, …". The repository is public (GitHub Pages needs that on
+free plans); it holds nothing but the above.
+
+Two settings are **off by default** because they say something about where you
+are: *Show this machine's country* (a flag on the dashboard) and *Publish Codex
+account history* (OpenAI's own daily account totals, which recover Codex tokens
+the local logs miss; they are kept per UTC day, so next to your local-day totals
+they reveal your time zone's offset). Turn them on under *Settings…*. Note that
+the repository's commit times, like any git history, show roughly when your
+machines were active.
 
 tokenmaxr reads logs only from the tools listed above, in your user profile.
 It may set Claude Code's `cleanupPeriodDays` and Grok CLI's `cleanup_ttl_days`
@@ -79,7 +97,8 @@ last 30 days), sync status, the GitHub account and repository you publish to,
 and *Settings…*:
 
 - **GitHub**: sign in or out, rename this machine on the dashboard, publish
-  every 10 minutes to once a day (default 30 minutes), turn quota meters off.
+  every 10 minutes to once a day (default 30 minutes), turn quota meters off,
+  opt in to the country flag and Codex account history.
 - **Your own server** (optional): see below.
 
 The app collects every minute, starts at login and updates itself from this
@@ -109,7 +128,7 @@ On Linux there is no tray: add the cron line the installer prints, which runs
 ## Your own server (optional)
 
 tokenmaxr can also send every individual event (and, encrypted, your prompts)
-to a server you run, for a private, finer-grained dashboard. `server/` is that
+to a server you run, for a private, finer-grained dashboard. `api/` is that
 server: Azure Functions with Azure Table Storage, deployable as the managed API
 of an Azure Static Web App, with GitHub sign-in for the owner. Connect a machine
 with `tokenmaxr install --endpoint https://your-server.example` or from the
@@ -122,8 +141,9 @@ comfortable running Azure; the GitHub mode needs none of it.
 | Path | What |
 | --- | --- |
 | `collector/` | The app and CLI (Go). `release.json` is the release identity built into official binaries. |
-| `pages/` | The dashboard template: what your `tokenmaxr-usage` repository is created from (static site, Pages workflow). |
-| `server/` | The optional server (Node 22, Azure Functions v4). |
+| `pages/` | The usage-repository template: the built dashboard (`site/`), the Pages workflow and the index script. `pages/dashboard/` is the dashboard's entry and its GitHub data adapter. |
+| `src/components/agents/` | The dashboard page itself (React), shared with d0m1.com/tokens. |
+| `api/` | The optional server (Node 22, Azure Functions v4). |
 | `install/` | The install scripts published with each release. |
 | `docs/SPEC.md` | Collector and server specification. |
 
@@ -138,6 +158,20 @@ go build -ldflags "$(go run ./cmd/buildflags release.json)" ./cmd/tokenmaxr
 macOS builds need cgo (the menu-bar app); Windows builds also produce
 `tokenmaxrw.exe` with `-ldflags "... -H windowsgui"` (the tray app, no console
 window). `.github/workflows/release.yml` is the exact release recipe.
+
+The dashboard (Node 22):
+
+```sh
+npm ci
+npm run build:pages     # builds pages/site and copies it into the collector (go:embed)
+npm run check:pages     # the build is stamped and both copies match; adapter tests
+npm run test:dashboard  # the page's own tests
+```
+
+Collectors publish the dashboard they carry into your repository's `site/`
+whenever theirs is newer than the one there, so a tokenmaxr update also updates
+every dashboard (never downgrading it). Don't edit `site/` by hand: the next
+update replaces it.
 
 To ship your own builds, write your own `release.json` (update URL, download
 base, your public signing key, your GitHub App) and sign the release manifest

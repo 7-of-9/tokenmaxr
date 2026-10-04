@@ -1,0 +1,29 @@
+{
+  "name": "tokenmaxr-dashboard",
+  "private": true,
+  "description": "Builds the tokenmaxr GitHub Pages dashboard (pages/dashboard) into pages/site and the collector's embedded copy.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:pages": "vite build --config vite.pages.config.ts && node scripts/sync-pages-site.mjs",
+    "check:pages": "node scripts/sync-pages-site.mjs --check && node --test scripts/sync-pages-site.test.mjs && tsc -p pages/dashboard/tsconfig.json && node --experimental-strip-types --no-warnings pages/dashboard/githubSource.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/accountUsage.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/quota.test.ts",
+    "test:dashboard": "node -e \"const fs=require('fs'),cp=require('child_process');for(const f of fs.readdirSync('src/components/agents').filter(f=>f.endsWith('.test.ts')).sort()){cp.execFileSync(process.execPath,['--experimental-strip-types','--no-warnings','src/components/agents/'+f],{stdio:'inherit'})}\""
+  },
+  "dependencies": {
+    "country-flag-icons": "1.6.20",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-router-dom": "7.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.0",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@vitejs/plugin-react": "4.6.0",
+    "esbuild": "0.24.2",
+    "typescript": "5.8.3",
+    "vite": "6.0.0"
+  }
+}

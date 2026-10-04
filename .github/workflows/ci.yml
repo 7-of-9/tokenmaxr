@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: server
+        working-directory: api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,11 +40,18 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  pages:
+  dashboard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node --check pages/site/app.js && node pages/scripts/build-index.mjs pages
+      - run: npm ci
+      # The built site in pages/site is stamped and identical to the collector's embedded copy;
+      # the adapter, account-history and quota tests, the page's own tests and the type check pass.
+      - run: npm run check:pages
+      - run: npm run test:dashboard
+      - run: node pages/scripts/build-index.mjs pages
+      # The dashboard still builds from source.
+      - run: npx vite build --config vite.pages.config.ts --outDir /tmp/site-check --emptyOutDir

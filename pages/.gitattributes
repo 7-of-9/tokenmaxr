@@ -1,0 +1,3 @@
+# site/ is the built dashboard: collectors embed these exact bytes and site/version.json hashes them,
+# so no line-ending conversion on checkout.
+site/** -text

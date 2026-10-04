@@ -92,6 +92,45 @@ func TestCommitWritesFilesInOneCommitAndReportsConflicts(t *testing.T) {
 	}
 }
 
+func TestCommitDeletesFilesAndListsTheTree(t *testing.T) {
+	f := ghapitest.New()
+	c := client(t, f)
+	ctx := context.Background()
+	f.Files["tokenmaxr.json"] = `{"tokenmaxr":1}`
+	f.Files["data/machines/m1/meta.json"] = `{}`
+	f.Files["site/app.js"] = "old"
+	f.Files["site/style.css"] = "old"
+
+	paths, err := c.TreePaths(ctx, "octo/agent-usage", "main")
+	if err != nil || strings.Join(paths, ",") != "data/machines/m1/meta.json,site/app.js,site/style.css,tokenmaxr.json" {
+		t.Fatalf("tree: %v %v", paths, err)
+	}
+	// One commit writes one file and deletes two; everything else stays.
+	if _, err := c.Commit(ctx, "octo/agent-usage", "main", "site", []File{
+		{Path: "site/index.html", Content: []byte("<!doctype html>")},
+		{Path: "site/app.js", Delete: true},
+		{Path: "site/style.css", Delete: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if f.Commits != 1 || len(f.Files) != 3 || f.Files["site/index.html"] != "<!doctype html>" || f.Files["tokenmaxr.json"] == "" || f.Files["data/machines/m1/meta.json"] == "" {
+		t.Fatalf("after commit (%d commits): %v", f.Commits, f.Files)
+	}
+	if _, ok := f.Files["site/app.js"]; ok {
+		t.Fatal("deleted file still there")
+	}
+	// Like GitHub, the fake refuses to delete a path the branch lacks.
+	if _, err := c.Commit(ctx, "octo/agent-usage", "main", "site", []File{{Path: "site/gone.js", Delete: true}}); StatusOf(err) != 422 {
+		t.Fatalf("deleting a missing path must be GitHub's 422: %v", err)
+	}
+	if got, err := c.GetFileAt(ctx, "octo/agent-usage", "site/index.html", "main"); err != nil || string(got) != "<!doctype html>" {
+		t.Fatalf("get at ref: %q %v", got, err)
+	}
+	if f.Reads[len(f.Reads)-1] != "site/index.html@main" {
+		t.Fatalf("reads %v", f.Reads)
+	}
+}
+
 func TestVariablesPagesInstallations(t *testing.T) {
 	f := ghapitest.New()
 	c := client(t, f)

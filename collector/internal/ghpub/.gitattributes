@@ -1,0 +1,3 @@
+# site/ is the built dashboard (scripts/sync-pages-site.mjs) embedded byte for byte; site/version.json
+# hashes these bytes, so no line-ending conversion on checkout.
+site/** -text

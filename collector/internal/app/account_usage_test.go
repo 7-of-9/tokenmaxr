@@ -11,6 +11,8 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/logx"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/outbox"
+	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
+	"github.com/7-of-9/tokenmaxr/collector/internal/rollup"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 )
 
@@ -41,7 +43,7 @@ func TestAccountHistoryDefaultScheduleOutboxAndFailures(t *testing.T) {
 	ob := outbox.New(filepath.Join(home, "outbox"))
 	read := func() int {
 		t.Helper()
-		n, err := a.collectAccountUsage(context.Background(), &cfg, []byte("key"), st, ob, now.Add(time.Minute), nil)
+		n, err := a.collectAccountUsage(context.Background(), &cfg, []byte("key"), st, ob, nil, now.Add(time.Minute), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -119,8 +121,60 @@ func TestAccountHistoryDoesNotAdvanceAfterOutboxFailure(t *testing.T) {
 	}}
 	st := store.NewState()
 	cfg := store.DefaultConfig()
-	_, err := a.collectAccountUsage(context.Background(), &cfg, []byte("key"), st, outbox.New(badDir), now.Add(time.Minute), nil)
+	_, err := a.collectAccountUsage(context.Background(), &cfg, []byte("key"), st, outbox.New(badDir), nil, now.Add(time.Minute), nil)
 	if err == nil || len(st.AccountHistory.Queued) > 0 || !st.AccountHistory.LastSuccess.IsZero() {
 		t.Fatal("cache advanced without durable queue")
+	}
+}
+
+// With a server and GitHub both on, one read feeds both: the outbox gets what
+// changed (as before) and the rollup keeps the newest totals for publishing.
+func TestAccountHistoryFeedsTheOutboxAndTheRollup(t *testing.T) {
+	now := time.Now()
+	home := t.TempDir()
+	codex := filepath.Join(home, ".codex")
+	os.MkdirAll(codex, 0700)
+	os.WriteFile(filepath.Join(codex, "auth.json"), []byte(`{"tokens":{"account_id":"account"}}`), 0600)
+	date := now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	a := &App{Home: home, UserHome: home, CodexHome: codex, Log: logx.Discard(), Now: func() time.Time { return now },
+		ReadAccountUsage: func(context.Context, string, string, []byte, time.Time) ([]model.AccountUsageSnapshot, error) {
+			return []model.AccountUsageSnapshot{{ID: "day", Provider: model.ProviderOpenAI, Source: model.SourceCodex, Acct: "a_1",
+				AcctQ: model.AcctRecorded, Date: date, Timezone: "UTC", TotalTokens: 99, ObservedAt: now}}, nil
+		}}
+	st := store.NewState()
+	cfg := store.DefaultConfig()
+	ob := outbox.New(filepath.Join(home, "outbox"))
+	ru := rollup.New()
+	n, err := a.collectAccountUsage(context.Background(), &cfg, []byte("key"), st, ob, ru, now.Add(time.Minute), nil)
+	if err != nil || n != 1 || st.AccountHistory.Queued["day"] != 99 {
+		t.Fatalf("queued %d (%v), cache %v", n, err, st.AccountHistory.Queued)
+	}
+	if _, pending := ob.Count(); pending != 1 {
+		t.Fatalf("outbox pending %d", pending)
+	}
+	saved, err := rollup.Load(paths.Rollup(home))
+	if err != nil || len(saved.AccountUsage()) != 1 || saved.AccountUsage()[0].TotalTokens != 99 {
+		t.Fatalf("rollup totals %+v (%v)", saved.AccountUsage(), err)
+	}
+}
+
+// Only the account-history sources' ledger is published, and only from a
+// machine with totals or a signed-in account.
+func TestAccountHistoryPublishesTheLedgerOfItsSources(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	ru := rollup.New()
+	ts := now.Add(-48 * time.Hour)
+	ru.AddUsage(model.UsageEvent{ID: "c1", Provider: model.ProviderOpenAI, Source: model.SourceCodex, TS: ts, Acct: "a_1", AcctQ: model.AcctRecorded,
+		Tokens: model.Tokens{In: 10, Out: 5}}, now)
+	ru.AddUsage(model.UsageEvent{ID: "c2", Provider: model.ProviderAnthropic, Source: model.SourceClaudeCode, TS: ts, Acct: "a_2", AcctQ: model.AcctRecorded,
+		Tokens: model.Tokens{In: 7}}, now)
+	st := store.NewState()
+	if h := accountHistory(ru, st); len(h.Snapshots) != 0 || len(h.Ledger) != 0 {
+		t.Fatalf("a machine without Codex account history published %+v", h)
+	}
+	st.AccountHistory.Account = "a_1"
+	h := accountHistory(ru, st)
+	if len(h.Ledger) != 1 || h.Ledger[0].Source != model.SourceCodex || h.Ledger[0].Tokens != 15 || h.Ledger[0].Acct != "a_1" {
+		t.Fatalf("ledger %+v", h.Ledger)
 	}
 }

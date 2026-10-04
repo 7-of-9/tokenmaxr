@@ -10,13 +10,21 @@
 // machines read it.
 //
 // Everything Files produces is public by design: per-machine meta (a public
-// label, never the hostname), daily token and prompt totals per provider,
-// source, model and account hash, and quota meters without emails or org
-// names. No event, prompt, path or project ever leaves the machine this way.
+// label, never the hostname; the country only when the owner opts in), daily
+// token and prompt totals per provider, source, model, account hash and event
+// quality, quota meters without emails or org names, and (only when the owner
+// opts in, as UTC days next to local dates reveal the time zone's offset)
+// account history: provider account totals per UTC day with the local tokens
+// per UTC day they reconcile against. No event, prompt text, path or project
+// ever leaves the machine this way.
+//
+// PublishSite (site.go) keeps the repository's dashboard, site/, at the
+// newest build any of its collectors carries.
 package ghpub
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -26,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -43,8 +52,11 @@ const (
 	MarkerFile = "tokenmaxr.json"
 	// DefaultRepoName is suggested when creating the repository.
 	DefaultRepoName = "tokenmaxr-usage"
-	// Schema is the published file format version.
-	Schema = 1
+	// Schema is the published file format version. Schema 2 added columns
+	// (readers find them by name in "cols", so schema 1 files still read)
+	// and the meta fields cc, firstSeenAt and lastEventAt, and the file
+	// account-usage.json.
+	Schema = 2
 )
 
 // Guide is what Discover found and, when something is missing, the links
@@ -184,10 +196,21 @@ const MeterMaxAge = 7 * 24 * time.Hour
 // Machine is how this machine appears in the repository.
 type Machine struct {
 	ID, Label, OS, Collector string
+	// CC is the ISO 3166-1 alpha-2 country of the machine's time zone, set
+	// only when the owner opted in (GitHubConfig.ShowCountry); anything that
+	// is not two letters is never published.
+	CC string
+	// LastEventAt is the newest usage or activity event (zero: none).
+	LastEventAt time.Time
 }
 
-// UsageCols is the column order of usage-YYYY-MM.json rows.
-var UsageCols = []string{"date", "provider", "source", "model", "acct", "in", "cacheW", "cacheR", "out", "events", "prompts"}
+// UsageCols is the column order of usage-YYYY-MM.json rows. date is the
+// machine-local day; q is "" for exact usage and "e" for estimated (prompt
+// columns sit on q "" rows). Token columns and events sum usage events.
+// prompts and promptsNoUsage (prompts whose tokens were never recorded) sit
+// on rows with model "", modelPrompts on the row of each prompt's model
+// (model "": not known).
+var UsageCols = []string{"date", "provider", "source", "model", "acct", "q", "in", "cacheW", "cacheW1h", "cacheR", "out", "reasoning", "events", "prompts", "promptsNoUsage", "modelPrompts"}
 
 type usageFile struct {
 	Schema  int      `json:"schema"`
@@ -196,6 +219,47 @@ type usageFile struct {
 	Cols    []string `json:"cols"`
 	Rows    [][]any  `json:"rows"`
 }
+
+// LedgerCols is the column order of account-usage.json ledger rows: local
+// tokens (in + cacheW + cacheR + out) per UTC day, provider, source and
+// account ("" when the attribution is not labelled quality), the server's
+// account ledger (api/src/lib/account-usage.js).
+var LedgerCols = []string{"date", "provider", "source", "acct", "tokens"}
+
+// AccountSnapshot is one published provider account total (UTC day).
+type AccountSnapshot struct {
+	Provider    string `json:"provider"`
+	Source      string `json:"source"`
+	Acct        string `json:"acct"`
+	Date        string `json:"date"`
+	TotalTokens int64  `json:"totalTokens"`
+	ObservedAt  string `json:"observedAt"`
+}
+
+type accountUsageFile struct {
+	Schema     int               `json:"schema"`
+	Machine    string            `json:"machine"`
+	Snapshots  []AccountSnapshot `json:"snapshots"`
+	LedgerCols []string          `json:"ledgerCols"`
+	Ledger     [][]any           `json:"ledger"`
+	// Unledgered are local dates whose rows the ledger does not cover.
+	Unledgered []string `json:"unledgered,omitempty"`
+}
+
+// AccountHistory is what account-usage.json carries: the provider account
+// totals this machine read, and its account ledger for those sources. The
+// caller passes only the ledger rows of account-history sources.
+type AccountHistory struct {
+	Snapshots []rollup.AccountTotal
+	Ledger    []rollup.LedgerRow
+	// Unledgered are the local dates whose usage rows of those sources hold
+	// tokens the ledger does not (an older rollup's totals): the dashboard
+	// reconciles nothing against those days.
+	Unledgered []string
+}
+
+// AccountUsagePath is machine id's account-usage.json.
+func AccountUsagePath(id string) string { return MachineDir(id) + "/account-usage.json" }
 
 // Meter is one published quota meter.
 type Meter struct {
@@ -224,6 +288,19 @@ type metaFile struct {
 	OS        string    `json:"os"`
 	Collector string    `json:"collector"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	CC        string    `json:"cc,omitempty"`
+	// FirstSeenAt is the machine-local date of the first data.
+	FirstSeenAt string `json:"firstSeenAt,omitempty"`
+	// LastEventAt is RFC 3339 UTC, to the minute.
+	LastEventAt string `json:"lastEventAt,omitempty"`
+}
+
+// country returns cc when it is an upper-case two-letter code, else "".
+func country(cc string) string {
+	if len(cc) != 2 || cc[0] < 'A' || cc[0] > 'Z' || cc[1] < 'A' || cc[1] > 'Z' {
+		return ""
+	}
+	return cc
 }
 
 // MachineDir is the repository folder for machine id.
@@ -235,9 +312,10 @@ func marshal(v any) []byte {
 }
 
 // Files builds the machine's files: meta.json, one usage-YYYY-MM.json per
-// month with data and quota.json (meters nil: none published). Deterministic
-// for the same input, so unchanged data hashes the same.
-func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, now time.Time) []ghapi.File {
+// month with data, quota.json (meters nil: none published) and
+// account-usage.json (none when history has neither totals nor ledger).
+// Deterministic for the same input, so unchanged data hashes the same.
+func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, history AccountHistory, now time.Time) []ghapi.File {
 	dir := MachineDir(m.ID)
 	byMonth := map[string][][]any{}
 	for _, r := range rows {
@@ -245,7 +323,8 @@ func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, now time.
 			continue
 		}
 		month := r.Date[:7]
-		byMonth[month] = append(byMonth[month], []any{r.Date, r.Provider, r.Source, r.Model, r.Acct, r.In, r.CacheW, r.CacheR, r.Out, r.Events, r.Prompts})
+		byMonth[month] = append(byMonth[month], []any{r.Date, r.Provider, r.Source, r.Model, r.Acct, r.Q,
+			r.In, r.CacheW, r.CacheW1h, r.CacheR, r.Out, r.Reasoning, r.Events, r.Prompts, r.PromptsNoUsage, r.ModelPrompts})
 	}
 	var files []ghapi.File
 	for _, month := range slices.Sorted(maps.Keys(byMonth)) {
@@ -265,8 +344,49 @@ func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, now time.
 		})
 		files = append(files, ghapi.File{Path: dir + "/quota.json", Content: marshal(q)})
 	}
-	files = append(files, ghapi.File{Path: dir + "/meta.json", Content: marshal(metaFile{Schema: Schema, ID: m.ID, Label: m.Label, OS: m.OS, Collector: m.Collector, UpdatedAt: now.UTC().Truncate(time.Second)})})
+	if f, ok := accountUsage(m.ID, history); ok {
+		files = append(files, ghapi.File{Path: AccountUsagePath(m.ID), Content: marshal(f)})
+	}
+	meta := metaFile{Schema: Schema, ID: m.ID, Label: m.Label, OS: m.OS, Collector: m.Collector, UpdatedAt: now.UTC().Truncate(time.Second), CC: country(m.CC)}
+	for _, r := range rows {
+		if len(r.Date) == len("2006-01-02") && (meta.FirstSeenAt == "" || r.Date < meta.FirstSeenAt) {
+			meta.FirstSeenAt = r.Date
+		}
+	}
+	if !m.LastEventAt.IsZero() {
+		// An event stamped ahead of the clock is never "seen" in the future.
+		last := m.LastEventAt
+		if last.After(now) {
+			last = now
+		}
+		meta.LastEventAt = last.UTC().Truncate(time.Minute).Format(time.RFC3339)
+	}
+	files = append(files, ghapi.File{Path: dir + "/meta.json", Content: marshal(meta)})
 	return files
+}
+
+// accountUsage builds account-usage.json, sorted so that it is deterministic;
+// ledger rows without tokens are left out (a missing entry is zero).
+func accountUsage(machine string, h AccountHistory) (accountUsageFile, bool) {
+	f := accountUsageFile{Schema: Schema, Machine: machine, Snapshots: []AccountSnapshot{}, LedgerCols: LedgerCols, Ledger: [][]any{}}
+	for _, s := range h.Snapshots {
+		f.Snapshots = append(f.Snapshots, AccountSnapshot{Provider: s.Provider, Source: s.Source, Acct: s.Acct, Date: s.Date,
+			TotalTokens: s.TotalTokens, ObservedAt: s.ObservedAt.UTC().Truncate(time.Second).Format(time.RFC3339)})
+	}
+	slices.SortFunc(f.Snapshots, func(a, b AccountSnapshot) int {
+		return cmp.Or(strings.Compare(a.Date, b.Date), strings.Compare(a.Source, b.Source), strings.Compare(a.Acct, b.Acct), strings.Compare(a.Provider, b.Provider))
+	})
+	ledger := slices.Clone(h.Ledger)
+	slices.SortFunc(ledger, func(a, b rollup.LedgerRow) int {
+		return cmp.Or(strings.Compare(a.Date, b.Date), strings.Compare(a.Provider, b.Provider), strings.Compare(a.Source, b.Source), strings.Compare(a.Acct, b.Acct))
+	})
+	for _, l := range ledger {
+		if l.Tokens > 0 {
+			f.Ledger = append(f.Ledger, []any{l.Date, l.Provider, l.Source, l.Acct, l.Tokens})
+		}
+	}
+	f.Unledgered = slices.Compact(slices.Sorted(slices.Values(h.Unledgered)))
+	return f, len(f.Snapshots) > 0 || len(f.Ledger) > 0
 }
 
 // Hash is the content hash recorded per published path.
@@ -277,9 +397,10 @@ func Hash(b []byte) string {
 
 // Publish commits the files whose content differs from published (path ->
 // Hash) in one commit, with meta.json, and returns the new hashes of every
-// committed path. When no data file changed, nothing is committed unless
-// refreshMeta (e.g. a daily "last seen"). A branch moved by another machine
-// is retried: each machine writes only its own paths.
+// committed path ("" for a path deleted: a File.Delete is committed only for
+// a path in published). When no data file changed, nothing is committed
+// unless refreshMeta (e.g. a daily "last seen"). A branch moved by another
+// machine is retried: each machine writes only its own paths.
 func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, files []ghapi.File, published map[string]string, refreshMeta bool) (map[string]string, error) {
 	var commit []ghapi.File
 	changed := map[string]string{}
@@ -288,6 +409,13 @@ func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, f
 		f := files[i]
 		if strings.HasSuffix(f.Path, "/meta.json") {
 			meta = &files[i]
+			continue
+		}
+		if f.Delete {
+			if _, ok := published[f.Path]; ok {
+				commit = append(commit, f)
+				changed[f.Path] = ""
+			}
 			continue
 		}
 		if h := Hash(f.Content); published[f.Path] != h {
@@ -307,14 +435,24 @@ func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, f
 		msg += "s"
 	}
 	msg += ")"
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		if _, err = c.Commit(ctx, repo, branch, msg, commit); !errors.Is(err, ghapi.ErrConflict) {
-			break
-		}
+	err := commitRetrying(ctx, c, repo, branch, msg, commit)
+	if ghapi.StatusOf(err) == http.StatusUnprocessableEntity && slices.ContainsFunc(commit, func(f ghapi.File) bool { return f.Delete }) {
+		// GitHub cannot delete a path that is gone already (removed by
+		// hand): commit the rest; the deleted paths count as deleted.
+		err = commitRetrying(ctx, c, repo, branch, msg, slices.DeleteFunc(commit, func(f ghapi.File) bool { return f.Delete }))
 	}
 	if err != nil {
 		return nil, err
 	}
 	return changed, nil
+}
+
+func commitRetrying(ctx context.Context, c *ghapi.Client, repo, branch, msg string, files []ghapi.File) error {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err = c.Commit(ctx, repo, branch, msg, files); !errors.Is(err, ghapi.ErrConflict) {
+			break
+		}
+	}
+	return err
 }

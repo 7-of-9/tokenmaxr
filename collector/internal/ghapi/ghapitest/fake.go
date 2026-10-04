@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -19,14 +21,19 @@ import (
 type Fake struct {
 	mu       sync.Mutex
 	Polls    int
-	PollPlan []string // device poll outcomes in order: pending, slow_down, ok, denied, expired
-	Files    map[string]string
+	PollPlan []string          // device poll outcomes in order: pending, slow_down, ok, denied, expired
+	Files    map[string]string // the branch head's content (tests may seed it)
 	Head     string
 	trees    map[string]map[string]string
 	commits  map[string]string // commit -> tree
+	parents  map[string]string // commit -> parent
 	Vars     map[string]string
 	Pages    bool
 	MoveOnce bool // simulate another machine moving the branch once
+	// Commits counts branch updates; Reads lists the contents paths read
+	// ("path@ref" when read at a ref).
+	Commits int
+	Reads   []string
 	// NoInstall: the user has not installed the App yet.
 	NoInstall bool
 	seq       int
@@ -34,8 +41,20 @@ type Fake struct {
 }
 
 func New() *Fake {
-	f := &Fake{Files: map[string]string{}, trees: map[string]map[string]string{"t0": {}}, commits: map[string]string{"c0": "t0"}, Head: "c0", Vars: map[string]string{}}
+	f := &Fake{Files: map[string]string{}, trees: map[string]map[string]string{"t0": {}}, commits: map[string]string{"c0": "t0"}, parents: map[string]string{}, Head: "c0", Vars: map[string]string{}}
 	return f
+}
+
+// at is the content at ref: Files for the branch or its head (tests seed
+// Files directly), an earlier commit's or tree's own files otherwise.
+func (f *Fake) at(ref string) map[string]string {
+	if c, ok := f.commits[ref]; ok && ref != f.Head {
+		return f.trees[c]
+	}
+	if t, ok := f.trees[ref]; ok && ref != f.commits[f.Head] {
+		return t
+	}
+	return f.Files
 }
 
 func (f *Fake) id(p string) string {
@@ -82,7 +101,12 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		js(200, map[string]any{"repositories": []map[string]any{{"id": 1, "name": "agent-usage", "full_name": "octo/agent-usage", "default_branch": "main", "owner": map[string]any{"login": "octo", "id": 42}}}})
 	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/contents/"):
 		p := strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/contents/")
-		c, ok := f.Files[p]
+		if ref := r.URL.Query().Get("ref"); ref != "" {
+			f.Reads = append(f.Reads, p+"@"+ref)
+		} else {
+			f.Reads = append(f.Reads, p)
+		}
+		c, ok := f.at(r.URL.Query().Get("ref"))[p]
 		if !ok {
 			js(404, map[string]string{"message": "Not Found"})
 			return
@@ -92,22 +116,48 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		js(200, map[string]any{"object": map[string]string{"sha": f.Head}})
 	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/git/commits/"):
 		js(200, map[string]any{"tree": map[string]string{"sha": f.commits[strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/git/commits/")]}})
+	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/git/trees/") && r.Method == http.MethodGet:
+		// The files at that tree or ref, recursively.
+		files := f.at(strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/git/trees/"))
+		var tree []map[string]string
+		for _, p := range slices.Sorted(maps.Keys(files)) {
+			tree = append(tree, map[string]string{"path": p, "type": "blob", "mode": "100644"})
+		}
+		js(200, map[string]any{"sha": f.commits[f.Head], "tree": tree, "truncated": false})
 	case r.URL.Path == "/repos/octo/agent-usage/git/trees":
 		var req struct {
 			BaseTree string `json:"base_tree"`
-			Tree     []struct{ Path, Content string }
+			Tree     []map[string]json.RawMessage
 		}
 		json.Unmarshal(body, &req)
+		// The head's tree holds Files (which tests also seed directly).
+		base := f.trees[req.BaseTree]
+		if req.BaseTree == f.commits[f.Head] {
+			base = f.Files
+		}
 		next := map[string]string{}
-		for k, v := range f.trees[req.BaseTree] {
+		for k, v := range base {
 			next[k] = v
 		}
 		same := true
 		for _, e := range req.Tree {
-			if next[e.Path] != e.Content {
+			var path, content string
+			json.Unmarshal(e["path"], &path)
+			if sha, ok := e["sha"]; ok && string(sha) == "null" {
+				// GitHub cannot delete what the base tree does not have.
+				if _, ok := next[path]; !ok {
+					js(422, map[string]string{"message": "GitRPC::BadObjectState"})
+					return
+				}
+				delete(next, path)
+				same = false
+				continue
+			}
+			json.Unmarshal(e["content"], &content)
+			if old, ok := next[path]; !ok || old != content {
 				same = false
 			}
-			next[e.Path] = e.Content
+			next[path] = content
 		}
 		if same {
 			js(201, map[string]string{"sha": req.BaseTree})
@@ -124,18 +174,27 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal(body, &req)
 		c := f.id("c")
 		f.commits[c] = req.Tree
+		if len(req.Parents) > 0 {
+			f.parents[c] = req.Parents[0]
+		}
 		js(201, map[string]string{"sha": c})
 	case r.URL.Path == "/repos/octo/agent-usage/git/refs/heads/main":
 		var req struct{ SHA string }
 		json.Unmarshal(body, &req)
-		if f.MoveOnce {
+		ff := false // the new commit descends from the head
+		for c := req.SHA; c != "" && !ff; c = f.parents[c] {
+			ff = c == f.Head
+		}
+		if f.MoveOnce || !ff {
 			f.MoveOnce = false
 			js(422, map[string]string{"message": "Update is not a fast forward"})
 			return
 		}
 		f.Head = req.SHA
-		for k, v := range f.trees[f.commits[req.SHA]] {
-			f.Files[k] = v
+		f.Commits++
+		f.Files = maps.Clone(f.trees[f.commits[req.SHA]])
+		if f.Files == nil {
+			f.Files = map[string]string{}
 		}
 		js(200, map[string]any{})
 	case r.URL.Path == "/repos/octo/agent-usage/actions/variables/TOKENMAXR_FLEET_KEY" && r.Method == http.MethodGet:

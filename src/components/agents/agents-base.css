@@ -1,0 +1,913 @@
+/* Shared styles for /tokens, /tokens/prompts and /collector, framed like /projects (TokensShell). Dark-only. */
+.agents-page,
+.agents-tooltip {
+  --ag-panel: rgba(7, 7, 9, 0.9);
+  --ag-line: rgba(255, 255, 255, 0.09);
+  --ag-line-strong: rgba(255, 255, 255, 0.2);
+  --ag-ink: #f2f1ec;
+  --ag-ink-2: #b8b6b0;
+  --ag-muted: #85847f;
+  --ag-accent: #00ff41;
+  --ag-surface: #08080a;
+
+  /* Provider hues, muted so they sit beside GitHub's greens: vermilion, teal, periwinkle, magenta, gold, each
+     about a third of the way to grey (same order of lightness as the validated set they came from, so the
+     pairs stay apart under CVD). They mark providers only; any single series is GitHub green. */
+  --ag-anthropic: #c0704f;
+  --ag-openai: #3a9e99;
+  --ag-xai: #7c86c9;
+  --ag-cursor: #9a5d8a;
+  --ag-google: #c4a24a;
+
+  /* GitHub's dark theme (Primer), as github.com draws it today: ink, borders, controls and the success greens. */
+  --gh-font: -apple-system, blinkmacsystemfont, 'Segoe UI', 'Noto Sans', helvetica, arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --gh-mono: ui-monospace, sfmono-regular, 'SF Mono', menlo, consolas, 'Liberation Mono', monospace;
+  --gh-fg: #f0f6fc;
+  --gh-muted: #9198a1;
+  --gh-border: #3d444d;
+  --gh-subtle: #151b23;
+  --gh-control: #212830;
+  --gh-control-hover: #262c36;
+  --gh-control-active: #2a313c;
+  --gh-green: #2ea043;
+  --gh-green-fg: #3fb950;
+  --gh-green-btn: #238636;
+  --gh-green-light: #9be9a8;
+  /* The site's faces: Space Mono for text and figures (the /projects tile comments, the home menu's "// …"),
+     Courier Prime for titles and the hero numeral (tile names, the header), the cursive for captions. */
+  --ag-num: var(--mono-font-2, 'SpaceMono'), 'SpaceMono', ui-monospace, monospace;
+  --ag-display: var(--mono-font-1, 'CourierPrime'), 'Courier New', monospace;
+  --ag-script: var(--cursive-font, 'Pacifico'), cursive;
+  --ag-title: #33cc66;
+  /* Courier Prime ships one weight: a tight halo gives titles the header's weight, a wide one its glow. */
+  --ag-title-glow: 0 0 1px rgba(0, 255, 65, 0.9), 0 0 2px rgba(0, 255, 65, 0.5), 0 0 12px rgba(0, 255, 65, 0.4), 0 0 24px rgba(0, 255, 65, 0.2);
+  --ag-focus: 0 0 0 2px #000, 0 0 0 4px var(--ag-accent);
+}
+
+/* The /projects frame: GalleryPage.css's .gallery-page is the scroll box under its fixed header. */
+.tokens-shell {
+  touch-action: manipulation;
+}
+
+.tokens-auth,
+.tokens-private-pages {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.75rem;
+  color: #9198a1;
+  font-family: var(--mono-font-2, monospace);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.tokens-auth {
+  margin-left: 1rem;
+}
+
+.tokens-private-pages__separator {
+  color: rgba(255, 255, 255, 0.7);
+  font-family: var(--mono-font-1);
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.tokens-private-pages--aside {
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid rgba(0, 255, 65, 0.25);
+}
+
+.tokens-auth a,
+.tokens-auth button,
+.tokens-private-pages a {
+  padding: 0.4rem 0.65rem;
+  border: 1px solid rgba(0, 255, 65, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  color: #a5e7b5;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.tokens-auth a:hover,
+.tokens-auth a:focus-visible,
+.tokens-auth button:hover,
+.tokens-auth button:focus-visible,
+.tokens-private-pages a:hover,
+.tokens-private-pages a:focus-visible,
+.tokens-private-pages a[aria-current="page"] {
+  border-color: #00ff41;
+  color: #00ff41;
+}
+
+.tokens-private-pages a[aria-current="page"] {
+  background: rgba(0, 255, 65, 0.1);
+}
+
+.agents-auth-gate {
+  flex: none;
+  width: 100%;
+  max-width: 36rem;
+}
+
+.agents-page .agents-auth-gate h2 {
+  margin-bottom: 0.5rem;
+}
+
+.agents-auth-gate .agents-muted + .agents-muted {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  /* Give navigation its own row instead of squeezing the breadcrumb out of a phone header. */
+  .tokens-shell:has(.tokens-header--auth) {
+    --header-height: 88px;
+  }
+
+  .tokens-shell .tokens-header--auth {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-rows: 34px 38px;
+    align-content: center;
+    gap: 2px 8px;
+    padding: 6px 12px;
+  }
+
+  .tokens-header--auth .tokens-auth {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+    gap: 0.4rem;
+    max-width: 100%;
+    margin-left: 0;
+    font-size: 0.75rem;
+  }
+
+  .tokens-header--auth .tokens-auth a,
+  .tokens-header--auth .tokens-auth button,
+  .tokens-header--auth .tokens-private-pages a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .tokens-header--auth .gallery-title {
+    display: grid;
+    grid-column: 2;
+    grid-row: 1 / -1;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: 34px 38px;
+    gap: 2px 8px;
+    max-width: none;
+  }
+
+  .tokens-header--auth .gallery-d0m1 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .tokens-header--auth .gallery-path-display {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .tokens-header--auth .tokens-private-pages {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    font-size: 0.75rem;
+  }
+
+  .tokens-header--auth .gallery-d0m1,
+  .tokens-header--auth .gallery-path-display,
+  .tokens-header--auth .tokens-private-pages__separator {
+    font-size: 1.15rem;
+  }
+
+  .tokens-header--auth .path-component {
+    padding-inline: 0.15rem;
+  }
+
+  .tokens-header--auth .back-button {
+    grid-column: 1;
+    grid-row: 1;
+    width: 32px;
+    min-width: 0;
+    height: 34px;
+    margin-right: 0;
+    padding: 0;
+    font-size: 2rem;
+  }
+}
+
+/* A pinned page (/tokens, /agents) never scrolls: the sheet fills the space between the header and the footer
+   and stays put, and only the sheet's inside scrolls, clipped to its rounded border. */
+.tokens-shell--pinned {
+  overflow: hidden;
+}
+
+.tokens-shell--pinned .agents-page {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.tokens-shell--pinned .agents-page .agents-sheet {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.agents-sheet__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 24px 24px 28px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.agents-sheet__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tokens-shell--pinned /* Country flags (Flag.tsx): used by the Overview feed and Detail, so sized here rather than in either. */
+.agents-flag {
+  display: block;
+  flex: none;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+  object-fit: cover;
+}
+
+.agents-flag--loading {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.agents-flag--none {
+  box-shadow: none;
+  fill: none;
+  stroke: var(--gh-muted);
+  stroke-width: 1;
+}
+
+.agents-foot {
+  flex: none;
+  margin-top: 0.75rem;
+}
+
+.tokens-shell .path-component.last {
+  cursor: default;
+}
+
+.tokens-shell .path-component.last:hover {
+  background: none;
+  color: inherit;
+  text-shadow: none;
+}
+
+/* A centred content column under the full-width header, as on a GitHub profile: at 1280 px, less the gutters and
+   the sheet's padding, the graph column comes to GitHub's ~1012 px with the year list beside it. Room below for
+   the fixed footer. */
+.agents-page {
+  position: relative;
+  z-index: 1;
+  flex: 1 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1280px;
+  margin-inline: auto;
+  padding: 1rem 2rem 6rem;
+  color: var(--ag-ink);
+  font-family: var(--ag-num);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.agents-page a {
+  color: var(--ag-accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(0, 255, 65, 0.35);
+  text-underline-offset: 3px;
+}
+
+.agents-page a:hover {
+  text-decoration-color: var(--ag-accent);
+}
+
+.agents-page a:focus-visible,
+.agents-page button:focus-visible,
+.agents-page select:focus-visible,
+.agents-page input:focus-visible,
+.agents-page summary:focus-visible {
+  box-shadow: var(--ag-focus);
+  border-radius: 4px;
+}
+
+.agents-head {
+  max-width: 52rem;
+  margin: 0.5rem 0 2rem;
+}
+
+.agents-crumb {
+  margin: 0 0 0.75rem;
+  color: var(--ag-muted);
+  font-family: var(--ag-num);
+  font-size: 0.85rem;
+}
+
+.agents-page .agents-crumb a {
+  color: var(--ag-ink-2);
+  text-decoration: none;
+}
+
+.agents-page .agents-crumb a:hover {
+  color: var(--ag-accent);
+}
+
+/* A page title at a /projects tile name's size and glow. */
+.agents-title {
+  margin: 0 0 0.5rem;
+  color: var(--ag-title);
+  font-family: var(--ag-display);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-shadow: var(--ag-title-glow);
+}
+
+.agents-lede {
+  margin: 0;
+  color: var(--ag-ink-2);
+  font-size: 1rem;
+}
+
+/* Panels keep the /projects tiles' static look (GalleryItem.css .gallery-item.directory-item): a near-black green
+   pane, the grey-and-green double border and deep shadows. They are not clickable, so they have no hover state:
+   only real controls (links, buttons, heatmap days) respond to the pointer. */
+.agents-panel,
+.agents-tile {
+  box-sizing: border-box;
+  margin-top: 2.5rem;
+  padding: 1.5rem 1.75rem;
+  background: rgba(5, 15, 10, 0.95);
+  border: 2px solid rgba(60, 60, 60, 0.8);
+  border-radius: 20px;
+  box-shadow:
+    0 15px 35px rgba(0, 0, 0, 0.5),
+    0 8px 15px rgba(0, 0, 0, 0.4),
+    0 3px 8px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(0, 255, 65, 0.3),
+    0 0 20px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(20px);
+}
+
+/* A tile's heading is a tile name: Courier Prime in the tile green. */
+.agents-panel h2,
+.agents-tile h2 {
+  margin: 0;
+  color: var(--ag-title);
+  font-family: var(--ag-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-shadow: var(--ag-title-glow);
+}
+
+.agents-muted {
+  margin: 0;
+  color: var(--ag-muted);
+  font-size: 0.9rem;
+}
+
+.agents-empty {
+  margin: 1.5rem 0;
+  color: var(--ag-ink-2);
+}
+
+.agents-page .agents-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--ag-line-strong);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ag-ink);
+  font-family: var(--ag-num);
+  font-size: 0.9rem;
+  line-height: 1.3;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.agents-page .agents-btn:hover {
+  border-color: var(--ag-accent);
+  background: rgba(0, 255, 65, 0.06);
+  color: var(--ag-ink);
+}
+
+.agents-page .agents-btn--primary {
+  border-color: rgba(0, 255, 65, 0.6);
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--ag-accent);
+}
+
+.agents-page .agents-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.agents-page .agents-input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--ag-line);
+  border-radius: 8px;
+  background: #0d0d0d;
+  color: var(--ag-ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+/* Segmented control (views, providers, metric, granularity): Primer's SegmentedControl. A grey track; the chosen
+   option is a raised knob with a border and semibold ink; the others lighten on hover. */
+.agents-seg {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  background: var(--gh-control-hover);
+}
+
+.agents-page .agents-seg__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gh-fg);
+  font-family: var(--gh-font);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  white-space: nowrap;
+  transition: background-color 80ms ease;
+}
+
+.agents-page .agents-seg__btn:hover {
+  background: var(--gh-control-active);
+}
+
+.agents-page .agents-seg__btn[aria-pressed='true'] {
+  border-color: var(--gh-border);
+  background: #0d1117;
+  font-weight: 600;
+}
+
+.agents-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.25rem;
+  color: var(--ag-ink-2);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.agents-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--ag-accent);
+  cursor: pointer;
+}
+
+.agents-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(236, 131, 90, 0.5);
+  border-radius: 10px;
+  background: rgba(236, 131, 90, 0.08);
+}
+
+.agents-notice p {
+  margin: 0;
+  color: var(--ag-ink);
+}
+
+/* Provider identity keys: a short stroke in tooltips and filters, a block in legends. */
+.agents-key {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ag-muted);
+}
+
+.agents-key--anthropic,
+.agents-swatch--anthropic {
+  background: var(--ag-anthropic);
+}
+
+.agents-key--openai,
+.agents-swatch--openai {
+  background: var(--ag-openai);
+}
+
+.agents-key--xai,
+.agents-swatch--xai {
+  background: var(--ag-xai);
+}
+
+.agents-key--cursor,
+.agents-swatch--cursor {
+  background: var(--ag-cursor);
+}
+
+.agents-key--google,
+.agents-swatch--google {
+  background: var(--ag-google);
+}
+
+.agents-swatch {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.agents-foot {
+  margin-top: 2rem;
+}
+
+.agents-live {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ag-accent);
+  box-shadow: 0 0 6px rgba(0, 255, 65, 0.7);
+  animation: agents-live-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes agents-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.agents-numeral__punct {
+  margin: 0 -0.17em;
+}
+
+.is-refreshing {
+  opacity: 0.72;
+}
+
+.agents-table-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+/* Tooltip (portaled to body): Primer's tooltip, a grey #3d444d bubble with white 12 px text. The first line is
+   GitHub's sentence; anything after it is quieter. */
+.agents-tooltip {
+  position: fixed;
+  z-index: 10000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 16px));
+  padding: 6px 10px 7px;
+  border-radius: 6px;
+  background: #3d444d;
+  box-shadow: 0 8px 24px rgba(1, 4, 9, 0.6);
+  color: #fff;
+  font-family: var(--gh-font);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.agents-tooltip p {
+  margin: 0;
+}
+
+.agents-tooltip:has(.agents-day-tip) {
+  width: min(390px, calc(100vw - 16px));
+  max-width: none;
+  padding: 9px 12px;
+}
+
+.agents-tooltip--interactive {
+  pointer-events: auto;
+  overscroll-behavior: contain;
+}
+
+.agents-day-tip {
+  font-variant-numeric: tabular-nums;
+}
+
+.agents-day-tip__heading,
+.agents-day-tip__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agents-day-tip__heading {
+  margin-bottom: 3px !important;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.agents-day-tip strong {
+  font-weight: 600;
+}
+
+.agents-day-tip__heading strong,
+.agents-day-tip__row strong {
+  white-space: nowrap;
+}
+
+.agents-day-tip__counts {
+  display: inline-flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  color: #fff;
+}
+
+.agents-day-tip__counts > span {
+  white-space: nowrap;
+}
+
+.agents-day-tip__counts .agents-day-tip__unit,
+.agents-day-tip__separator {
+  color: #d1d7e0;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.agents-day-tip__row > :first-child {
+  min-width: 0;
+}
+
+.agents-day-tip__secondary,
+.agents-day-tip__basis {
+  color: #d1d7e0;
+  font-size: 11px;
+}
+
+.agents-day-tip__meta {
+  margin-top: 2px !important;
+}
+
+.agents-day-tip__provider {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.agents-day-tip__provider-heading > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.agents-day-tip__projects {
+  display: grid;
+  gap: 7px;
+  margin: 5px 0 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+
+.agents-day-tip__project {
+  min-width: 0;
+}
+
+.agents-day-tip__calculation {
+  margin-top: 2px;
+}
+
+.agents-day-tip__details {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.agents-day-tip__details summary {
+  width: fit-content;
+  color: #d1d7e0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agents-day-tip__details summary:hover {
+  color: #fff;
+}
+
+.agents-day-tip__source {
+  margin: 7px 0;
+}
+
+.agents-day-tip .agents-day-tip__models {
+  margin: 0;
+  border: 0;
+}
+
+.agents-tooltip__lead {
+  color: #fff;
+  font-weight: 400;
+}
+
+.agents-tooltip__lead strong {
+  font-weight: 600;
+}
+
+.agents-tooltip__tail,
+.agents-tooltip__muted,
+.agents-tooltip__split {
+  color: #d1d7e0;
+}
+
+.agents-tooltip__muted {
+  margin-top: 0.15rem !important;
+}
+
+.agents-tooltip__rows {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0.35rem 0 0;
+  padding: 0.3rem 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  list-style: none;
+}
+
+/* Key, label, value: one grid for provider and model rows alike, values flush right. */
+.agents-tooltip__rows li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.agents-tooltip .agents-key {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.agents-tooltip__row-label {
+  overflow: hidden;
+  color: #d1d7e0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-tooltip__row-value {
+  padding-left: 0.75rem;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Keep the Overview's share bars beside the tooltip's compact model/count rows. */
+.agents-day-tip__models li {
+  grid-template-columns: 8px minmax(0, 1fr) 25%;
+  gap: 0 6px;
+  padding: 3px 0;
+}
+
+.agents-day-tip__models .agents-key {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.agents-day-tip__models .agents-tooltip__row-label {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.agents-day-tip__models .agents-day-tip__counts {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 12px;
+}
+
+.agents-day-tip__models .gh-bar {
+  grid-column: 3;
+  grid-row: 1 / 3;
+}
+
+.agents-day-tip__unavailable {
+  margin-top: 5px !important;
+}
+
+.agents-tooltip__split {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The projects grid's gutters: 1rem on tablets, then a phone's; tiles tighten with them. */
+@media (max-width: 1024px) {
+  .agents-page {
+    padding: 1rem 1rem 5rem;
+  }
+
+  .agents-panel,
+  .agents-tile {
+    margin-top: 2rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .agents-page {
+    padding: 0.75rem 12px 5rem;
+    font-size: 0.9375rem;
+  }
+
+  .agents-panel,
+  .agents-tile {
+    margin-top: 1.5rem;
+    padding: 1rem 0.875rem 0.875rem;
+    border-radius: 14px;
+  }
+
+  .agents-sheet__scroll {
+    padding: 14px 12px 18px;
+  }
+
+  .agents-title {
+    font-size: 1.6rem;
+  }
+
+  .agents-panel h2,
+  .agents-tile h2 {
+    font-size: 1.3rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-page *,
+  .agents-page *::before,
+  .agents-page *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ?mock=1: make it unmistakable that nothing on the page is real */
+.agents-testdata {
+  margin: 0.5rem 0 0;
+  padding: 0.65rem 1rem;
+  border: 1px solid rgba(255, 176, 0, 0.7);
+  border-radius: 8px;
+  background: rgba(255, 176, 0, 0.14);
+  color: #ffd166;
+  font-family: var(--ag-num, monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
