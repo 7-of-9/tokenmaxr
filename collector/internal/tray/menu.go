@@ -65,10 +65,7 @@ func Menu(v View) []Item {
 	if v.Pinned {
 		pin.Title, pin.Action = "Unpin", ActUnpin
 	}
-	sync := Item{Key: "sync", Title: "Sync now", Action: ActSyncNow, Disabled: !v.CanSync}
-	if v.Syncing {
-		sync.Title, sync.Disabled = v.SyncLabel, true
-	}
+	sync := Item{Key: "sync", Title: "Sync now", Action: ActSyncNow, Disabled: !v.CanSync, Hidden: v.Syncing}
 	return append(items,
 		Item{Key: "sep-actions", Separator: true},
 		Item{Key: "dashboard", Title: "Open dashboard", Action: ActDashboard, Hidden: v.Dashboard == ""},

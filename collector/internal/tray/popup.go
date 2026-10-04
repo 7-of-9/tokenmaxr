@@ -27,19 +27,19 @@ func Popup(v View) []PanelLine {
 		pin.Text, pin.Action = "Unpin", ActUnpin
 	}
 	sync := PanelLine{Text: "Sync now", Kind: LineAction, Action: ActSyncNow}
-	switch {
-	case v.Syncing:
-		sync = PanelLine{Text: v.SyncLabel, Kind: LineActionOff}
-	case !v.CanSync:
+	if !v.CanSync {
 		sync.Kind, sync.Action = LineActionOff, ActNone
 	}
 	out = append(out, PanelLine{Kind: LineRule})
 	if v.Dashboard != "" {
 		out = append(out, PanelLine{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard})
 	}
+	out = append(out, pin)
+	// While a sync runs the status line says so: no Sync row.
+	if !v.Syncing {
+		out = append(out, sync)
+	}
 	out = append(out,
-		pin,
-		sync,
 		PanelLine{Text: "Settings…", Kind: LineAction, Action: ActSettings},
 		PanelLine{Text: "Open log", Kind: LineAction, Action: ActOpenLog},
 		PanelLine{Text: "Quit", Kind: LineAction, Action: ActQuit},

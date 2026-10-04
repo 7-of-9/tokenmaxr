@@ -114,7 +114,7 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 		if ru, err = rollup.Load(paths.Rollup(a.Home)); err != nil {
 			a.Log.Printf("rollup: %v; rebuilding it from all history", err)
 			ru = rollup.New()
-			st.Cursors = map[string]map[string]store.FileCursor{}
+			st.GitHub.StartRebuild()
 		}
 	}
 	// Only a server destination drains the outbox; without one nothing is
@@ -220,11 +220,15 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 			return rep, err
 		}
 		if ru != nil {
-			ru.Settle(a.Now(), stats.Complete)
+			// No date is sealed while a rebuild still has history to add.
+			ru.Settle(a.Now(), stats.Complete && !st.GitHub.Rebuild)
 			if ru.Dirty() {
 				if err := ru.Save(paths.Rollup(a.Home)); err != nil {
 					return rep, err
 				}
+			}
+			if err := a.rebuildRollup(&cfg, sec, st, hr, ru, deadline.Add(-uploadReserve)); err != nil {
+				return rep, err
 			}
 		}
 		st.LastScan = a.Now()

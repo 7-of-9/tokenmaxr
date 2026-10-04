@@ -102,6 +102,9 @@ type Desktop struct {
 
 	// settings is the local settings page, started on first use.
 	settings *Settings
+	// uploadPeak is the largest queue since it was last empty (the size of
+	// the upload in progress).
+	uploadPeak int
 }
 
 // Desktop runs the app: one process with the icon and the collection loop.
@@ -596,6 +599,12 @@ func (d *Desktop) draw() {
 		return
 	}
 	in := d.in
+	if in.Outbox == 0 {
+		d.uploadPeak = 0
+	} else if in.Outbox > d.uploadPeak {
+		d.uploadPeak = in.Outbox
+	}
+	in.UploadPeak = d.uploadPeak
 	in.Now = d.a.Now()
 	in.Providers = d.win.Summaries(in.Now)
 	in.Pinned = d.panel.Pinned

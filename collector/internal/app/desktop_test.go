@@ -167,7 +167,7 @@ func TestDesktopApp(t *testing.T) {
 	// The first tick runs at start: green, sent, and the provider line.
 	waitFor(t, "green after the first tick", func() bool {
 		c, tip := ui.state()
-		return c == tray.Green && strings.HasPrefix(tip, "tokenmaxr · Up to date · next sync")
+		return c == tray.Green && tip == "tokenmaxr · Up to date"
 	})
 	if got := ui.line("machine"); got != "● STUDIO" {
 		t.Fatalf("status %q", got)
@@ -668,8 +668,9 @@ func TestDesktopLiveUploadProgress(t *testing.T) {
 		waitFor(t, "live batch in both views", func() bool {
 			p, rows := ui.shownPanel(), ui.popupRows()
 			want := "● tokenmaxr · STUDIO"
-			status := "Uploading now · " + tray.Count(n) + " remaining"
-			return len(p.Lines) > 1 && len(rows) > 1 && p.Lines[0].Text == want && rows[0].Text == want && p.Lines[0].Kind == tray.LineOK && p.Lines[1].Text == status && rows[1].Text == status && count() == n && ui.line("sync") == "Uploading…"
+			left := " · " + tray.Count(n) + " left"
+			up := func(l string) bool { return strings.HasPrefix(l, "Uploading ") && strings.HasSuffix(l, left) }
+			return len(p.Lines) > 1 && len(rows) > 1 && p.Lines[0].Text == want && rows[0].Text == want && p.Lines[0].Kind == tray.LineOK && up(p.Lines[1].Text) && rows[1].Text == p.Lines[1].Text && count() == n
 		})
 	}
 	waitFor(t, "first request", func() bool { return requests.Load() == 1 })

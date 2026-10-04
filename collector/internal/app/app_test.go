@@ -37,6 +37,7 @@ type fakeAPI struct {
 	activity    map[string]model.ActivityEvent
 	prompts     map[string]model.PromptRecord
 	heartbeats  int
+	ingests     int // ingest requests carrying events
 	lastHB      *model.Heartbeat
 	lastHomes   []string // "homes" of the last heartbeat, read off the raw body
 }
@@ -72,6 +73,9 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 			body, _ := io.ReadAll(r.Body)
 			var req model.IngestRequest
 			json.Unmarshal(body, &req)
+			if len(req.Usage)+len(req.Activity)+len(req.Prompts) > 0 {
+				f.ingests++
+			}
 			var extra struct {
 				Heartbeat *struct {
 					Homes []string `json:"homes"`

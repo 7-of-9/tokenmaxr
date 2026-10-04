@@ -21,7 +21,7 @@ func TestPopupRows(t *testing.T) {
 	got := Popup(v)
 	want := []PanelLine{
 		{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
-		{Text: "Up to date · next sync in 40s", Kind: LineDim},
+		{Text: "Up to date", Kind: LineDim},
 		{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim},
 		{Kind: LineRule},
 		{Text: "Claude   8 h ago   +787K  │   24h 194M   30d 13.5B", Kind: LineText, Hi: 19, HiEnd: 24, Quiet: true, Age: 9, AgeEnd: 16},
@@ -60,16 +60,18 @@ func TestPopupRows(t *testing.T) {
 		}
 	}
 
-	// Pinned: Unpin. Ticking: Syncing…, greyed out. Not enrolled: no copy,
-	// no sync. The rows end with Quit, then the inert build footer.
+	// Pinned: Unpin. Ticking: no Sync row (the status line says it). Not
+	// enrolled: no copy, no sync. The rows end with Quit, then the build.
 	in := popupInput()
 	in.Pinned, in.Ticking, in.TickStarted = true, true, now
 	rows := Popup(Evaluate(in))
-	if p := rows[len(rows)-6]; p.Text != "Unpin" || p.Action != ActUnpin {
+	if p := rows[len(rows)-5]; p.Text != "Unpin" || p.Action != ActUnpin {
 		t.Errorf("pinned row %+v", p)
 	}
-	if s := rows[len(rows)-5]; s.Text != "Scanning…" || s.Kind != LineActionOff || s.Clickable() || s.Hoverable() {
-		t.Errorf("syncing row %+v", s)
+	for _, l := range rows {
+		if l.Action == ActSyncNow || l.Text == "Sync now" {
+			t.Errorf("sync row while syncing %+v", l)
+		}
 	}
 	in = popupInput()
 	in.Enrolled = false
@@ -158,7 +160,7 @@ func TestPopupNav(t *testing.T) {
 			t.Fatalf("step %d: %s, want %s", i, sel, want)
 		}
 	}
-	// A greyed-out Sync is skipped.
+	// No Sync row while syncing.
 	in := popupInput()
 	in.Ticking, in.TickStarted = true, now
 	busy := Popup(Evaluate(in))
@@ -206,12 +208,12 @@ func TestPopupHitTest(t *testing.T) {
 			t.Errorf("HoverAt(%d) = %s, want %s", c.y, got, c.hover)
 		}
 	}
-	// Syncing…: neither clicks nor highlights.
+	// Syncing: the Sync row is gone, so Settings moves up into its place.
 	in := popupInput()
 	in.Ticking, in.TickStarted = true, now
 	busy := Popup(Evaluate(in))
-	if a, h := m.ActionAt(busy, first+2*28+5), m.HoverAt(busy, first+2*28+5); a != ActNone || h != ActNone {
-		t.Errorf("syncing row: %s %s", a, h)
+	if a := m.ActionAt(busy, first+2*28+5); a != ActSettings {
+		t.Errorf("row after Pin while syncing: %s", a)
 	}
 }
 

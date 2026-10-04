@@ -8,6 +8,7 @@ package tray
 import (
 	"cmp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,7 +60,10 @@ type Input struct {
 	Unauthorized  bool
 	BackoffUntil  time.Time
 	// Outbox is the events queued, Pending the files the backfill has left.
+	// UploadPeak is the largest Outbox since it was last empty: the size of
+	// the current upload, for its progress.
 	Outbox      int
+	UploadPeak  int
 	Pending     int
 	InitialScan bool
 
@@ -197,39 +201,32 @@ func Evaluate(in Input) View {
 		return v
 	}
 	v.Color = Green
-	activity := ""
-	queue := exactCount(in.Outbox, "event", "events") + " queued"
+	// Two states only: up to date, or uploading with its progress, until
+	// the queue is empty.
+	activity := "Up to date"
+	if in.Outbox > 0 {
+		activity = "Uploading " + UploadProgress(in.Outbox, in.UploadPeak) + " · " + Count(in.Outbox) + " left"
+	}
 	switch {
-	case in.Ticking && in.Uploading && in.Outbox > 0:
-		activity = "Uploading now · " + Count(in.Outbox) + " remaining"
+	case in.Ticking && (in.Uploading || in.Phase == "uploading"):
 		v.SyncLabel = "Uploading…"
-	case in.Ticking && in.Uploading:
-		activity = "Contacting server now"
-		v.SyncLabel = "Contacting server…"
-	case in.Ticking && in.Phase == "uploading":
-		activity = "Preparing next upload · " + queue
-		v.SyncLabel = "Preparing upload…"
-	case in.Ticking && in.Phase == "finishing":
-		activity = "Finishing sync"
-		v.SyncLabel = "Finishing sync…"
-	case in.Ticking && in.Phase == "account-history":
-		activity = "Reading Codex account history"
-		v.SyncLabel = "Reading account history…"
 	case in.Ticking:
-		activity = "Scanning local history"
-		v.SyncLabel = "Scanning…"
-	case in.Outbox > 0:
-		activity = "Waiting · " + queue + " · " + nextSync(in)
-	case in.Pending > 0:
-		activity = "Waiting · " + exactCount(in.Pending, "file", "files") + " to scan · " + nextSync(in)
-	case in.InitialScan:
-		activity = "Initial scan pending · " + nextSync(in)
-	default:
-		activity = "Up to date · " + nextSync(in)
+		v.SyncLabel = "Syncing…"
 	}
 	v.Status = "● " + activity
 	v.Tooltip = clip(buildinfo.Product+" · "+activity, tooltipMaxRunes)
 	return v
+}
+
+// UploadProgress is a ten-cell bar and percentage of an upload that started
+// with peak events and has left to go: "▰▰▰▱▱▱▱▱▱▱ 30%".
+func UploadProgress(left, peak int) string {
+	pct := 0
+	if peak > 0 && left <= peak {
+		pct = (peak - left) * 100 / peak
+	}
+	n := pct / 10
+	return strings.Repeat("▰", n) + strings.Repeat("▱", 10-n) + " " + strconv.Itoa(pct) + "%"
 }
 
 func exactCount(n int, one, many string) string {

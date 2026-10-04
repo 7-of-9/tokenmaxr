@@ -23,6 +23,8 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
 	"github.com/7-of-9/tokenmaxr/collector/internal/rollup"
+	"github.com/7-of-9/tokenmaxr/collector/internal/scan"
+	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
@@ -214,9 +216,10 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	if res.Rehash {
 		os.Remove(paths.Rollup(a.Home))
 	}
-	if _, err := os.Stat(paths.Rollup(a.Home)); errors.Is(err, os.ErrNotExist) {
-		// First publish needs the whole history in the rollup.
-		st.Cursors = map[string]map[string]store.FileCursor{}
+	if _, err := os.Stat(paths.Rollup(a.Home)); errors.Is(err, os.ErrNotExist) && !res.Rehash && local != nil {
+		// First publish needs the whole history in the rollup: re-read it
+		// for the rollup alone, so a server is not sent it all again.
+		st.GitHub.StartRebuild()
 	}
 	st.GitHub.Published, st.GitHub.LastAttempt, st.GitHub.LastError = nil, time.Time{}, ""
 	if err := c.EnablePages(ctx, res.Repo); err != nil {
@@ -330,4 +333,51 @@ func githubErrorText(err error) string {
 // the server not switched off in config.json.
 func serverOn(cfg *store.Config, sec store.Secrets) bool {
 	return sec.Enrolled() && cfg.Server() != ""
+}
+
+// rebuildRollup continues a rollup rebuild (GitHubState.Rebuild): the whole
+// history again, with its own cursors, into the rollup only (no outbox, no
+// local numbers, no quota marks), until a complete pass.
+func (a *App) rebuildRollup(cfg *store.Config, sec store.Secrets, st *store.State, hr homes.Result, ru *rollup.Rollup, deadline time.Time) error {
+	if !st.GitHub.Rebuild || !a.Now().Before(deadline) {
+		return nil
+	}
+	if st.GitHub.RebuildCursors == nil {
+		st.GitHub.RebuildCursors = map[string]map[string]store.FileCursor{}
+	}
+	keep := hr.Unreachable
+	stats, err := scan.Run(scan.Options{
+		Homes: a.scanHomes(sec.Key(), cfg, st, hr.Homes),
+		KeepCursor: func(p string) bool {
+			for _, pre := range keep {
+				if homes.Under(p, pre) {
+					return true
+				}
+			}
+			return false
+		},
+		Deadline: deadline,
+		Log:      a.Log,
+		Now:      a.Now,
+		Flush: func(b sources.Batch) error {
+			_, err := a.persist(nil, cfg, nil, b, nil, ru)
+			return err
+		},
+		Save:        func() error { return store.SaveState(a.Home, st) },
+		FlushEvents: outboxFileEvents,
+		FlushEvery:  flushEvery,
+		LimitsSent:  map[string]string{},
+	}, st.GitHub.RebuildCursors)
+	if err != nil {
+		return fmt.Errorf("rollup rebuild: %w", err)
+	}
+	if stats.Complete {
+		st.GitHub.Rebuild, st.GitHub.RebuildCursors = false, nil
+		ru.Settle(a.Now(), true)
+		a.Log.Printf("github: history re-read for the dashboard")
+	}
+	if ru.Dirty() {
+		return ru.Save(paths.Rollup(a.Home))
+	}
+	return nil
 }

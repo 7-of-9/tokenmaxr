@@ -272,3 +272,50 @@ func cfgHost(t *testing.T, a *App) string {
 	}
 	return cfg.MachineLabel
 }
+
+// Signing in to GitHub on a machine that already uploads to a server
+// rebuilds the dashboard totals from all history without sending that
+// history to the server again.
+func TestGitHubRebuildDoesNotReuploadToTheServer(t *testing.T) {
+	f, _ := useFakeGitHub(t)
+	api, srv := newFakeAPI(t)
+	a, _, out := newTestApp(t)
+	ctx := context.Background()
+	if err := a.Install(ctx, InstallOptions{Join: "D0M1-rb", Endpoint: srv.URL, Label: "STUDIO", Yes: true, NoAutostart: true}); err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	before := api.ingests
+	api.mu.Unlock()
+
+	// What GitHubLogin leaves behind on such a machine.
+	sec, _ := store.LoadSecrets(a.Home)
+	sec.GitHub = &store.GitHubSecrets{Token: "ghu_test", Login: "octo", UserID: 42}
+	store.SaveSecrets(a.Home, sec)
+	cfg, _ := store.LoadConfig(a.Home)
+	cfg.GitHub = &store.GitHubConfig{Repo: "octo/agent-usage", Label: "laptop"}
+	store.SaveConfig(a.Home, cfg)
+	st, _ := store.LoadState(a.Home)
+	st.GitHub.StartRebuild()
+	store.SaveState(a.Home, st)
+	f.Files[ghpub.MarkerFile] = `{"tokenmaxr":1}`
+
+	rep, err := a.Tick(ctx, TickOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	after := api.ingests
+	api.mu.Unlock()
+	if rep.Queued != 0 || after != before {
+		t.Fatalf("history sent to the server again: queued %d, ingests %d -> %d", rep.Queued, before, after)
+	}
+	st, _ = store.LoadState(a.Home)
+	ru, _ := rollup.Load(paths.Rollup(a.Home))
+	if st.GitHub.Rebuild || len(ru.Rows()) == 0 || f.Files[ghpub.MachineDir(st.GitHub.MachineID)+"/meta.json"] == "" {
+		t.Fatalf("rebuild %v, %d rollup rows", st.GitHub.Rebuild, len(ru.Rows()))
+	}
+}

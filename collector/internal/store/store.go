@@ -476,4 +476,14 @@ type GitHubState struct {
 	// files are never committed again.
 	Published map[string]string `json:"published,omitempty"`
 	PagesURL  string            `json:"pagesUrl,omitempty"`
+	// Rebuild: the rollup is being rebuilt from all history with its own
+	// cursors, so nothing is queued for the server again (the main cursors
+	// stay where they are).
+	Rebuild        bool                             `json:"rebuild,omitempty"`
+	RebuildCursors map[string]map[string]FileCursor `json:"rebuildCursors,omitempty"`
+}
+
+// StartRebuild re-reads all history into the GitHub rollup only.
+func (g *GitHubState) StartRebuild() {
+	g.Rebuild, g.RebuildCursors = true, map[string]map[string]FileCursor{}
 }

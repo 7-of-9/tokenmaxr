@@ -31,17 +31,17 @@ func TestEvaluate(t *testing.T) {
 		status  string
 		tooltip string
 	}{
-		{"ok", func(*Input) {}, Green, "● Up to date · next sync in 40s", "tokenmaxr · Up to date · next sync in 40s"},
-		{"backfill", func(in *Input) { in.Outbox, in.Pending = 41000, 120 }, Green, "● Waiting · 41,000 events queued · next sync in 40s", "tokenmaxr · Waiting · 41,000 events queued · next sync in 40s"},
-		{"backfill files", func(in *Input) { in.Pending = 1 }, Green, "● Waiting · 1 file to scan · next sync in 40s", ""},
-		{"retry queue", func(in *Input) { in.Outbox = 3 }, Green, "● Waiting · 3 events queued · next sync in 40s", ""},
-		{"nothing to send yet", func(in *Input) { in.LastUploadOK = time.Time{} }, Green, "● Up to date · next sync in 40s", "tokenmaxr · Up to date · next sync in 40s"},
-		{"harvest still pending", func(in *Input) { in.InitialScan = true }, Green, "● Initial scan pending · next sync in 40s", ""},
+		{"ok", func(*Input) {}, Green, "● Up to date", "tokenmaxr · Up to date"},
+		{"backfill", func(in *Input) { in.Outbox, in.UploadPeak, in.Pending = 41000, 100000, 120 }, Green, "● Uploading ▰▰▰▰▰▱▱▱▱▱ 59% · 41,000 left", "tokenmaxr · Uploading ▰▰▰▰▰▱▱▱▱▱ 59% · 41,000 left"},
+		{"backfill files", func(in *Input) { in.Pending = 1 }, Green, "● Up to date", ""},
+		{"retry queue", func(in *Input) { in.Outbox, in.UploadPeak = 3, 3 }, Green, "● Uploading ▱▱▱▱▱▱▱▱▱▱ 0% · 3 left", ""},
+		{"nothing to send yet", func(in *Input) { in.LastUploadOK = time.Time{} }, Green, "● Up to date", "tokenmaxr · Up to date"},
+		{"harvest still pending", func(in *Input) { in.InitialScan = true }, Green, "● Up to date", ""},
 		{"stale", func(in *Input) { in.LastTick = now.Add(-12 * time.Minute) }, Red, "● Error: no sync for 12 min · next sync in 40s", "tokenmaxr · ERROR: no sync for 12 min"},
 		{"just stale", func(in *Input) { in.LastTick = now.Add(-Stale) }, Red, "● Error: no sync for 3 min · next sync in 40s", ""},
 		{"ticking keeps it fresh", func(in *Input) {
 			in.LastTick, in.Ticking, in.TickStarted = now.Add(-10*time.Minute), true, now.Add(-30*time.Second)
-		}, Green, "● Scanning local history", ""},
+		}, Green, "● Up to date", ""},
 		{"first tick running", func(in *Input) {
 			in.LastTick, in.LastUploadOK, in.Ticking, in.TickStarted = time.Time{}, time.Time{}, true, now.Add(-5*time.Second)
 		}, Green, "", ""},
@@ -172,7 +172,7 @@ func TestPanel(t *testing.T) {
 	}{
 		{"ok with providers", func(*Input) {}, []PanelLine{
 			{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
-			{Text: "Up to date · next sync in 40s", Kind: LineDim},
+			{Text: "Up to date", Kind: LineDim},
 			{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim},
 			{Kind: LineRule},
 			{Text: "Grok     30s ago        +10  │   24h   900   30d   900", Kind: LineText, Hi: 24, HiEnd: 27, Age: 9, AgeEnd: 16},
@@ -276,7 +276,7 @@ func TestMenu(t *testing.T) {
 		switch {
 		case it.Key == "sep-providers" && !it.Hidden:
 			t.Error("separator shown with no providers")
-		case it.Key == "sync" && (it.Title != "Scanning…" || !it.Disabled):
+		case it.Key == "sync" && !it.Hidden:
 			t.Errorf("sync while ticking: %+v", it)
 		case it.Key == "pin" && (it.Title != "Unpin" || it.Action != ActUnpin):
 			t.Errorf("pin while pinned: %+v", it)
@@ -370,30 +370,35 @@ func TestIcon(t *testing.T) {
 }
 
 func TestLiveUploadAndIdleCountdown(t *testing.T) {
+	// One state from the first event queued to the last one sent: uploading,
+	// with progress against the largest queue of this upload.
 	in := ok()
-	in.Ticking, in.TickStarted, in.Phase, in.Uploading, in.Outbox = true, now, "uploading", true, 22501
-	for _, n := range []int{22501, 22301, 22101} {
-		in.Outbox = n
+	in.UploadPeak = 22501
+	for _, c := range []struct {
+		left             int
+		ticking, sending bool
+		want             string
+	}{
+		{22501, true, true, "● Uploading ▱▱▱▱▱▱▱▱▱▱ 0% · 22,501 left"},
+		{11250, true, true, "● Uploading ▰▰▰▰▰▱▱▱▱▱ 50% · 11,250 left"},
+		{11250, false, false, "● Uploading ▰▰▰▰▰▱▱▱▱▱ 50% · 11,250 left"}, // between ticks: still uploading
+		{2250, true, false, "● Uploading ▰▰▰▰▰▰▰▰▰▱ 90% · 2,250 left"},
+	} {
+		in.Outbox, in.Ticking, in.Uploading, in.TickStarted = c.left, c.ticking, c.sending, now
 		v := Evaluate(in)
-		if v.Status != "● Uploading now · "+Count(n)+" remaining" || v.SyncLabel != "Uploading…" || !v.Syncing {
-			t.Fatalf("active view %+v", v)
+		if v.Status != c.want || v.Syncing != c.ticking {
+			t.Fatalf("left %d: %+v, want %q", c.left, v, c.want)
 		}
 		if Panel(v)[0] != Popup(v)[0] {
 			t.Fatal("pinned and popup status differ")
 		}
 	}
-	in.Ticking, in.Uploading, in.LastUploadErr = false, false, ""
-	for _, sec := range []int{0, 1, 20} {
-		in.Now = now.Add(time.Duration(sec) * time.Second)
-		v := Evaluate(in)
-		want := "● Waiting · 22,101 events queued · next sync in " + (time.Duration(40-sec) * time.Second).String()
-		if v.Status != want || v.Syncing {
-			t.Fatalf("idle view %+v, want %q", v, want)
-		}
+	in.Outbox, in.Ticking, in.Uploading = 0, false, false
+	if v := Evaluate(in); v.Status != "● Up to date" {
+		t.Fatalf("done %+v", v)
 	}
-	in.Ticking, in.Uploading, in.Outbox = true, true, 0
-	if v := Evaluate(in); v.Status != "● Contacting server now" {
-		t.Fatalf("heartbeat %+v", v)
+	if UploadProgress(5, 0) != "▱▱▱▱▱▱▱▱▱▱ 0%" || UploadProgress(0, 10) != "▰▰▰▰▰▰▰▰▰▰ 100%" {
+		t.Fatal("progress edges")
 	}
 }
 
