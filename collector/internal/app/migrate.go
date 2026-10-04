@@ -131,15 +131,17 @@ func (a *App) Migrate(legacy string) (MigrateResult, error) {
 	if err := a.copyBinariesFrom(paths.Bin(legacy)); err != nil {
 		return res, fmt.Errorf("migrate: %w", err)
 	}
-	// Login and PATH entries: the old ones out, tokenmaxr's in.
+	// The move is complete: mark the old home before anything starts from the
+	// new one.
+	note := fmt.Sprintf("This d0m1-collector install moved to %s on %s (%s). This folder is removed automatically.\n",
+		a.Home, a.Now().UTC().Format(time.RFC3339), buildinfo.Product)
+	if err := os.WriteFile(filepath.Join(legacy, migratedMark), []byte(note), 0o600); err != nil {
+		return res, fmt.Errorf("migrate: %w", err)
+	}
+	// Login and PATH entries: tokenmaxr's in first, the old ones out last.
+	// On macOS removing the old LaunchAgent stops the process it runs, which
+	// may be this one, so nothing may follow it.
 	sys := a.autostartSys()
-	if err := sys.Unregister(autostart.Legacy(runtime.GOOS)); err != nil {
-		a.Log.Printf("migrate: old autostart: %v", err)
-	}
-	if err := a.pathRemove(paths.Bin(legacy)); err != nil {
-		a.Log.Printf("migrate: old PATH entry: %v", err)
-	}
-	started := false
 	if cfg.Autostart {
 		ao := a.autostartOptions(&cfg, false)
 		if _, err := sys.Register(ao); err != nil {
@@ -151,16 +153,17 @@ func (a *App) Migrate(legacy string) (MigrateResult, error) {
 			if err := sys.Start(ao); err != nil {
 				a.Log.Printf("migrate: start: %v", err)
 			} else {
-				started = true
+				res.Handover = true
 			}
 		}
 	}
-	note := fmt.Sprintf("This d0m1-collector install moved to %s on %s (%s). This folder is removed automatically.\n",
-		a.Home, a.Now().UTC().Format(time.RFC3339), buildinfo.Product)
-	if err := os.WriteFile(filepath.Join(legacy, migratedMark), []byte(note), 0o600); err != nil {
-		return res, fmt.Errorf("migrate: %w", err)
+	if err := a.pathRemove(paths.Bin(legacy)); err != nil {
+		a.Log.Printf("migrate: old PATH entry: %v", err)
 	}
-	res.Handover = started
+	a.Log.Printf("migrate: removing the old autostart entries")
+	if err := sys.Unregister(autostart.Legacy(runtime.GOOS)); err != nil {
+		a.Log.Printf("migrate: old autostart: %v", err)
+	}
 	return res, nil
 }
 

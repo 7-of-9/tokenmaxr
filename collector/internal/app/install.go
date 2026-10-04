@@ -514,7 +514,7 @@ func (a *App) publishHint(cfg *store.Config, sec store.Secrets) {
 	if serverOn(cfg, sec) || githubEnabled(cfg, sec) {
 		return
 	}
-	if cfg.App {
+	if cfg.App && cfg.Autostart {
 		a.printf("Publishing nowhere yet: the settings page opens to publish to your GitHub (later: Settings… in the icon's menu).\n")
 	} else {
 		a.printf("Publishing nowhere yet: publish to your GitHub with `" + buildinfo.Product + " github login`.\n")
