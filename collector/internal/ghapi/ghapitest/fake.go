@@ -34,6 +34,8 @@ type Fake struct {
 	// ("path@ref" when read at a ref).
 	Commits int
 	Reads   []string
+	// Deletes counts paths removed by commits.
+	Deletes int
 	// NoInstall: the user has not installed the App yet.
 	NoInstall bool
 	seq       int
@@ -150,6 +152,7 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				delete(next, path)
+				f.Deletes++
 				same = false
 				continue
 			}

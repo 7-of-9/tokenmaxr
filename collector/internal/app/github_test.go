@@ -645,9 +645,13 @@ func TestGitHubAccountHistoryIsOptIn(t *testing.T) {
 	}
 	// Nothing is deleted again on later publishes, and a file someone has
 	// removed by hand already never blocks publishing.
-	head := f.Head
-	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil || f.Head != head {
-		t.Fatalf("an unchanged publish after opting out committed (%v)", err)
+	// (A forced tick may still commit data that changed meanwhile.)
+	deletes := f.Deletes
+	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil || f.Deletes != deletes {
+		t.Fatalf("a publish after opting out deleted again (%d) or failed (%v)", f.Deletes-deletes, err)
+	}
+	if _, ok := f.Files[path]; ok {
+		t.Fatal("account history came back after opting out")
 	}
 	st, _ = store.LoadState(a.Home)
 	st.GitHub.Published[path] = "stale"
