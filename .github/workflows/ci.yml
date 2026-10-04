@@ -48,6 +48,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # The parity tests run the server's own rollup (api/), which needs its packages.
+      - run: npm ci --prefix api
       # The built site in pages/site is stamped and identical to the collector's embedded copy;
       # the adapter, account-history and quota tests, the page's own tests and the type check pass.
       - run: npm run check:pages
