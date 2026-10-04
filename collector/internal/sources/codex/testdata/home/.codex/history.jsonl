@@ -1,0 +1,4 @@
+{"session_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","ts":1790503203,"text":"Fix the failing test"}
+{"session_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","ts":1785574800,"text":"Old prompt without rollout"}
+{"session_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","ts":1785574830,"text":"<user_instructions>injected</user_instructions>"}
+{"session_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","ts":1790589780,"text":"brand new"}

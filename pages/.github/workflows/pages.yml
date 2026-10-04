@@ -1,0 +1,56 @@
+# Builds the dashboard from site/ and data/ and deploys it to GitHub Pages.
+# Collectors commit to data/machines/<id>/; each push redeploys (a newer push
+# cancels an older build). Artifacts keep for one day, so the repository's
+# Actions storage stays near zero.
+name: dashboard
+
+on:
+  push:
+    branches: [main]
+    paths: ["data/**", "site/**", "tokenmaxr.json", "scripts/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # The template itself has no data and no Pages site.
+    if: ${{ !github.event.repository.is_template }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      # A new repository has no data (and maybe no Pages yet): nothing to deploy.
+      - id: data
+        run: if [ -d data/machines ]; then echo "has=1" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.data.outputs.has == '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Assemble the site
+        if: steps.data.outputs.has == '1'
+        run: |
+          node scripts/build-index.mjs
+          mkdir -p _site
+          cp -r site/. _site/
+          cp -r data _site/data
+          cp tokenmaxr.json _site/
+      - if: steps.data.outputs.has == '1'
+        uses: actions/configure-pages@v5
+      - if: steps.data.outputs.has == '1'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deployment
+        if: steps.data.outputs.has == '1'
+        uses: actions/deploy-pages@v4

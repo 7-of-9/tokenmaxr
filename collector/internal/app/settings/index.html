@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Collector settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <header>
+    <h1>Collector settings</h1>
+    <p class="sub" id="who">Loading…</p>
+  </header>
+  <main>
+    <p class="intro">This machine reads your AI tools' local usage logs and counts tokens. Choose where those counts go: your own GitHub (a public dashboard, nothing to host), your own server, or nowhere (they stay on this machine and in the tray).</p>
+
+    <section class="card" id="gh">
+      <div class="head"><h2>GitHub</h2><span class="badge" id="gh-badge"></span></div>
+
+      <div id="gh-off" hidden>
+        <p>Publish daily token totals and quota meters to a public repository in your GitHub account, with a dashboard on GitHub Pages. Only totals are published: no prompts, code, file paths, hostnames or emails.</p>
+        <label class="field">Name this machine on the dashboard (public)
+          <input id="gh-new-label" maxlength="64" autocomplete="off" placeholder="e.g. laptop (blank: a random name, never the hostname)">
+        </label>
+        <button class="primary" id="gh-signin">Sign in with GitHub</button>
+      </div>
+
+      <div id="gh-login" hidden>
+        <div id="gh-code-box" hidden>
+          <p>Enter this code on GitHub (a tab has opened):</p>
+          <div class="code"><span id="gh-code"></span><button id="gh-copy" class="small">Copy</button></div>
+          <p><a id="gh-code-link" target="_blank" rel="noopener">Open the GitHub sign-in page</a></p>
+        </div>
+        <div id="gh-step-box" class="step" hidden>
+          <b>Next, on GitHub:</b> <span id="gh-step"></span><br>
+          <a id="gh-step-link" target="_blank" rel="noopener">Open it on GitHub</a>
+          <p class="hint">This page carries on by itself once that is done.</p>
+        </div>
+        <ul class="progress" id="gh-progress"></ul>
+        <p class="error" id="gh-login-error" hidden></p>
+        <button id="gh-cancel">Cancel</button>
+      </div>
+
+      <div id="gh-on" hidden>
+        <dl>
+          <dt>Repository</dt><dd><a id="gh-repo" target="_blank" rel="noopener"></a> (signed in as <span id="gh-user"></span>)</dd>
+          <dt>Dashboard</dt><dd id="gh-pages"></dd>
+          <dt>Last published</dt><dd id="gh-last"></dd>
+        </dl>
+        <p class="error" id="gh-error" hidden></p>
+        <label class="field">Name on the dashboard (public)
+          <input id="gh-label" maxlength="64" autocomplete="off">
+        </label>
+        <label class="field">Publish every
+          <select id="gh-every">
+            <option value="10">10 minutes</option>
+            <option value="30">30 minutes</option>
+            <option value="60">hour</option>
+            <option value="180">3 hours</option>
+            <option value="720">12 hours</option>
+            <option value="1440">day</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="gh-quota"> Publish quota meters (how much of each plan's weekly limit is used)</label>
+        <div class="row">
+          <button class="primary" id="gh-save">Save</button>
+          <button id="gh-publish">Publish now</button>
+          <button class="danger" id="gh-signout">Stop publishing to GitHub</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="sv">
+      <div class="head"><h2>Your own server <span class="muted">(optional)</span></h2><span class="badge" id="sv-badge"></span></div>
+      <p>A tokenmaxr server (or compatible API) receives every event and serves its own dashboard. Leave this off to use GitHub only.</p>
+      <dl id="sv-info" hidden>
+        <dt>Server</dt><dd id="sv-url"></dd>
+        <dt>Machine id</dt><dd id="sv-id"></dd>
+        <dt>Last upload</dt><dd id="sv-last"></dd>
+      </dl>
+      <p class="error" id="sv-error" hidden></p>
+      <label class="field">Server URL
+        <input id="sv-input" placeholder="https://your-server.example" autocomplete="off" spellcheck="false">
+      </label>
+      <details>
+        <summary>Have a join code?</summary>
+        <label class="field">Join code (from <code>invite</code> on a machine of the fleet)
+          <input id="sv-join" autocomplete="off" spellcheck="false" placeholder="D0M1-…">
+        </label>
+      </details>
+      <div id="sv-connecting" class="step" hidden>Approve this machine in the browser tab that opened (sign in to the server as its owner). <button id="sv-cancel" class="small">Cancel</button></div>
+      <div class="row">
+        <button class="primary" id="sv-connect">Connect</button>
+        <button class="danger" id="sv-off">Turn the server off</button>
+      </div>
+    </section>
+
+    <p class="foot" id="foot"></p>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>

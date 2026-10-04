@@ -1,0 +1,313 @@
+{
+ "comment": "Shared by api/test/unit/workspaces.test.js and collector/internal/sources/workspace (SPEC \"Workspaces\"). Synthetic paths only.",
+ "normalize": [
+  [
+   "C:\\Users\\User\\SRC\\alpha-app",
+   "c:\\users\\user\\src\\alpha-app"
+  ],
+  [
+   "C:/Users/User/src/example.com/",
+   "c:\\users\\user\\src\\example.com"
+  ],
+  [
+   "C:",
+   "c:\\"
+  ],
+  [
+   "/mnt/c/Users/User/src/gamma",
+   "c:\\users\\user\\src\\gamma"
+  ],
+  [
+   "/mnt/d",
+   "d:\\"
+  ],
+  [
+   "\\\\wsl$\\Ubuntu-22.04\\home\\alex\\src\\beta-wallet",
+   "/home/alex/src/beta-wallet"
+  ],
+  [
+   "\\\\wsl.localhost\\Ubuntu\\home\\alex\\",
+   "/home/alex"
+  ],
+  [
+   "/Users/alex//src/App/",
+   "/Users/alex/src/App"
+  ],
+  [
+   "C--Users-User-src-example-com",
+   "c--users-user-src-example-com"
+  ],
+  [
+   "file:///c%3A/Users/User/src/ac",
+   "c:\\users\\user\\src\\ac"
+  ],
+  [
+   "\\\\server\\share\\dir\\",
+   "\\\\server\\share\\dir"
+  ],
+  [
+   "  ",
+   ""
+  ],
+  [
+   "0d3b819f4bd5a46bc1e3503611fce94d63ec1365962f3cb2deb9c79669f69375",
+   "0d3b819f4bd5a46bc1e3503611fce94d63ec1365962f3cb2deb9c79669f69375"
+  ],
+  [
+   "vscode-remote://ssh-remote+box/home/alex/x",
+   "vscode-remote://ssh-remote+box/home/alex/x"
+  ],
+  [
+   "vscode-remote://wsl%2Bubuntu-22.04/home/alex/src/mxm",
+   "/home/alex/src/mxm"
+  ],
+  [
+   "vscode-remote://wsl+Ubuntu/home/alex/my%20x/",
+   "/home/alex/my x"
+  ],
+  [
+   "c:\\Users\\User\\.cursor\\projects\\c-Users-User-src-example-com",
+   "c-users-user-src-example-com"
+  ],
+  [
+   "\\home\\alex\\.cursor\\projects\\home-alex-src-beta-wallet",
+   "home-alex-src-beta-wallet"
+  ],
+  [
+   "C:\\Users\\User\\.claude\\projects\\C--Users-User-src-gamma\\",
+   "c--users-user-src-gamma"
+  ],
+  [
+   "/Users/alex/.claude/projects/-Users-alex-src-site",
+   "-users-alex-src-site"
+  ],
+  [
+   "\\home\\alex\\src\\x",
+   "/home/alex/src/x"
+  ]
+ ],
+ "decodeSlug": [
+  [
+   "c-Users-User-src-example-com",
+   "c:\\users\\user\\src\\example-com"
+  ],
+  [
+   "C--Users-User-src-alpha-app",
+   "c:\\users\\user\\src\\alpha-app"
+  ],
+  [
+   "home-alex-src-beta-wallet",
+   "/home/alex/src/beta-wallet"
+  ],
+  [
+   "-home-alex-notes",
+   "/home/alex/notes"
+  ],
+  [
+   "-mnt-c-Users-User-src-gamma",
+   "c:\\users\\user\\src\\gamma"
+  ],
+  [
+   "Users-alex-src-site",
+   "/Users/alex/src/site"
+  ],
+  [
+   "some-project",
+   "some-project"
+  ]
+ ],
+ "generic": [
+  [
+   "c:\\",
+   true
+  ],
+  [
+   "c:\\users",
+   true
+  ],
+  [
+   "c:\\users\\user",
+   true
+  ],
+  [
+   "c:\\users\\user\\src",
+   true
+  ],
+  [
+   "c:\\users\\user\\src\\tmp",
+   true
+  ],
+  [
+   "c:\\users\\user\\src\\example.com",
+   false
+  ],
+  [
+   "/home/alex",
+   true
+  ],
+  [
+   "/Users/alex",
+   true
+  ],
+  [
+   "/root",
+   true
+  ],
+  [
+   "/home/alex/src/x",
+   false
+  ],
+  [
+   "\\\\server\\share",
+   true
+  ],
+  [
+   "\\\\server\\share\\app",
+   false
+  ],
+  [
+   "/",
+   true
+  ]
+ ],
+ "canonicalize": [
+  {
+   "name": "owner archive shapes",
+   "inputs": {
+    "C:\\Users\\User\\src\\alpha-app": 145,
+    "C:\\Users\\User\\SRC\\alpha-app": 23,
+    "C--Users-User-src-alpha-app": 4,
+    "C:\\Users\\User\\src\\example.com": 200,
+    "C:\\Users\\User\\src\\example.com\\collector": 30,
+    "C:\\Users\\User\\src\\example.com\\collector\\ui": 3,
+    "c-Users-User-src-example-com": 5,
+    "home-alex-src-beta-wallet": 7,
+    "/home/alex/src/other": 2,
+    "C:\\Users\\User\\src": 33,
+    "C:\\Users\\User": 12,
+    "C:\\Users\\User\\src\\tmp": 10,
+    "C:\\Users\\User\\src\\tmp\\scratch": 2,
+    "C:\\Users\\User\\src\\gamma": 194,
+    "C:\\Users\\User\\src\\Gamma": 22,
+    "C--Users-User-src-unknown-thing": 1,
+    "": 3
+   },
+   "expect": {
+    "C:\\Users\\User\\src\\alpha-app": "c:\\users\\user\\src\\alpha-app",
+    "C:\\Users\\User\\SRC\\alpha-app": "c:\\users\\user\\src\\alpha-app",
+    "C--Users-User-src-alpha-app": "c:\\users\\user\\src\\alpha-app",
+    "C:\\Users\\User\\src\\example.com": "c:\\users\\user\\src\\example.com",
+    "C:\\Users\\User\\src\\example.com\\collector": "c:\\users\\user\\src\\example.com",
+    "C:\\Users\\User\\src\\example.com\\collector\\ui": "c:\\users\\user\\src\\example.com",
+    "c-Users-User-src-example-com": "c:\\users\\user\\src\\example.com",
+    "home-alex-src-beta-wallet": "/home/alex/src/beta-wallet",
+    "/home/alex/src/other": "/home/alex/src/other",
+    "C:\\Users\\User\\src": "c:\\users\\user\\src",
+    "C:\\Users\\User": "c:\\users\\user",
+    "C:\\Users\\User\\src\\tmp": "c:\\users\\user\\src\\tmp",
+    "C:\\Users\\User\\src\\tmp\\scratch": "c:\\users\\user\\src\\tmp\\scratch",
+    "C:\\Users\\User\\src\\gamma": "c:\\users\\user\\src\\gamma",
+    "C:\\Users\\User\\src\\Gamma": "c:\\users\\user\\src\\gamma",
+    "C--Users-User-src-unknown-thing": "c:\\users\\user\\src\\unknown-thing",
+    "": ""
+   }
+  },
+  {
+   "name": "a slug matches an ancestor of a known path, which then absorbs it",
+   "inputs": {
+    "/home/alex/src/beta-wallet/sub": 3,
+    "home-alex-src-beta-wallet": 2
+   },
+   "expect": {
+    "/home/alex/src/beta-wallet/sub": "/home/alex/src/beta-wallet",
+    "home-alex-src-beta-wallet": "/home/alex/src/beta-wallet"
+   }
+  },
+  {
+   "name": "an ambiguous slug goes to the heavier path",
+   "inputs": {
+    "C:\\a\\x.y": 1,
+    "C:\\a\\x-y": 5,
+    "C--a-x-y": 1
+   },
+   "expect": {
+    "C:\\a\\x.y": "c:\\a\\x.y",
+    "C:\\a\\x-y": "c:\\a\\x-y",
+    "C--a-x-y": "c:\\a\\x-y"
+   }
+  },
+  {
+   "name": "a gemini project hash matches sha256 of a real path",
+   "inputs": {
+    "C:\\Users\\User\\src\\gamma": 1,
+    "0d3b819f4bd5a46bc1e3503611fce94d63ec1365962f3cb2deb9c79669f69375": 2,
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": 1
+   },
+   "expect": {
+    "C:\\Users\\User\\src\\gamma": "c:\\users\\user\\src\\gamma",
+    "0d3b819f4bd5a46bc1e3503611fce94d63ec1365962f3cb2deb9c79669f69375": "c:\\users\\user\\src\\gamma",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  },
+  {
+   "name": "WSL /mnt paths meet their Windows form",
+   "inputs": {
+    "/mnt/c/Users/User/src/gamma/api": 1,
+    "C:\\Users\\User\\src\\gamma": 1
+   },
+   "expect": {
+    "/mnt/c/Users/User/src/gamma/api": "c:\\users\\user\\src\\gamma",
+    "C:\\Users\\User\\src\\gamma": "c:\\users\\user\\src\\gamma"
+   }
+  },
+  {
+   "name": "generic names inside a repo still fold into it",
+   "inputs": {
+    "C:\\r\\app": 1,
+    "C:\\r\\app\\src\\lib": 1,
+    "C:\\r\\app\\src": 1
+   },
+   "expect": {
+    "C:\\r\\app": "c:\\r\\app",
+    "C:\\r\\app\\src\\lib": "c:\\r\\app",
+    "C:\\r\\app\\src": "c:\\r\\app"
+   }
+  },
+  {
+   "name": "Cursor project folders and remote WSL folders",
+   "inputs": {
+    "c:\\Users\\User\\src\\example.com": 353,
+    "c:\\Users\\User\\.cursor\\projects\\c-Users-User-src-example-com": 655,
+    "vscode-remote://wsl%2Bubuntu-22.04/home/alex/src/beta/wallet": 6,
+    "vscode-remote://wsl%2Bubuntu-22.04/home/alex/src/beta/wallet/betax-app": 1,
+    "\\home\\alex\\.cursor\\projects\\home-alex-src-beta-wallet": 230,
+    "\\home\\alex\\.cursor\\projects\\home-alex-src-beta-wallet-betax-app": 1,
+    "vscode-remote://wsl%2Bubuntu-24.04/home/alex/src/example.com": 41,
+    "/Users/alex/.claude/projects/-Users-alex-src-site": 2
+   },
+   "expect": {
+    "c:\\Users\\User\\src\\example.com": "c:\\users\\user\\src\\example.com",
+    "c:\\Users\\User\\.cursor\\projects\\c-Users-User-src-example-com": "c:\\users\\user\\src\\example.com",
+    "vscode-remote://wsl%2Bubuntu-22.04/home/alex/src/beta/wallet": "/home/alex/src/beta/wallet",
+    "vscode-remote://wsl%2Bubuntu-22.04/home/alex/src/beta/wallet/betax-app": "/home/alex/src/beta/wallet",
+    "\\home\\alex\\.cursor\\projects\\home-alex-src-beta-wallet": "/home/alex/src/beta/wallet",
+    "\\home\\alex\\.cursor\\projects\\home-alex-src-beta-wallet-betax-app": "/home/alex/src/beta/wallet",
+    "vscode-remote://wsl%2Bubuntu-24.04/home/alex/src/example.com": "/home/alex/src/example.com",
+    "/Users/alex/.claude/projects/-Users-alex-src-site": "/Users/alex/src/site"
+   }
+  },
+  {
+   "name": "macOS home and a sub-folder",
+   "inputs": {
+    "/Users/alex/src/site": 4,
+    "/Users/alex/src/site/web": 1,
+    "/Users/alex": 1
+   },
+   "expect": {
+    "/Users/alex/src/site": "/Users/alex/src/site",
+    "/Users/alex/src/site/web": "/Users/alex/src/site",
+    "/Users/alex": "/Users/alex"
+   }
+  }
+ ]
+}

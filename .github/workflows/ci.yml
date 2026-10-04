@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  collector:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: collector/go.mod
+          cache-dependency-path: collector/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm test
+
+  pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check pages/site/app.js && node pages/scripts/build-index.mjs pages

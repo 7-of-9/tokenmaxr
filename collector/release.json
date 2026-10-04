@@ -1,0 +1,9 @@
+{
+  "defaultEndpoint": "",
+  "updateUrl": "https://github.com/7-of-9/tokenmaxr/releases/latest/download/latest.json",
+  "downloadBase": "https://github.com/7-of-9/tokenmaxr/releases/download/v",
+  "releasePublicKey": "96b7ttqgnW7jfZBTA4TR8rbJjZ7H716WoplKD45W0Gk=",
+  "githubAppSlug": "tokenmaxor",
+  "githubClientId": "Iv23lisUk4XpDfcdK0Mh",
+  "githubTemplateRepo": "7-of-9/tokenmaxr-pages"
+}

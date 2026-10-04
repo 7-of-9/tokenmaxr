@@ -1,0 +1,22 @@
+{
+  "sessionId": "a398ecf4-0000-4000-8000-000000000001",
+  "projectHash": "aaaa1111",
+  "startTime": "2026-01-08T05:16:22.550Z",
+  "lastUpdated": "2026-01-08T05:20:00.000Z",
+  "messages": [
+    {"id": "i-1", "timestamp": "2026-01-08T05:16:22.550Z", "type": "info", "content": "session started"},
+    {"id": "u-1", "timestamp": "2026-01-08T05:16:30.000Z", "type": "user", "content": "first synthetic prompt"},
+    {"id": "g-1", "timestamp": "2026-01-08T05:16:35.000Z", "type": "gemini", "content": "reply one", "thoughts": [],
+     "tokens": {"input": 1000, "output": 40, "cached": 600, "thoughts": 10, "tool": 5, "total": 1055}, "model": "gemini-2.5-pro",
+     "toolCalls": [{"id": "t1", "name": "read_file"}]},
+    {"id": "g-2", "timestamp": "2026-01-08T05:16:40.000Z", "type": "gemini", "content": "reply two", "thoughts": [],
+     "tokens": {"input": 200, "output": 20, "cached": 0, "thoughts": 0, "tool": 0, "total": 220}, "model": "gemini-2.5-flash"},
+    {"id": "u-2", "timestamp": "2026-01-08T05:17:00.000Z", "type": "user", "content": [{"text": "second"}, {"text": "prompt"}]},
+    {"id": "g-3", "timestamp": "2026-01-08T05:17:05.000Z", "type": "gemini", "content": "", "thoughts": [],
+     "tokens": {"input": 0, "output": 0, "cached": 0, "thoughts": 0, "tool": 0, "total": 0}, "model": "gemini-2.5-pro"},
+    {"id": "g-4", "timestamp": "2026-01-08T05:17:06.000Z", "type": "gemini", "content": "cached-heavy", "thoughts": [],
+     "tokens": {"input": 300, "output": 7, "cached": 350, "thoughts": 3, "tool": 0, "total": 310}, "model": "gemini-2.5-pro"},
+    {"id": "u-3", "timestamp": "2026-01-08T05:18:00.000Z", "type": "user", "content": "   "},
+    {"id": "u-4", "timestamp": "2026-01-08T05:19:00.000Z", "type": "user", "content": "last prompt, no reply yet"}
+  ]
+}

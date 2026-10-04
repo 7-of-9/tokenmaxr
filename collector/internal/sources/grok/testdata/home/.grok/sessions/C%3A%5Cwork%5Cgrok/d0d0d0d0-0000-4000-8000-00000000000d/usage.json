@@ -1,0 +1,1 @@
+{"sessionId":"d0d0d0d0-0000-4000-8000-00000000000d","turns":[{"turnNumber":1,"endedAt":"2026-09-28T10:01:10.000000+00:00","inputTokens":10,"outputTokens":1,"cachedReadTokens":0,"cacheCreationTokens":0,"reasoningTokens":0,"totalTokens":11,"modelCalls":1,"apiDurationMs":1000,"costUsdTicks":5,"primaryModelId":"grok-4.6-build"}]}

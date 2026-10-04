@@ -1,0 +1,24 @@
+{
+  "name": "tokenmaxr-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "tokenmaxr server: Azure Static Web Apps managed Functions (Node 22, Functions v4 programming model).",
+  "type": "module",
+  "main": "src/functions/*.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "func start",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:it": "node test/integration.test.js --it",
+    "harness": "node test/harness.js",
+    "load": "node test/load.js",
+    "create-invite": "node scripts/create-invite.js"
+  },
+  "dependencies": {
+    "@azure/data-tables": "^13.3.1",
+    "@azure/functions": "^4.7.0",
+    "@azure/storage-blob": "^12.28.0"
+  }
+}

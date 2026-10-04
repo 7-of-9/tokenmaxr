@@ -1,0 +1,137 @@
+# Builds every platform, signs the release manifest and publishes a GitHub Release.
+# Push a tag vX.Y.Z matching collector/VERSION. Installed apps update from
+# releases/latest/download/latest.json, verified with collector/release.json's
+# releasePublicKey; the private half is the COLLECTOR_SIGNING_KEY secret.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      built: ${{ steps.v.outputs.built }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          ver=$(tr -d '[:space:]' < collector/VERSION)
+          [ "v$ver" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME does not match collector/VERSION $ver"; exit 1; }
+          # The commit time, not the wall clock: rebuilds stay byte-identical.
+          built=$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: collector/go.mod
+          cache-dependency-path: collector/go.sum
+      # The menu-bar app needs cgo and Cocoa, so macOS builds on macOS.
+      - name: Build
+        working-directory: collector
+        env:
+          CGO_ENABLED: "1"
+          GOOS: darwin
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+        run: |
+          flags="-s -w -X main.version=${{ needs.version.outputs.version }} -X main.buildTime=${{ needs.version.outputs.built }} $(go run ./cmd/buildflags release.json)"
+          mkdir -p ../dist
+          for goarch in arm64 amd64; do
+            cpu=$goarch; [ "$goarch" = amd64 ] && cpu=x86_64
+            out=../dist/tokenmaxr-darwin-$goarch
+            GOARCH=$goarch CC="clang -arch $cpu" go build -trimpath -buildvcs=false -ldflags "$flags" -o "$out" ./cmd/tokenmaxr
+            [ "$(lipo -archs "$out")" = "$cpu" ] || { echo "::error::$out is not $cpu"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin
+          path: dist
+          retention-days: 1
+
+  others:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: collector/go.mod
+          cache-dependency-path: collector/go.sum
+      - name: Build Windows and Linux
+        working-directory: collector
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          flags="-s -w -X main.version=${{ needs.version.outputs.version }} -X main.buildTime=${{ needs.version.outputs.built }} $(go run ./cmd/buildflags release.json)"
+          mkdir -p ../dist
+          for goarch in amd64 arm64; do
+            GOOS=windows GOARCH=$goarch go build -trimpath -buildvcs=false -ldflags "$flags" -o ../dist/tokenmaxr-windows-$goarch.exe ./cmd/tokenmaxr
+            # The tray app: the same program without a console window.
+            GOOS=windows GOARCH=$goarch go build -trimpath -buildvcs=false -ldflags "$flags -H windowsgui" -o ../dist/tokenmaxrw-windows-$goarch.exe ./cmd/tokenmaxr
+            GOOS=linux GOARCH=$goarch go build -trimpath -buildvcs=false -ldflags "$flags" -o ../dist/tokenmaxr-linux-$goarch ./cmd/tokenmaxr
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: others
+          path: dist
+          retention-days: 1
+
+  publish:
+    needs: [version, macos, others]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: collector/go.mod
+          cache-dependency-path: collector/go.sum
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Manifest
+        run: |
+          ver=${{ needs.version.outputs.version }}
+          base="$(jq -r .downloadBase collector/release.json)$ver"
+          entry() { # key file
+            jq -n --arg url "$base/$2" --arg sha "$(sha256sum "dist/$2" | cut -d' ' -f1)" --argjson size "$(stat -c%s "dist/$2")" \
+              '{url: $url, sha256: $sha, size: $size}'
+          }
+          jq -n --arg v "$ver" --arg min "$(tr -d '[:space:]' < collector/MIN_VERSION 2>/dev/null || echo 0.1.0)" \
+            --argjson wa "$(entry windows-amd64 tokenmaxr-windows-amd64.exe)" \
+            --argjson waw "$(entry windows-amd64-w tokenmaxrw-windows-amd64.exe)" \
+            --argjson wr "$(entry windows-arm64 tokenmaxr-windows-arm64.exe)" \
+            --argjson wrw "$(entry windows-arm64-w tokenmaxrw-windows-arm64.exe)" \
+            --argjson da "$(entry darwin-arm64 tokenmaxr-darwin-arm64)" \
+            --argjson dx "$(entry darwin-amd64 tokenmaxr-darwin-amd64)" \
+            --argjson la "$(entry linux-amd64 tokenmaxr-linux-amd64)" \
+            --argjson lr "$(entry linux-arm64 tokenmaxr-linux-arm64)" \
+            '{version: $v, minVersion: $min, files: {"windows-amd64": $wa, "windows-amd64-w": $waw, "windows-arm64": $wr, "windows-arm64-w": $wrw, "darwin-arm64": $da, "darwin-amd64": $dx, "linux-amd64": $la, "linux-arm64": $lr}}' > dist/latest.json
+          cat dist/latest.json
+      - name: Sign
+        working-directory: collector
+        env:
+          COLLECTOR_SIGNING_KEY: ${{ secrets.COLLECTOR_SIGNING_KEY }}
+        run: |
+          go run ./cmd/signmanifest -expect-pubkey "$(jq -r .releasePublicKey release.json)" ../dist/latest.json
+          go run ./cmd/signmanifest -verify -pubkey "$(jq -r .releasePublicKey release.json)" ../dist/latest.json
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp install/install.ps1 install/install.sh dist/
+          (cd dist && sha256sum tokenmaxr* > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" dist/* --title "tokenmaxr ${{ needs.version.outputs.version }}" --generate-notes
