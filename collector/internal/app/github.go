@@ -198,6 +198,7 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 		gh.ShareWithFleet = cfg.GitHub.ShareWithFleet
 	}
 	cfg.GitHubFleetOptOut = false // its own sign-in now; a later sign-out opts out again
+	cfg.GitHubKeptPrefs = nil
 	if label = strings.TrimSpace(label); label != "" {
 		gh.Label = label
 	}
@@ -296,8 +297,9 @@ func githubEnabled(cfg *store.Config, sec store.Secrets) bool {
 	return cfg.GitHub != nil && cfg.GitHub.Repo != "" && sec.GitHub != nil && sec.GitHub.Token != ""
 }
 
-// publishGitHub publishes the rollup and quota meters when due (or forced).
-// Failures are recorded and logged; they never stop collection.
+// publishGitHub publishes the rollup, and the quota meters encrypted for
+// the owner (owner.json), when due (or forced). Failures are recorded and
+// logged; they never stop collection.
 func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Secrets, st *store.State, ru *rollup.Rollup, hs []homes.Home, force bool) {
 	if !githubEnabled(cfg, sec) || ru == nil || len(ru.Rows()) == 0 {
 		return // nothing read yet (e.g. the first tick only harvests evidence)
@@ -316,9 +318,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		st.GitHub.MachineID = ghpub.NewMachineID()
 	}
 	var meters []model.LimitSnapshot
-	if !cfg.GitHub.NoQuota {
-		meters = []model.LimitSnapshot{}
-		k := sec.Key()
+	if k := sec.Key(); !cfg.GitHub.NoQuota && k != nil {
 		ix := evidence.Build(st.Evidence, accounts.Spans(st.Accounts))
 		for _, h := range hs {
 			meters = append(meters, limits.Collect(a.envFor(k, cfg, st, h, ix))...)
@@ -334,23 +334,39 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	if cfg.GitHub.ShowAccountHistory {
 		history = accountHistory(ru, st)
 	}
-	files := ghpub.Files(m, ru.Rows(), meters, history, now)
+	files := ghpub.Files(m, ru.Rows(), history, now)
 	if p := ghpub.AccountUsagePath(m.ID); !cfg.GitHub.ShowAccountHistory && st.GitHub.Published[p] != "" {
 		// Opted out: the account history this machine published goes too.
 		files = append(files, ghapi.File{Path: p, Delete: true})
+	}
+	refreshMeta := st.GitHub.LastPublish.IsZero() || now.Sub(st.GitHub.LastPublish) >= 24*time.Hour
+	owner, ownerSays, err := ownerFile(cfg, sec, st, m.ID, meters, files, refreshMeta, now)
+	if err != nil {
+		st.GitHub.LastError = "owner.json: " + err.Error()
+		a.Log.Printf("github: publish: %s", st.GitHub.LastError)
+		return
+	}
+	if owner != nil {
+		files = append(files, *owner)
 	}
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	c := newGitHubClient(sec.GitHub.Token, a.Version)
-	refreshMeta := st.GitHub.LastPublish.IsZero() || now.Sub(st.GitHub.LastPublish) >= 24*time.Hour
+	sweep := cfg.GitHub.Repo + "@" + cfg.GitHub.BranchOrDefault()
+	if st.GitHub.QuotaSwept != sweep {
+		files = append(files, sweepQuota(ctx, c, cfg, st, m.ID)...)
+	}
 	changed, err := ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
 	if err != nil {
 		st.GitHub.LastError = publishErrorText(cfg, sec, err)
 		a.Log.Printf("github: publish: %s", st.GitHub.LastError)
 		return
 	}
-	st.GitHub.LastError = ""
+	st.GitHub.LastError, st.GitHub.QuotaSwept = "", sweep
+	if _, ok := changed[ghpub.OwnerPath(m.ID)]; ok {
+		st.GitHub.Owner = ownerSays
+	}
 	if changed != nil {
 		if st.GitHub.Published == nil {
 			st.GitHub.Published = map[string]string{}
@@ -371,6 +387,73 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		}
 	}
 	a.publishSite(parent, c, cfg, sec, st, now, force)
+}
+
+// sweepQuota deletes, once per repository, the quota.json files collectors
+// before 0.4.2 published in the clear: every machine's, so a retired
+// machine's goes too (git history still holds them). Each is recorded as
+// published, so Publish commits its deletion (Files deletes this machine's).
+// Without a listing of the repository this machine's own is deleted, if it
+// is there.
+func sweepQuota(ctx context.Context, c *ghapi.Client, cfg *store.Config, st *store.State, id string) []ghapi.File {
+	stale := []string{ghpub.QuotaPath(id)}
+	if paths, err := c.TreePaths(ctx, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault()); err == nil {
+		stale = ghpub.StaleQuota(paths)
+	}
+	if st.GitHub.Published == nil {
+		st.GitHub.Published = map[string]string{}
+	}
+	var files []ghapi.File
+	for _, p := range stale {
+		if _, ok := st.GitHub.Published[p]; !ok {
+			st.GitHub.Published[p] = ""
+		}
+		if p != ghpub.QuotaPath(id) {
+			files = append(files, ghapi.File{Path: p, Delete: true})
+		}
+	}
+	return files
+}
+
+// ownerFile is this publish's owner.json (nil: nothing to commit) and what
+// it says (store.OwnerState), to record once it is committed. It holds the
+// quota meters (plans, account emails, organisations) as the owner's server
+// would show them, encrypted with the owner key (ghpub owner.go). It is
+// committed when what it says changed; meters that were only read again
+// wait for a commit that happens anyway (other data, or the daily meta.json
+// refresh), so it never commits by itself every publish. It is deleted when
+// quota meters are off, there are none, or there is no fleet key. Accounts
+// a meter names without an email take the one in its local label.
+func ownerFile(cfg *store.Config, sec store.Secrets, st *store.State, id string, meters []model.LimitSnapshot, files []ghapi.File, refreshMeta bool, now time.Time) (*ghapi.File, store.OwnerState, error) {
+	p := ghpub.OwnerPath(id)
+	_, published := st.GitHub.Published[p]
+	k := sec.Key()
+	labelled := slices.Clone(meters)
+	for i, s := range labelled {
+		if s.Label == "" && s.Acct != "" {
+			labelled[i].Label = limits.EmailOf(cfg.AccountLabels[s.Acct])
+		}
+	}
+	rows := ghpub.OwnerRows(labelled, now)
+	if k == nil || len(rows) == 0 {
+		if published {
+			return &ghapi.File{Path: p, Delete: true}, store.OwnerState{}, nil
+		}
+		return nil, store.OwnerState{}, nil
+	}
+	data, read := ghpub.OwnerDigests(k, id, rows)
+	o := st.GitHub.Owner
+	switch {
+	case published && o.Data == data:
+		return nil, o, nil
+	case published && o.Meters == read && !refreshMeta && !ghpub.Pending(files, st.GitHub.Published):
+		return nil, o, nil // read again only: with the next commit
+	}
+	b, err := ghpub.SealOwner(k, id, ghpub.OwnerPlaintext(rows), nil)
+	if err != nil {
+		return nil, o, err
+	}
+	return &ghapi.File{Path: p, Content: b}, store.OwnerState{Data: data, Meters: read}, nil
 }
 
 // siteBuild is the dashboard this collector carries (replaced in tests).

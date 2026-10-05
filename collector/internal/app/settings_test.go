@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -391,4 +392,92 @@ func embeddedSettingsPage(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// The page fetches the dashboard's owner key (to hand to the dashboard it
+// opened, or for an unlock link) only with a POST from itself, and only when
+// this machine publishes to GitHub with a dashboard and a fleet key. The key
+// never shows in the page's state.
+func TestSettingsUnlockKey(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	k := localKey(t, a)
+	_, base := settingsPage(t, a, nil)
+	origin, _, _ := strings.Cut(base, "/s/")
+	want := base64.RawURLEncoding.EncodeToString(ghpub.OwnerKey(k))
+	unlock := func() (int, map[string]any) { return postJSON(t, base, "api/github/unlock", map[string]any{}) }
+
+	// Not publishing to GitHub.
+	if code, out := unlock(); code != 400 || out["key"] != nil || !strings.Contains(fmt.Sprint(out["error"]), "not publishing") {
+		t.Fatalf("not publishing: %d %v", code, out)
+	}
+	sec, _ := store.LoadSecrets(a.Home)
+	sec.GitHub = &store.GitHubSecrets{Token: "ghu_test", Login: "octo", UserID: 42}
+	store.SaveSecrets(a.Home, sec)
+	cfg, _ := store.LoadConfig(a.Home)
+	cfg.GitHub = &store.GitHubConfig{Repo: "octo/agent-usage", Label: "laptop"}
+	store.SaveConfig(a.Home, cfg)
+	// No dashboard address yet.
+	if code, out := unlock(); code != 400 || out["key"] != nil || !strings.Contains(fmt.Sprint(out["error"]), "no address") {
+		t.Fatalf("no dashboard: %d %v", code, out)
+	}
+	if st, _ := getState(t, base); st.GitHub.CanUnlock {
+		t.Fatal("offered without a dashboard")
+	}
+	st, _ := store.LoadState(a.Home)
+	st.GitHub.PagesURL = "https://octo.github.io/agent-usage/"
+	store.SaveState(a.Home, st)
+	got, raw := getState(t, base)
+	if !got.GitHub.CanUnlock || strings.Contains(raw, want) {
+		t.Fatalf("state %s", raw)
+	}
+	if code, out := unlock(); code != 200 || out["key"] != want {
+		t.Fatalf("unlock: %d %v", code, out)
+	}
+
+	// Only a POST from the page itself: not a GET, another origin, a form
+	// post or another token.
+	if r, _ := http.Get(base + "api/github/unlock"); r.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET: %d", r.StatusCode)
+	}
+	for name, mod := range map[string]func(*http.Request){
+		"no origin":      func(r *http.Request) { r.Header.Del("Origin") },
+		"another origin": func(r *http.Request) { r.Header.Set("Origin", "https://octo.github.io") },
+		"form":           func(r *http.Request) { r.Header.Set("Content-Type", "application/x-www-form-urlencoded") },
+	} {
+		req, _ := http.NewRequest(http.MethodPost, base+"api/github/unlock", strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", origin)
+		mod(req)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden || strings.Contains(string(body), want) {
+			t.Fatalf("%s: %d %s", name, res.StatusCode, body)
+		}
+	}
+	if code, _ := postJSON(t, origin+"/s/not-the-token/", "api/github/unlock", map[string]any{}); code != 404 {
+		t.Fatalf("wrong token: %d", code)
+	}
+
+	// No fleet key.
+	sec, _ = store.LoadSecrets(a.Home)
+	sec.K = ""
+	store.SaveSecrets(a.Home, sec)
+	if code, out := unlock(); code != 400 || out["key"] != nil {
+		t.Fatalf("no fleet key: %d %v", code, out)
+	}
+	if st, _ := getState(t, base); st.GitHub.CanUnlock {
+		t.Fatal("offered without a fleet key")
+	}
+	// A dashboard address that is not https is never handed the key.
+	sec.K = base64.StdEncoding.EncodeToString(k)
+	store.SaveSecrets(a.Home, sec)
+	st.GitHub.PagesURL = "http://octo.github.io/agent-usage/"
+	store.SaveState(a.Home, st)
+	if code, _ := unlock(); code != 400 {
+		t.Fatalf("http dashboard: %d", code)
+	}
 }

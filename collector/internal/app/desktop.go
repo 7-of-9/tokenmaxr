@@ -96,6 +96,8 @@ type Desktop struct {
 	// come back minimized, so they never take the focus.
 	restartShown bool
 	stopping     bool
+	// ready: the UI is up (Ready ran); requests wait for it.
+	ready bool
 	// panel is the pinned panel as config.json keeps it.
 	panel store.Panel
 	// popup: the click popup is open.
@@ -226,7 +228,7 @@ func (a *App) newDesktop(parent context.Context) *Desktop {
 // Ready attaches the icon (ui.Handler.Ready).
 func (d *Desktop) Ready(u tray.UI) {
 	d.mu.Lock()
-	d.ui = u
+	d.ui, d.ready = u, true
 	stopping := d.stopping
 	d.mu.Unlock()
 	if stopping {
@@ -475,6 +477,9 @@ func (d *Desktop) openSettings() error {
 	if err != nil {
 		return err
 	}
+	// Seen once: a later start (a restart from the settings page included)
+	// never opens it by itself.
+	d.a.markFirstRunSettings()
 	return d.open(u)
 }
 
@@ -636,6 +641,14 @@ func (d *Desktop) watch() {
 // requests handles a second launch (show), uninstall (quit) and a binary
 // replaced by install or another process's update (restart).
 func (d *Desktop) requests() {
+	d.mu.Lock()
+	later := d.stopping || d.hasUI && !d.ready
+	d.mu.Unlock()
+	if later {
+		// Left for the UI about to come up, or for the process a restart
+		// starts (install's show follows its restart).
+		return
+	}
 	for _, v := range instance.Take(d.a.Home) {
 		switch v {
 		case instance.Quit:
@@ -713,18 +726,22 @@ func (d *Desktop) draw() {
 
 // dump writes what the menu, the panel and the popup show now to
 // app.view.txt, and the UI's own state (the popup window): display text
-// only (no token, K or paths), for diagnostics.
+// only (no token, K or paths), for diagnostics. A headless run (no UI: no
+// icon and no window) says so, and has no window to describe.
 func (d *Desktop) dump() error {
 	d.mu.Lock()
 	v, pinned, popup, u := d.view, d.panel.Pinned, d.popup, d.ui
-	trayOnly, minimized, window := d.trayOnly, d.minimized, d.window
+	trayOnly, minimized, window, hasUI := d.trayOnly, d.minimized, d.window, d.hasUI
 	d.mu.Unlock()
 	var b strings.Builder
-	mode := "window (main window with a taskbar button / Dock icon, and the tray icon)"
-	if trayOnly {
-		mode = "tray only (config.json trayOnly)"
+	switch {
+	case !hasUI:
+		b.WriteString("mode: headless (no tray icon or window)\n")
+	case trayOnly:
+		b.WriteString("mode: tray only (config.json trayOnly)\n")
+	default:
+		fmt.Fprintf(&b, "mode: window (main window with a taskbar button / Dock icon, and the tray icon)\nstarted minimized: %v\nwindow on screen: %v\n", minimized, window)
 	}
-	fmt.Fprintf(&b, "mode: %s\nstarted minimized: %v\nwindow on screen: %v\n", mode, minimized, window)
 	fmt.Fprintf(&b, "pinned: %v\npopup open: %v\ntick every: %s\nrefresh every: %s\ncolor: %s\ntooltip: %s\n\nmenu model (the popup draws it):\n",
 		pinned, popup, tickInterval(pinned), refreshInterval(pinned || popup || window), v.Color, v.Tooltip)
 	for _, it := range tray.Menu(v) {
@@ -738,7 +755,7 @@ func (d *Desktop) dump() error {
 	}
 	b.WriteString("\npanel:\n" + tray.SheetText(tray.Panel(v), "  "))
 	b.WriteString("\npopup rows:\n" + tray.SheetText(tray.Popup(v), "  "))
-	if !trayOnly {
+	if hasUI && !trayOnly {
 		b.WriteString("\nwindow rows:\n" + tray.SheetText(tray.Window(v), "  "))
 	}
 	if s := u.Debug(); s != "" {
@@ -798,7 +815,9 @@ func (a *App) reexecApp(minimized bool) error {
 
 // restartArgs is the app's command line for a restart: its own arguments,
 // with the app command made explicit (a start with none, or only --home,
-// is the app) and --minimized set as asked.
+// is the app) and --minimized set as asked. A restart that shows the window
+// (a switch to it on the settings page) drops --watchdog too, which would
+// start it minimized: that restart is the user's, not the watchdog's.
 func restartArgs(args []string, minimized bool) []string {
 	var out []string
 	cmd := false
@@ -808,7 +827,7 @@ func restartArgs(args []string, minimized bool) []string {
 			cmd = true
 		}
 		if cmd {
-			if name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); strings.HasPrefix(arg, "-") && name == "minimized" {
+			if name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); strings.HasPrefix(arg, "-") && (name == "minimized" || name == "watchdog" && !minimized) {
 				continue
 			}
 			out = append(out, arg)

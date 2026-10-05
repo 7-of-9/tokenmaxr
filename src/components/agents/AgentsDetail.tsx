@@ -147,7 +147,7 @@ const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeD
     const byId = new Map(machines.map((m) => [m.id, m]))
     return placeTotals(days, view, range.from, range.to, 'byMachine').map((t) => {
       const m = byId.get(t.key)
-      return { key: t.key, cc: m?.cc || 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Machine unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts }
+      return { key: t.key, cc: m?.cc || 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts }
     })
   }, [days, view, range, machines])
 

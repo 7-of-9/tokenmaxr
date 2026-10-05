@@ -12,6 +12,9 @@ import (
 // the main window's WS_EX_APPWINDOW gives it its taskbar button.
 func setActivation(window bool) {}
 
+// replyTerminate is a macOS concern (a termination the system asked for).
+func replyTerminate() bool { return false }
+
 // confirm is a native OK/Cancel message box, brought to the front.
 func confirm(question string) bool {
 	text, err := windows.UTF16PtrFromString(question)

@@ -12,11 +12,12 @@
 // Everything Files produces is public by design: per-machine meta (a public
 // label, never the hostname; the country only when the owner opts in), daily
 // token and prompt totals per provider, source, model, account hash and event
-// quality, quota meters without emails or org names, and (only when the owner
-// opts in, as UTC days next to local dates reveal the time zone's offset)
-// account history: provider account totals per UTC day with the local tokens
-// per UTC day they reconcile against. No event, prompt text, path or project
-// ever leaves the machine this way.
+// quality, and (only when the owner opts in, as UTC days next to local dates
+// reveal the time zone's offset) account history: provider account totals per
+// UTC day with the local tokens per UTC day they reconcile against. No event,
+// prompt text, path or project ever leaves the machine this way. Quota meters
+// (plans, account emails, organisations, reset times) are published only
+// encrypted, for the owner's eyes (owner.go: owner.json).
 //
 // PublishSite (site.go) keeps the repository's dashboard, site/, at the
 // newest build any of its collectors carries.
@@ -41,7 +42,6 @@ import (
 	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/ghapi"
-	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/rollup"
 )
 
@@ -191,9 +191,6 @@ func NewMachineID() string {
 	return "m_" + hex.EncodeToString(b)
 }
 
-// MeterMaxAge drops quota meters last read longer ago than this.
-const MeterMaxAge = 7 * 24 * time.Hour
-
 // Machine is how this machine appears in the repository.
 type Machine struct {
 	ID, Label, OS, Collector string
@@ -262,24 +259,20 @@ type AccountHistory struct {
 // AccountUsagePath is machine id's account-usage.json.
 func AccountUsagePath(id string) string { return MachineDir(id) + "/account-usage.json" }
 
-// Meter is one published quota meter.
-type Meter struct {
-	Provider    string     `json:"provider"`
-	Source      string     `json:"source"`
-	Acct        string     `json:"acct,omitempty"`
-	Window      string     `json:"window"`
-	Scope       string     `json:"scope,omitempty"`
-	Plan        string     `json:"plan,omitempty"`
-	UsedPercent *float64   `json:"usedPercent,omitempty"`
-	ResetsAt    *time.Time `json:"resetsAt,omitempty"`
-	ObservedAt  time.Time  `json:"observedAt"`
-	Status      string     `json:"status,omitempty"`
-}
+// QuotaPath is machine id's quota.json, which collectors before 0.4.2
+// published in the clear (plans and reset times): Files deletes it.
+func QuotaPath(id string) string { return MachineDir(id) + "/quota.json" }
 
-type quotaFile struct {
-	Schema  int     `json:"schema"`
-	Machine string  `json:"machine"`
-	Meters  []Meter `json:"meters"`
+// StaleQuota returns the quota.json paths among paths (the repository's
+// files), every machine's: a retired machine's is never published again.
+func StaleQuota(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if id, ok := strings.CutPrefix(p, "data/machines/"); ok && strings.HasSuffix(id, "/quota.json") && strings.Count(id, "/") == 1 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 type metaFile struct {
@@ -313,10 +306,11 @@ func marshal(v any) []byte {
 }
 
 // Files builds the machine's files: meta.json, one usage-YYYY-MM.json per
-// month with data, quota.json (meters nil: none published) and
-// account-usage.json (none when history has neither totals nor ledger).
-// Deterministic for the same input, so unchanged data hashes the same.
-func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, history AccountHistory, now time.Time) []ghapi.File {
+// month with data, account-usage.json (none when history has neither totals
+// nor ledger), and the deletion of a quota.json an older collector published
+// (Publish commits it only while that file is published). Deterministic for
+// the same input, so unchanged data hashes the same.
+func Files(m Machine, rows []rollup.Row, history AccountHistory, now time.Time) []ghapi.File {
 	dir := MachineDir(m.ID)
 	byMonth := map[string][][]any{}
 	for _, r := range rows {
@@ -331,20 +325,7 @@ func Files(m Machine, rows []rollup.Row, meters []model.LimitSnapshot, history A
 	for _, month := range slices.Sorted(maps.Keys(byMonth)) {
 		files = append(files, ghapi.File{Path: dir + "/usage-" + month + ".json", Content: marshal(usageFile{Schema: Schema, Machine: m.ID, Month: month, Cols: UsageCols, Rows: byMonth[month]})})
 	}
-	if meters != nil {
-		q := quotaFile{Schema: Schema, Machine: m.ID, Meters: []Meter{}}
-		for _, s := range meters {
-			if now.Sub(s.ObservedAt) > MeterMaxAge {
-				continue // a meter nobody read for a week says nothing now
-			}
-			q.Meters = append(q.Meters, Meter{Provider: s.Provider, Source: s.Source, Acct: s.Acct, Window: s.Window, Scope: s.Scope,
-				Plan: s.Plan, UsedPercent: s.UsedPercent, ResetsAt: s.ResetsAt, ObservedAt: s.ObservedAt.UTC(), Status: s.Status})
-		}
-		slices.SortFunc(q.Meters, func(a, b Meter) int {
-			return strings.Compare(a.Provider+a.Source+a.Acct+a.Window+a.Scope, b.Provider+b.Source+b.Acct+b.Window+b.Scope)
-		})
-		files = append(files, ghapi.File{Path: dir + "/quota.json", Content: marshal(q)})
-	}
+	files = append(files, ghapi.File{Path: QuotaPath(m.ID), Delete: true})
 	if f, ok := accountUsage(m.ID, history); ok {
 		files = append(files, ghapi.File{Path: AccountUsagePath(m.ID), Content: marshal(f)})
 	}
@@ -388,6 +369,23 @@ func accountUsage(machine string, h AccountHistory) (accountUsageFile, bool) {
 	}
 	f.Unledgered = slices.Compact(slices.Sorted(slices.Values(h.Unledgered)))
 	return f, len(f.Snapshots) > 0 || len(f.Ledger) > 0
+}
+
+// Pending reports whether Publish would commit any of files other than
+// meta.json: a changed file, or a deletion of a published one.
+func Pending(files []ghapi.File, published map[string]string) bool {
+	for _, f := range files {
+		switch {
+		case strings.HasSuffix(f.Path, "/meta.json"):
+		case f.Delete:
+			if _, ok := published[f.Path]; ok {
+				return true
+			}
+		case published[f.Path] != Hash(f.Content):
+			return true
+		}
+	}
+	return false
 }
 
 // Hash is the content hash recorded per published path.
@@ -439,8 +437,14 @@ func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, f
 	err := commitRetrying(ctx, c, repo, branch, msg, commit)
 	if ghapi.StatusOf(err) == http.StatusUnprocessableEntity && slices.ContainsFunc(commit, func(f ghapi.File) bool { return f.Delete }) {
 		// GitHub cannot delete a path that is gone already (removed by
-		// hand): commit the rest; the deleted paths count as deleted.
-		err = commitRetrying(ctx, c, repo, branch, msg, slices.DeleteFunc(commit, func(f ghapi.File) bool { return f.Delete }))
+		// hand, or by another machine's sweep): commit the rest, with the
+		// deletions of paths still there when the branch lists; the gone
+		// ones count as deleted.
+		var there []string
+		if paths, lerr := c.TreePaths(ctx, repo, branch); lerr == nil {
+			there = paths
+		}
+		err = commitRetrying(ctx, c, repo, branch, msg, slices.DeleteFunc(commit, func(f ghapi.File) bool { return f.Delete && !slices.Contains(there, f.Path) }))
 	}
 	if err != nil {
 		return nil, err

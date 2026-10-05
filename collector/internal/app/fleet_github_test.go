@@ -677,3 +677,257 @@ func TestFleetEarlierSignOutStaysAStop(t *testing.T) {
 		t.Fatalf("logout said %q", out.String())
 	}
 }
+
+// shareOf opens the share the fake server holds.
+func (fx *fleetFixture) shareOf(t *testing.T) fleetshare.Share {
+	t.Helper()
+	_, _, _, cur := fx.api.fleetCounts()
+	if cur == nil {
+		t.Fatal("nothing shared")
+	}
+	s, err := fleetshare.Open(fx.k, cur.Blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// setOptIns saves the country and account-history choices on a's settings
+// page, the label and the rest unchanged.
+func setOptIns(t *testing.T, a *App, country, history bool) {
+	t.Helper()
+	cfg, _ := store.LoadConfig(a.Home)
+	if err := NewSettings(a, nil).saveGitHubOptions("", 0, cfg.GitHub.NoQuota, country, history, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The sharer passes its country and account-history choices on with the
+// sign-in. Adopting machines take every choice not made on them (shown as
+// "from <sharer>"), and follow the sharer's later changes, which it shares
+// again at once; a choice made on a machine stays its own. A machine opted
+// out of the fleet's sign-in takes nothing.
+func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
+	fx := newFleet(t)
+	if p := fx.shareOf(t).Prefs; p == nil || p.From != "desk" || p.ShowCountry || p.ShowAccountHistory {
+		t.Fatalf("shared prefs %+v", p)
+	}
+	b := fx.join(t, "second", "Laptop B")
+	c := fx.join(t, "third", "Laptop C")
+	d := fx.join(t, "fourth", "Laptop D")
+	for _, m := range []*App{b, c, d} {
+		tick(t, m, TickOptions{})
+	}
+	if err := d.GitHubLogout(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := store.LoadConfig(b.Home)
+	if !cfg.GitHub.Adopted || cfg.GitHub.PrefsFrom != "desk" || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "desk" || cfg.GitHub.ShowCountry {
+		t.Fatalf("adopted %+v", cfg.GitHub)
+	}
+	// C chooses the country flag itself.
+	setOptIns(t, c, true, false)
+
+	// The sharer opts in to both: it shares again with its next tick.
+	fx.advance(time.Minute)
+	_, puts, _, _ := fx.api.fleetCounts()
+	setOptIns(t, fx.a, true, true)
+	tick(t, fx.a, TickOptions{})
+	if _, p, _, _ := fx.api.fleetCounts(); p != puts+1 {
+		t.Fatalf("changed choices not shared again: %d puts", p-puts)
+	}
+	if p := fx.shareOf(t).Prefs; p == nil || !p.ShowCountry || !p.ShowAccountHistory {
+		t.Fatalf("shared prefs %+v", p)
+	}
+	tick(t, fx.a, TickOptions{})
+	if _, p, _, _ := fx.api.fleetCounts(); p != puts+1 {
+		t.Fatal("unchanged choices shared again")
+	}
+	fx.advance(fleetPollEvery)
+	for _, m := range []*App{b, c, d} {
+		tick(t, m, TickOptions{})
+	}
+	cfg, _ = store.LoadConfig(b.Home)
+	if !cfg.GitHub.ShowCountry || !cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" {
+		t.Fatalf("B did not follow: %+v", cfg.GitHub)
+	}
+	out := statusOf(t, b)
+	if !strings.Contains(out, "country (flag) published (from desk)") || !strings.Contains(out, "Codex account history published (from desk)") {
+		t.Fatalf("B status:\n%s", out)
+	}
+	v, err := NewSettings(b, nil).state()
+	if err != nil || v.GitHub.ShowCountryFrom != "desk" || v.GitHub.ShowAccountHistoryFrom != "desk" {
+		t.Fatalf("B settings %+v: %v", v.GitHub, err)
+	}
+	cfg, _ = store.LoadConfig(c.Home)
+	if !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "" || !cfg.GitHub.ShowAccountHistory {
+		t.Fatalf("C %+v", cfg.GitHub)
+	}
+	if cfg, _ := store.LoadConfig(d.Home); cfg.GitHub != nil {
+		t.Fatal("the opted-out machine took the sign-in")
+	}
+
+	// The sharer opts out of the country again: B follows, C keeps its own.
+	fx.advance(time.Minute)
+	setOptIns(t, fx.a, false, true)
+	tick(t, fx.a, TickOptions{})
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	tick(t, c, TickOptions{})
+	if cfg, _ := store.LoadConfig(b.Home); cfg.GitHub.ShowCountry || !cfg.GitHub.ShowAccountHistory {
+		t.Fatalf("B %+v", cfg.GitHub)
+	}
+	if out := statusOf(t, b); !strings.Contains(out, "country (flag) not published (from desk)") {
+		t.Fatalf("B status:\n%s", out)
+	}
+	cfg, _ = store.LoadConfig(c.Home)
+	if !cfg.GitHub.ShowCountry {
+		t.Fatal("the sharer overrode C's own choice")
+	}
+	if out := statusOf(t, c); !strings.Contains(out, "country (flag) published") || strings.Contains(out, "country (flag) published (from") {
+		t.Fatalf("C status:\n%s", out)
+	}
+
+	// B turns the account history off itself: the sharer no longer changes it.
+	setOptIns(t, b, false, false)
+	fx.advance(time.Minute)
+	setOptIns(t, fx.a, true, true)
+	tick(t, fx.a, TickOptions{})
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	cfg, _ = store.LoadConfig(b.Home)
+	if !cfg.GitHub.ShowCountry || cfg.GitHub.ShowAccountHistory || !cfg.GitHub.LocalPref(store.PrefShowAccountHistory) {
+		t.Fatalf("B %+v", cfg.GitHub)
+	}
+}
+
+// A share from a collector before 0.4.2 carries no choices: it is adopted
+// as before and nothing is followed. An adopted machine that switched an
+// opt-in on before it followed any choices keeps it as its own.
+func TestFleetSharesWithoutOptInsAndEarlierChoices(t *testing.T) {
+	fx := newFleet(t)
+	b := fx.join(t, "second", "Laptop B")
+	fx.advance(time.Minute)
+	fx.api.mu.Lock()
+	fx.api.fleetGitHub = &fakeFleetGitHub{Blob: mustSeal(t, fx), UpdatedAt: time.Now(), By: "m_first"}
+	fx.api.mu.Unlock()
+	tick(t, b, TickOptions{})
+	cfg, _ := store.LoadConfig(b.Home)
+	if cfg.GitHub == nil || !cfg.GitHub.Adopted || cfg.GitHub.PrefsFrom != "" || cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "" {
+		t.Fatalf("adopted %+v", cfg.GitHub)
+	}
+	if out := statusOf(t, b); strings.Contains(out, "(from") {
+		t.Fatalf("status:\n%s", out)
+	}
+
+	// As on 0.4.1: the country switched on by hand, no choices followed yet.
+	cfg.GitHub.ShowCountry = true
+	if err := store.SaveConfig(b.Home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	fx.advance(time.Minute)
+	blob, err := fleetshare.Seal(fx.k, fleetshare.Share{Token: "ghu_test", Login: "octo", UserID: 42, Repo: "octo/agent-usage", SharedAt: fx.now.UTC(),
+		Prefs: &fleetshare.Prefs{From: "desk", ShowCountry: false, ShowAccountHistory: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.api.mu.Lock()
+	fx.api.fleetGitHub = &fakeFleetGitHub{Blob: blob, UpdatedAt: time.Now(), By: "m_first"}
+	fx.api.mu.Unlock()
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	cfg, _ = store.LoadConfig(b.Home)
+	if !cfg.GitHub.ShowCountry || !cfg.GitHub.LocalPref(store.PrefShowCountry) || !cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" {
+		t.Fatalf("after the first choices %+v", cfg.GitHub)
+	}
+}
+
+// A choice made on an adopted machine outlasts the share: withdrawn and
+// shared again (the sharer signs out and in, say), the machine keeps its own
+// choice and follows the sharer in the rest.
+func TestFleetOwnChoicesOutlastAWithdrawal(t *testing.T) {
+	fx := newFleet(t)
+	b := fx.join(t, "second", "Laptop B")
+	tick(t, b, TickOptions{})
+	fx.advance(time.Minute)
+	setOptIns(t, fx.a, true, false)
+	tick(t, fx.a, TickOptions{})
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	if cfg, _ := store.LoadConfig(b.Home); !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "desk" {
+		t.Fatalf("B did not follow: %+v", cfg.GitHub)
+	}
+	// B opts out of the country flag itself.
+	setOptIns(t, b, false, false)
+
+	fx.api.mu.Lock()
+	fx.api.fleetGitHub = nil
+	fx.api.mu.Unlock()
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	cfg, _ := store.LoadConfig(b.Home)
+	if cfg.GitHub != nil || cfg.GitHubKeptPrefs == nil {
+		t.Fatalf("withdrawn: github %+v, kept %+v", cfg.GitHub, cfg.GitHubKeptPrefs)
+	}
+
+	fx.advance(time.Minute)
+	blob, err := fleetshare.Seal(fx.k, fleetshare.Share{Token: "ghu_test", Login: "octo", UserID: 42, Repo: "octo/agent-usage", SharedAt: fx.now.UTC(),
+		Prefs: &fleetshare.Prefs{From: "desk", ShowCountry: true, ShowAccountHistory: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.api.mu.Lock()
+	fx.api.fleetGitHub = &fakeFleetGitHub{Blob: blob, UpdatedAt: time.Now(), By: "m_first"}
+	fx.api.mu.Unlock()
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	cfg, _ = store.LoadConfig(b.Home)
+	if cfg.GitHub == nil || !cfg.GitHub.Adopted || cfg.GitHub.ShowCountry || !cfg.GitHub.LocalPref(store.PrefShowCountry) ||
+		!cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" || cfg.GitHubKeptPrefs != nil {
+		t.Fatalf("adopted again: github %+v, kept %+v", cfg.GitHub, cfg.GitHubKeptPrefs)
+	}
+}
+
+// A machine that took the share under a collector before 0.4.2 (which
+// ignored its choices) follows them once it upgrades, without waiting for
+// the sharer to share again; an older share served again is not taken.
+func TestFleetUpgradedAdopterFollowsTheShareItTook(t *testing.T) {
+	fx := newFleet(t)
+	fx.advance(time.Minute)
+	setOptIns(t, fx.a, true, false)
+	tick(t, fx.a, TickOptions{})
+	b := fx.join(t, "second", "Laptop B")
+	tick(t, b, TickOptions{})
+
+	// What 0.4.1 would have stored for that share.
+	cfg, _ := store.LoadConfig(b.Home)
+	cfg.GitHub.ShowCountry, cfg.GitHub.PrefsFrom, cfg.GitHub.LocalPrefs = false, "", nil
+	if err := store.SaveConfig(b.Home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	cfg, _ = store.LoadConfig(b.Home)
+	if !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "desk" {
+		t.Fatalf("upgraded adopter %+v", cfg.GitHub)
+	}
+
+	// An older share with other choices, served again, changes nothing.
+	old, err := fleetshare.Seal(fx.k, fleetshare.Share{Token: "ghu_test", Login: "octo", UserID: 42, Repo: "octo/agent-usage", SharedAt: fx.now.Add(-time.Hour).UTC(),
+		Prefs: &fleetshare.Prefs{From: "desk", ShowCountry: false}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.api.mu.Lock()
+	fx.api.fleetGitHub = &fakeFleetGitHub{Blob: old, UpdatedAt: time.Now(), By: "m_first"}
+	fx.api.mu.Unlock()
+	cfg.GitHub.PrefsFrom = ""
+	if err := store.SaveConfig(b.Home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	fx.advance(fleetPollEvery)
+	tick(t, b, TickOptions{})
+	if cfg, _ := store.LoadConfig(b.Home); !cfg.GitHub.ShowCountry {
+		t.Fatalf("an older share's choices were taken: %+v", cfg.GitHub)
+	}
+}

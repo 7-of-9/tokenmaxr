@@ -63,4 +63,9 @@ func d0m1WindowResign() { windowResign() }
 func d0m1WindowReopen() { go showMainWindow() }
 
 //export d0m1WindowQuit
-func d0m1WindowQuit() { windowQuit() }
+func d0m1WindowQuit() C.int {
+	if windowQuit() {
+		return 1
+	}
+	return 0
+}

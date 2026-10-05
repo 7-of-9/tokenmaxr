@@ -372,6 +372,10 @@ func TestInstallAutostartModes(t *testing.T) {
 	if len(spawned) != 1 || !slices.Equal(spawned[0][len(spawned[0])-2:], []string{"app", "--minimized"}) || instance.Stopped(a.Home) {
 		t.Fatalf("app not started (or still marked stopped): %q", spawned)
 	}
+	// Started minimized, as at login, then asked to show its window.
+	if got := instance.Take(a.Home); !slices.Equal(got, []instance.Verb{instance.Show}) {
+		t.Fatalf("install requests %v, want show", got)
+	}
 	if len(path.dirs) != 1 {
 		t.Fatalf("PATH %v", path.dirs)
 	}
@@ -383,16 +387,35 @@ func TestInstallAutostartModes(t *testing.T) {
 		t.Fatalf("status:\n%s", s)
 	}
 
-	// Re-install while the app runs: it is told to restart on the new binary.
+	// Re-install while the app runs: it is told to restart on the new binary,
+	// and once it has taken that, to show its window.
 	lk, err := instance.Claim(a.Home)
 	if err != nil {
 		t.Fatal(err)
 	}
+	took := make(chan []instance.Verb, 1)
+	go func() {
+		for range 200 {
+			if instance.Waiting(a.Home, instance.Restart) {
+				time.Sleep(50 * time.Millisecond)
+				took <- instance.Take(a.Home)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		took <- nil
+	}()
 	if err := a.Install(ctx, InstallOptions{Yes: true}); err != nil {
+		lk.Release()
 		t.Fatalf("reinstall: %v", err)
 	}
-	if got := instance.Take(a.Home); !slices.Equal(got, []instance.Verb{instance.Restart}) || len(spawned) != 1 {
+	if got := <-took; !slices.Equal(got, []instance.Verb{instance.Restart}) || len(spawned) != 1 {
+		lk.Release()
 		t.Fatalf("requests %v, spawned %d", got, len(spawned))
+	}
+	if got := instance.Take(a.Home); !slices.Equal(got, []instance.Verb{instance.Show}) {
+		lk.Release()
+		t.Fatalf("after the restart: %v, want show", got)
 	}
 	out.Reset()
 	a.Status()
@@ -452,6 +475,34 @@ func TestDesktopRestartRequest(t *testing.T) {
 	}
 	if !errors.Is(d.ctx.Err(), context.Canceled) {
 		t.Fatal(d.ctx.Err())
+	}
+}
+
+// Requests wait for the UI (a show sent while it starts, as install's is) and
+// are left for the next process while this one stops (install's show after a
+// restart); headless, with no UI, they are taken at once.
+func TestDesktopRequestsWaitForTheUI(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	d := a.newDesktop(context.Background())
+	os.MkdirAll(a.Home, 0o700)
+	d.hasUI = true
+	instance.Send(a.Home, instance.Show)
+	d.requests()
+	if !instance.Waiting(a.Home, instance.Show) {
+		t.Fatal("show taken before the UI was up")
+	}
+	d.hasUI = false
+	d.requests()
+	if instance.Waiting(a.Home, instance.Show) {
+		t.Fatal("headless: show not taken")
+	}
+	instance.Send(a.Home, instance.Show)
+	d.mu.Lock()
+	d.stopping = true
+	d.mu.Unlock()
+	d.requests()
+	if !instance.Waiting(a.Home, instance.Show) {
+		t.Fatal("a stopping app took the show meant for the next one")
 	}
 }
 

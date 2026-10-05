@@ -18,7 +18,7 @@
       <div class="head"><h2>GitHub</h2><span class="badge" id="gh-badge"></span></div>
 
       <div id="gh-off" hidden>
-        <p>Publish daily token totals and quota meters to a public repository in your GitHub account, with a dashboard on GitHub Pages. Only totals are published: no prompts, code, file paths, hostnames or emails.</p>
+        <p>Publish daily token totals to a public repository in your GitHub account, with a dashboard on GitHub Pages, and your plans' quota meters encrypted for you alone. Only totals are published: no prompts, code, file paths or hostnames, and account emails only inside the encrypted meters.</p>
         <label class="field">Name this machine on the dashboard (public)
           <input id="gh-new-label" maxlength="64" autocomplete="off" placeholder="e.g. laptop (blank: a random name, never the hostname)">
         </label>
@@ -49,6 +49,13 @@
           <dt>Dashboard</dt><dd id="gh-pages"></dd>
           <dt>Last published</dt><dd id="gh-last"></dd>
         </dl>
+        <div id="gh-unlock-box" hidden>
+          <div class="row">
+            <button id="gh-unlock">Open my dashboard (unlocked)</button>
+            <button id="gh-unlock-copy">Copy unlock link</button>
+          </div>
+          <p class="hint">Unlocked, the dashboard also shows your Agents page (plans, account emails, quota left). The unlock link unlocks it for whoever has it, and stays in that browser's history.</p>
+        </div>
         <p class="error" id="gh-error" hidden></p>
         <p class="hint" id="gh-fleet" hidden></p>
         <p class="error" id="gh-fleet-error" hidden></p>
@@ -65,9 +72,9 @@
             <option value="1440">day</option>
           </select>
         </label>
-        <label class="check"><input type="checkbox" id="gh-quota"> Publish quota meters (how much of each plan's weekly limit is used)</label>
-        <label class="check"><input type="checkbox" id="gh-country"> Show this machine's country (flag) on the public dashboard</label>
-        <label class="check"><input type="checkbox" id="gh-history"> Publish Codex account history (its daily account totals and this machine's tokens per UTC day, which reveal your time zone's offset)</label>
+        <label class="check"><input type="checkbox" id="gh-quota"> Publish quota meters, encrypted for you (each plan's limits, how much is used and the account emails; only your unlocked dashboard reads them)</label>
+        <label class="check"><input type="checkbox" id="gh-country"> <span>Show this machine's country (flag) on the public dashboard<span class="from" id="gh-country-from"></span></span></label>
+        <label class="check"><input type="checkbox" id="gh-history"> <span>Publish Codex account history (its daily account totals and this machine's tokens per UTC day, which reveal your time zone's offset)<span class="from" id="gh-history-from"></span></span></label>
         <label class="check" id="gh-share-row" hidden><input type="checkbox" id="gh-share" checked> Share this sign-in with my other machines (through your server, encrypted with the fleet key)</label>
         <div class="row">
           <button class="primary" id="gh-save">Save</button>

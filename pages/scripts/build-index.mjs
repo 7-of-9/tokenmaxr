@@ -7,7 +7,9 @@ import { join } from "node:path";
 
 const root = process.argv[2] || ".";
 const dir = join(root, "data", "machines");
-const ok = /^(meta|quota|account-usage|owner)\.json$|^usage-\d{4}-\d{2}\.json$/;
+// quota.json (published in the clear before collector 0.4.2) is not listed:
+// the dashboard does not read it, and newer collectors delete it.
+const ok = /^(meta|account-usage|owner)\.json$|^usage-\d{4}-\d{2}\.json$/;
 
 let title;
 try {

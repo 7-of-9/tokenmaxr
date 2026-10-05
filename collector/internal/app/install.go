@@ -42,6 +42,10 @@ type InstallOptions struct {
 	In    io.Reader
 }
 
+// installRestartWait bounds how long install waits for a running app to take
+// its restart request before asking for the window.
+var installRestartWait = 5 * time.Second
+
 // Install enrolls (if needed), copies the binaries into <home>/bin, runs the
 // config checks and registers autostart. Re-running it repairs or upgrades.
 // enrolWith enrols this machine with server using invite and returns the
@@ -279,15 +283,29 @@ func (a *App) Install(ctx context.Context, o InstallOptions) error {
 		if cfg.App {
 			instance.ClearStopped(a.Home)
 		}
+		started := true
 		if cfg.App && wasRunning && runtime.GOOS == "windows" {
 			// The running app re-execs onto the binary just copied (on
 			// macOS re-loading the agent already replaced it).
 			if err := instance.Send(a.Home, instance.Restart); err != nil {
 				a.Log.Printf("install: app restart: %v", err)
 			}
+			// The show below is for the restarted app: the old one takes
+			// the restart first.
+			for deadline := time.Now().Add(installRestartWait); instance.Waiting(a.Home, instance.Restart) && time.Now().Before(deadline); {
+				time.Sleep(200 * time.Millisecond)
+			}
 		} else if err := sys.Start(ao); err != nil {
+			started = false
 			a.printf("could not start it now (%v); it starts at the next login\n", err)
 			a.Log.Printf("install: start: %v", err)
+		}
+		if cfg.App && !cfg.TrayOnly && started {
+			// The app starts minimized, as at login; an install shows its
+			// window (the app takes this request once its UI is up).
+			if err := instance.Send(a.Home, instance.Show); err != nil {
+				a.Log.Printf("install: show: %v", err)
+			}
 		}
 		if cfg.App {
 			a.printf("done. The app is in the %s; the first backfill runs in the background.\n", appPlace(&cfg))

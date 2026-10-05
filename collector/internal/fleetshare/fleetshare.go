@@ -57,6 +57,19 @@ type Share struct {
 	Repo     string    `json:"repo"`
 	Branch   string    `json:"branch"`
 	SharedAt time.Time `json:"sharedAt"`
+	// Prefs are the sharer's publishing choices, which the machines that
+	// adopt the sign-in follow (absent from shares of collectors before
+	// 0.4.2; those ignore the field, as encoding/json skips unknown ones).
+	Prefs *Prefs `json:"prefs,omitempty"`
+}
+
+// Prefs are the publishing choices a sharer passes on: an adopting machine
+// takes each one it has not chosen itself.
+type Prefs struct {
+	// From is the sharer's public label (shown as "from <label>").
+	From               string `json:"from"`
+	ShowCountry        bool   `json:"showCountry"`
+	ShowAccountHistory bool   `json:"showAccountHistory"`
 }
 
 // key derives the share's AES-256 key from the fleet key.
@@ -155,6 +168,15 @@ func Open(k []byte, blob string) (Share, error) {
 func Fingerprint(k []byte, s Share) string {
 	m := hmac.New(sha256.New, key(k))
 	b, _ := json.Marshal([]any{s.Token, s.Login, s.UserID, s.Repo, s.Branch})
+	m.Write(b)
+	return hex.EncodeToString(m.Sum(nil)[:16])
+}
+
+// PrefsFingerprint identifies the choices a share passes on, so a sharer
+// whose choices (or label) changed shares again.
+func PrefsFingerprint(k []byte, s Share) string {
+	m := hmac.New(sha256.New, key(k))
+	b, _ := json.Marshal([]any{"prefs", s.Prefs})
 	m.Write(b)
 	return hex.EncodeToString(m.Sum(nil)[:16])
 }

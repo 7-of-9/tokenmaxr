@@ -118,51 +118,38 @@ func sampleRows() []rollup.Row {
 	return r.Rows()
 }
 
-func meters() []model.LimitSnapshot {
-	used := 47.0
-	reset := time.Date(2026, 10, 6, 15, 0, 0, 0, time.UTC)
-	return []model.LimitSnapshot{{ID: "x", Provider: "anthropic", Source: "claude-code", Acct: "a_1", Window: "week", Plan: "Max (20x)",
-		Label: "someone@example.com", Name: "Private Org", Detail: "detail", UsedPercent: &used, ResetsAt: &reset,
-		ObservedAt: time.Date(2026, 10, 4, 11, 0, 0, 0, time.UTC), Status: "ok"}}
-}
-
 func TestFilesArePublicSafeAndDeterministic(t *testing.T) {
 	m := Machine{ID: "m_abc", Label: "laptop", OS: "windows", Collector: "0.3.0"}
 	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
-	files := Files(m, sampleRows(), meters(), AccountHistory{}, now)
+	files := Files(m, sampleRows(), AccountHistory{}, now)
 	paths := []string{}
 	all := ""
 	for _, f := range files {
 		paths = append(paths, f.Path)
 		all += string(f.Content)
 	}
+	// quota.json (plans and reset times in the clear, before 0.4.2) only
+	// ever goes: Publish deletes it where it is published.
 	want := "data/machines/m_abc/usage-2026-09.json,data/machines/m_abc/usage-2026-10.json,data/machines/m_abc/quota.json,data/machines/m_abc/meta.json"
 	if strings.Join(paths, ",") != want {
 		t.Fatalf("paths %v", paths)
 	}
-	for _, private := range []string{"someone@example.com", "Private Org", "detail"} {
-		if strings.Contains(all, private) {
-			t.Fatalf("published files leak %q", private)
-		}
+	if q := fileAt(files, "/quota.json"); q == nil || !q.Delete || q.Content != nil {
+		t.Fatalf("quota.json %+v", q)
 	}
-	for _, public := range []string{`"laptop"`, `"Max (20x)"`, `"claude-x"`, `"a_1"`} {
+	for _, public := range []string{`"laptop"`, `"claude-x"`, `"a_1"`} {
 		if !strings.Contains(all, public) {
 			t.Errorf("published files lack %s", public)
 		}
 	}
-	again := Files(m, sampleRows(), meters(), AccountHistory{}, now)
+	again := Files(m, sampleRows(), AccountHistory{}, now)
 	for i := range files {
 		if string(files[i].Content) != string(again[i].Content) {
 			t.Fatalf("%s not deterministic", files[i].Path)
 		}
 	}
-	if q := Files(m, nil, nil, AccountHistory{}, now); len(q) != 1 || !strings.HasSuffix(q[0].Path, "/meta.json") {
-		t.Fatalf("no data and no quota must publish only meta: %v", q)
-	}
-	old := meters()
-	old[0].ObservedAt = now.Add(-MeterMaxAge - time.Hour)
-	if q := Files(m, nil, old, AccountHistory{}, now); !strings.Contains(string(q[0].Content), `"meters": []`) {
-		t.Fatalf("a meter older than a week was published: %s", q[0].Content)
+	if q := Files(m, nil, AccountHistory{}, now); len(q) != 2 || !strings.HasSuffix(q[1].Path, "/meta.json") || !q[0].Delete {
+		t.Fatalf("no data must publish only meta: %v", q)
 	}
 }
 
@@ -178,35 +165,47 @@ func TestPublishCommitsOnlyChangesAndRetriesConflicts(t *testing.T) {
 		}
 	}
 
-	ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), meters(), AccountHistory{}, now), published, false)
-	if err != nil || len(ch) != 4 || f.Files["data/machines/m_abc/meta.json"] == "" {
+	// A quota.json an older collector published is in the repository.
+	quota := "data/machines/m_abc/quota.json"
+	f.Files[quota] = `{"schema":2,"meters":[{"plan":"Max (20x)"}]}`
+	published[quota] = Hash([]byte(f.Files[quota]))
+	files := Files(m, sampleRows(), AccountHistory{}, now)
+	if !Pending(files, published) {
+		t.Fatal("nothing pending before the first publish")
+	}
+	ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, files, published, false)
+	if err != nil || len(ch) != 4 || f.Files["data/machines/m_abc/meta.json"] == "" || ch[quota] != "" {
 		t.Fatalf("first publish: %v %v", ch, err)
 	}
+	if _, ok := f.Files[quota]; ok {
+		t.Fatal("quota.json not deleted")
+	}
 	apply(ch)
+	delete(published, quota)
 
 	// Same data an hour later: nothing to commit (meta alone is not news).
-	if ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), meters(), AccountHistory{}, now.Add(time.Hour)), published, false); err != nil || ch != nil {
+	files = Files(m, sampleRows(), AccountHistory{}, now.Add(time.Hour))
+	if Pending(files, published) {
+		t.Fatal("unchanged files pending")
+	}
+	if ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, files, published, false); err != nil || ch != nil {
 		t.Fatalf("unchanged publish committed: %v %v", ch, err)
 	}
 	// ...unless a daily "last seen" refresh is due.
-	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), meters(), AccountHistory{}, now.Add(25*time.Hour)), published, true)
+	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), AccountHistory{}, now.Add(25*time.Hour)), published, true)
 	if err != nil || len(ch) != 1 {
 		t.Fatalf("meta refresh: %v %v", ch, err)
 	}
 	apply(ch)
 
-	// A quota change commits quota.json and meta only, even after another
-	// machine moved the branch once.
-	q := meters()
-	more := 60.0
-	q[0].UsedPercent = &more
+	// A change commits that file and meta only, even after another machine
+	// moved the branch once.
+	rows := sampleRows()
+	rows[0].In += 5
 	f.MoveOnce = true
-	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), q, AccountHistory{}, now.Add(26*time.Hour)), published, false)
-	if err != nil || len(ch) != 2 || ch["data/machines/m_abc/quota.json"] == "" {
+	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, rows, AccountHistory{}, now.Add(26*time.Hour)), published, false)
+	if err != nil || len(ch) != 2 || ch["data/machines/m_abc/usage-2026-09.json"] == "" {
 		t.Fatalf("change after conflict: %v %v", ch, err)
-	}
-	if !strings.Contains(f.Files["data/machines/m_abc/quota.json"], "60") {
-		t.Fatal("quota change not committed")
 	}
 }
 
@@ -257,8 +256,8 @@ func TestSchema2UsageColumns(t *testing.T) {
 	r.AddActivity(model.ActivityEvent{ID: "b3", Provider: "anthropic", Source: "claude-code", Acct: "a_1", TS: ts, HasUsage: true})
 	r.AddActivity(model.ActivityEvent{ID: "b4", Provider: "anthropic", Source: "claude-code", Acct: "a_1", TS: ts.AddDate(0, 0, -5)}) // a prompt on a day with no tokens
 	r.AddPrompt(model.PromptRecord{ID: "b5", Provider: "anthropic", Source: "claude-code", Model: "claude-x", Acct: "a_1", TS: ts, Text: "hello there"})
-	files := Files(Machine{ID: "m_abc", Label: "laptop", OS: "linux", Collector: "0.4.0"}, r.Rows(), nil, AccountHistory{}, now)
-	if len(files) != 3 {
+	files := Files(Machine{ID: "m_abc", Label: "laptop", OS: "linux", Collector: "0.4.0"}, r.Rows(), AccountHistory{}, now)
+	if len(files) != 4 { // two months, quota.json's deletion, meta
 		t.Fatalf("files %d", len(files))
 	}
 	schema, sept := readRows(t, files[0].Content)
@@ -304,7 +303,7 @@ func TestMetaCountryIsOptInAndOnlyACountry(t *testing.T) {
 	now := time.Date(2026, 10, 4, 12, 0, 30, 0, time.UTC)
 	m := Machine{ID: "m_abc", Label: "laptop", OS: "windows", Collector: "0.4.0", LastEventAt: time.Date(2026, 10, 4, 11, 58, 59, 0, time.UTC)}
 
-	raw, meta := metaOf(t, Files(m, sampleRows(), nil, AccountHistory{}, now))
+	raw, meta := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
 	if _, ok := meta["cc"]; ok || strings.Contains(raw, `"cc"`) {
 		t.Fatalf("country published without opting in: %s", raw)
 	}
@@ -313,10 +312,10 @@ func TestMetaCountryIsOptInAndOnlyACountry(t *testing.T) {
 	}
 
 	m.CC = "GB"
-	if raw, meta = metaOf(t, Files(m, sampleRows(), nil, AccountHistory{}, now)); meta["cc"] != "GB" {
+	if raw, meta = metaOf(t, Files(m, sampleRows(), AccountHistory{}, now)); meta["cc"] != "GB" {
 		t.Fatalf("opted-in country missing: %s", raw)
 	}
-	again, _ := metaOf(t, Files(m, sampleRows(), nil, AccountHistory{}, now))
+	again, _ := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
 	if again != raw {
 		t.Fatal("meta not deterministic")
 	}
@@ -325,7 +324,7 @@ func TestMetaCountryIsOptInAndOnlyACountry(t *testing.T) {
 	// offset, lower case) is never published.
 	for _, bad := range []string{"Europe/London", "GMT Standard Time", "+01:00", "UTC", "gb", "G", "ZZZ"} {
 		m.CC = bad
-		raw, _ := metaOf(t, Files(m, sampleRows(), nil, AccountHistory{}, now))
+		raw, _ := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
 		if strings.Contains(raw, `"cc"`) || strings.Contains(raw, bad) {
 			t.Fatalf("published %q: %s", bad, raw)
 		}
@@ -333,11 +332,11 @@ func TestMetaCountryIsOptInAndOnlyACountry(t *testing.T) {
 
 	// An event stamped ahead of the clock is reported as now; none, omitted.
 	m.CC, m.LastEventAt = "", now.Add(48*time.Hour)
-	if _, meta = metaOf(t, Files(m, sampleRows(), nil, AccountHistory{}, now)); meta["lastEventAt"] != "2026-10-04T12:00:00Z" {
+	if _, meta = metaOf(t, Files(m, sampleRows(), AccountHistory{}, now)); meta["lastEventAt"] != "2026-10-04T12:00:00Z" {
 		t.Fatalf("future last event %v", meta["lastEventAt"])
 	}
 	m.LastEventAt = time.Time{}
-	if raw, _ = metaOf(t, Files(m, nil, nil, AccountHistory{}, now)); strings.Contains(raw, "lastEventAt") || strings.Contains(raw, "firstSeenAt") {
+	if raw, _ = metaOf(t, Files(m, nil, AccountHistory{}, now)); strings.Contains(raw, "lastEventAt") || strings.Contains(raw, "firstSeenAt") {
 		t.Fatalf("empty machine meta %s", raw)
 	}
 }
@@ -370,7 +369,7 @@ func TestAccountUsageFile(t *testing.T) {
 			{Date: "2026-10-01", Provider: "openai", Source: "codex", Acct: "a_2", Tokens: 0},
 		},
 	}
-	f := fileAt(Files(m, sampleRows(), nil, h, now), "/account-usage.json")
+	f := fileAt(Files(m, sampleRows(), h, now), "/account-usage.json")
 	if f == nil || f.Path != "data/machines/m_abc/account-usage.json" {
 		t.Fatalf("no account-usage.json: %v", f)
 	}
@@ -413,15 +412,15 @@ func TestAccountUsageFile(t *testing.T) {
 	// Any input order publishes the same bytes.
 	shuffled := AccountHistory{Snapshots: []rollup.AccountTotal{h.Snapshots[2], h.Snapshots[0], h.Snapshots[1]},
 		Ledger: []rollup.LedgerRow{h.Ledger[1], h.Ledger[2], h.Ledger[0]}}
-	if again := fileAt(Files(m, sampleRows(), nil, shuffled, now), "/account-usage.json"); string(again.Content) != string(f.Content) {
+	if again := fileAt(Files(m, sampleRows(), shuffled, now), "/account-usage.json"); string(again.Content) != string(f.Content) {
 		t.Fatalf("not deterministic:\n%s\n%s", f.Content, again.Content)
 	}
 	// A ledger alone (a signed-in machine whose totals another machine
 	// reads) is published; nothing at all is not.
-	if only := fileAt(Files(m, nil, nil, AccountHistory{Ledger: h.Ledger[:1]}, now), "/account-usage.json"); only == nil || !strings.Contains(string(only.Content), `"snapshots": []`) {
+	if only := fileAt(Files(m, nil, AccountHistory{Ledger: h.Ledger[:1]}, now), "/account-usage.json"); only == nil || !strings.Contains(string(only.Content), `"snapshots": []`) {
 		t.Fatalf("ledger-only file %v", only)
 	}
-	if none := fileAt(Files(m, nil, nil, AccountHistory{Ledger: h.Ledger[2:]}, now), "/account-usage.json"); none != nil {
+	if none := fileAt(Files(m, nil, AccountHistory{Ledger: h.Ledger[2:]}, now), "/account-usage.json"); none != nil {
 		t.Fatalf("published an empty account-usage.json: %s", none.Content)
 	}
 	if strings.Contains(string(f.Content), "unledgered") {
@@ -432,7 +431,7 @@ func TestAccountUsageFile(t *testing.T) {
 	var withGaps struct {
 		Unledgered []string `json:"unledgered"`
 	}
-	json.Unmarshal(fileAt(Files(m, sampleRows(), nil, h, now), "/account-usage.json").Content, &withGaps)
+	json.Unmarshal(fileAt(Files(m, sampleRows(), h, now), "/account-usage.json").Content, &withGaps)
 	if strings.Join(withGaps.Unledgered, ",") != "2024-12-31,2025-01-15" {
 		t.Fatalf("unledgered %v", withGaps.Unledgered)
 	}
@@ -447,14 +446,14 @@ func TestPublishDeletesOnlyPublishedPaths(t *testing.T) {
 	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	h := AccountHistory{Ledger: []rollup.LedgerRow{{Date: "2026-10-01", Provider: "openai", Source: "codex", Tokens: 5}}}
 	published := map[string]string{}
-	ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), nil, h, now), published, false)
+	ch, err := Publish(ctx, c, "octo/agent-usage", "main", m.Label, Files(m, sampleRows(), h, now), published, false)
 	if err != nil || ch[AccountUsagePath(m.ID)] == "" {
 		t.Fatalf("first publish: %v %v", ch, err)
 	}
 	maps.Copy(published, ch)
 
 	gone := ghapi.File{Path: AccountUsagePath(m.ID), Delete: true}
-	files := append(Files(m, sampleRows(), nil, AccountHistory{}, now), gone)
+	files := append(Files(m, sampleRows(), AccountHistory{}, now), gone)
 	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, files, published, false)
 	if v, ok := ch[gone.Path]; err != nil || !ok || v != "" {
 		t.Fatalf("delete: %v %v", ch, err)
@@ -472,8 +471,24 @@ func TestPublishDeletesOnlyPublishedPaths(t *testing.T) {
 	published[gone.Path] = "old"
 	rows := sampleRows()
 	rows[0].In++
-	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, append(Files(m, rows, nil, AccountHistory{}, now), gone), published, false)
+	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, append(Files(m, rows, AccountHistory{}, now), gone), published, false)
 	if err != nil || ch[gone.Path] != "" || f.Head == head {
 		t.Fatalf("delete of a missing path: %v %v", ch, err)
+	}
+	// One path gone, another still there: that one is deleted all the same.
+	there := QuotaPath(m.ID)
+	f.Files[there] = "{}"
+	published[gone.Path], published[there] = "old", ""
+	ch, err = Publish(ctx, c, "octo/agent-usage", "main", m.Label, append(Files(m, rows, AccountHistory{}, now), gone), published, true)
+	if _, ok := f.Files[there]; err != nil || ok || ch[there] != "" || ch[gone.Path] != "" {
+		t.Fatalf("delete beside a missing path: %v %v", ch, err)
+	}
+}
+
+func TestStaleQuota(t *testing.T) {
+	got := StaleQuota([]string{"data/machines/m_a/quota.json", "data/machines/m_a/meta.json", "data/machines/m_b/quota.json",
+		"data/quota.json", "data/machines/m_c/x/quota.json", "pages/quota.json"})
+	if strings.Join(got, ",") != "data/machines/m_a/quota.json,data/machines/m_b/quota.json" {
+		t.Fatalf("stale %v", got)
 	}
 }

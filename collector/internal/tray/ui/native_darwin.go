@@ -18,14 +18,15 @@ static void d0m1SetAccessory(void) {
 }
 
 extern void d0m1WindowReopen(void);
-extern void d0m1WindowQuit(void);
+extern int d0m1WindowQuit(void);
+static void d0m1ObserveHide(void);
 
 // The app menu's Quit (Cmd-Q) quits as the Quit row does.
 @interface D0m1AppActions : NSObject
 - (void)quitApp:(id)sender;
 @end
 @implementation D0m1AppActions
-- (void)quitApp:(id)sender { d0m1WindowQuit(); }
+- (void)quitApp:(id)sender { (void)d0m1WindowQuit(); }
 @end
 static D0m1AppActions *d0m1Actions;
 
@@ -33,6 +34,32 @@ static D0m1AppActions *d0m1Actions;
 static BOOL d0m1ShouldReopen(id self, SEL _cmd, NSApplication *app, BOOL visible) {
 	d0m1WindowReopen();
 	return NO;
+}
+
+// The Dock menu's Quit, and a logout, restart or shutdown, ask the app to
+// terminate (the quit Apple event: NSApp terminate:), which would end the
+// process without the app's own quit. So the termination is held
+// (NSTerminateLater) while the app quits as Cmd-Q does (stop collecting,
+// mark it stopped), and its quit answers it (d0m1ReplyTerminate) instead
+// of stopping the event loop; after 10 s it is answered anyway, so a logout
+// never waits on the app. Before the app is up, it terminates at once.
+static BOOL d0m1Terminating;
+
+static void d0m1EndTerminate(void) {
+	if (!d0m1Terminating) return;
+	d0m1Terminating = NO;
+	[NSApp replyToApplicationShouldTerminate:YES];
+}
+
+static NSApplicationTerminateReply d0m1ShouldTerminate(id self, SEL _cmd, NSApplication *app) {
+	if (d0m1Terminating) return NSTerminateLater;
+	d0m1Terminating = YES;
+	if (!d0m1WindowQuit()) {
+		d0m1Terminating = NO;
+		return NSTerminateNow;
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 10 * (int64_t)NSEC_PER_SEC), dispatch_get_main_queue(), ^{ d0m1EndTerminate(); });
+	return NSTerminateLater;
 }
 
 // Window mode: a regular app with a Dock icon (applicationIconImage, set by
@@ -61,14 +88,19 @@ static void d0m1SetRegular(const char *name) {
 	NSApp.mainMenu = bar;
 	NSApp.windowsMenu = winMenu;
 	// fyne.io/systray (v1.12) makes its SystrayAppDelegate the app's
-	// delegate; the Dock's reopen is answered by adding the delegate method
-	// to that class before systray sets it.
+	// delegate; the Dock's reopen and a request to terminate are answered
+	// by adding the delegate methods to that class before systray sets it
+	// (it implements neither).
 	Class c = objc_lookUpClass("SystrayAppDelegate");
 	if (c) {
 		char types[16];
 		snprintf(types, sizeof types, "%s@:@%s", @encode(BOOL), @encode(BOOL));
 		class_addMethod(c, @selector(applicationShouldHandleReopen:hasVisibleWindows:), (IMP)d0m1ShouldReopen, types);
+		char quitTypes[16];
+		snprintf(quitTypes, sizeof quitTypes, "%s@:@", @encode(NSApplicationTerminateReply));
+		class_addMethod(c, @selector(applicationShouldTerminate:), (IMP)d0m1ShouldTerminate, quitTypes);
 	}
+	d0m1ObserveHide();
 }
 
 // The Dock icon: the status dot (PNG bytes, copied before returning).
@@ -110,6 +142,18 @@ static void d0m1OnMain(void (^block)(void)) {
 	} else {
 		dispatch_sync(dispatch_get_main_queue(), block);
 	}
+}
+
+// d0m1ReplyTerminate ends a held termination (the app's quit is done): 1
+// when there was one, so the app exits through it rather than by stopping
+// the event loop.
+static int d0m1ReplyTerminate(void) {
+	__block int held = 0;
+	d0m1OnMain(^{
+		held = d0m1Terminating;
+		if (held) dispatch_async(dispatch_get_main_queue(), ^{ d0m1EndTerminate(); });
+	});
+	return held;
 }
 
 // The sheet is one view. The pinned panel and the click popup each host
@@ -615,6 +659,27 @@ static void d0m1MainUpdate(const char *title, const char *text, const char *kind
 	});
 }
 
+// Hide (Cmd-H, the app menu's Hide) takes the main window off screen
+// without closing or miniaturizing it: the app hears that it is off screen
+// (no redraws while hidden), and Unhide brings back what was shown.
+static BOOL d0m1MainShownAtHide;
+static id d0m1HideObservers[3];
+
+static void d0m1ObserveHide(void) {
+	if (d0m1HideObservers[0]) return;
+	NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+	d0m1HideObservers[0] = [nc addObserverForName:NSApplicationWillHideNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+		d0m1MainShownAtHide = d0m1Main && d0m1Main.visible && !d0m1Main.miniaturized;
+	}];
+	d0m1HideObservers[1] = [nc addObserverForName:NSApplicationDidHideNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+		if (d0m1MainShownAtHide) d0m1WindowVisible(0);
+	}];
+	d0m1HideObservers[2] = [nc addObserverForName:NSApplicationDidUnhideNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
+		if (d0m1MainShownAtHide) d0m1WindowVisible(1);
+		d0m1MainShownAtHide = NO;
+	}];
+}
+
 static void d0m1MainHide(void) {
 	d0m1OnMain(^{
 		[d0m1Main orderOut:nil];
@@ -723,6 +788,11 @@ func setActivation(window bool) {
 	C.d0m1SetRegular(name)
 	setDockIcon(tray.Green)
 }
+
+// replyTerminate ends a termination macOS asked for (the Dock menu's Quit,
+// a logout), which the app's quit answers: true when there was one (the
+// process then exits), false for a quit of the app's own (stop the loop).
+func replyTerminate() bool { return C.d0m1ReplyTerminate() != 0 }
 
 // setDockIcon draws the Dock icon in c.
 func setDockIcon(c tray.Color) {

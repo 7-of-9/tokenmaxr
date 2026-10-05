@@ -117,6 +117,9 @@ func (r *renderer) SetTooltip(tip string) {
 
 func (r *renderer) Quit() {
 	closeWindows()
+	if replyTerminate() {
+		return // macOS is terminating the app (the Dock menu, a logout)
+	}
 	systray.Quit()
 }
 

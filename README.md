@@ -62,8 +62,9 @@ Install tokenmaxr on each machine and sign in with the same GitHub account
 the others take that sign-in over by themselves, see below). Every machine
 publishes into its own folder of the same repository, and the dashboard adds
 them up in your browser; the machines never talk to each other. Machines share a *fleet key* (kept in the repository's
-Actions variable `TOKENMAXR_FLEET_KEY`, which only collaborators can read), so
-the same AI account gets the same anonymous id on every machine.
+Actions variable `TOKENMAXR_FLEET_KEY`; it is not public, but anyone or anything
+with admin access to the repository, such as your own GitHub tokens, can read
+it), so the same AI account gets the same anonymous id on every machine.
 
 ## What leaves your machine
 
@@ -73,22 +74,26 @@ Only what the dashboard shows, and only to your repository:
 | --- | --- |
 | Daily token totals per provider, tool, model and anonymous account id | Prompts, responses, code, file names or paths |
 | Daily prompt counts (per model, and those without token records) | Project or workspace names |
-| Quota meters: % of a plan's limit used, plan name, reset time | Account emails, organisation names, API keys |
-| A machine label you choose, its OS, the tokenmaxr version, and when it last saw activity | Hostname (the label defaults to a random name), time zone |
+| Your plans' quota meters (with the accounts' emails), **encrypted**: only a browser you unlock from Settings can read them | Account emails or organisation names in readable form, API keys |
+| A machine label (the name the dashboard shows, which can be the computer's name; change it in Settings), its OS, the tokenmaxr version, and when it last saw activity | Your prompts: in GitHub-only mode they never leave the machine |
 | Only if you opt in: the machine's country (a flag), Codex account history | |
+| Commits, as in any git repository: your GitHub account's name and commit email, and the time of each publish | |
 
 Account ids are an HMAC of the provider's account id with your fleet key, so
-they cannot be reversed or matched across fleets, and the dashboard shows them
-only as "account 1, 2, …". The repository is public (GitHub Pages needs that on
-free plans); it holds nothing but the above.
+without the key they cannot be reversed or matched across fleets, and the
+dashboard shows them only as "account 1, 2, …". The repository is public
+(GitHub Pages needs that on free plans); it holds nothing but the above.
+Turning an option off removes its file, but git history keeps what was already
+published: to erase it, delete the repository and create it again.
 
 Two settings are **off by default** because they say something about where you
 are: *Show this machine's country* (a flag on the dashboard) and *Publish Codex
 account history* (OpenAI's own daily account totals, which recover Codex tokens
 the local logs miss; they are kept per UTC day, so next to your local-day totals
 they reveal your time zone's offset). Turn them on under *Settings…*. Note that
-the repository's commit times, like any git history, show roughly when your
-machines were active.
+the repository's commits carry their time (and your GitHub account's time zone
+offset), so the history shows when your machines were active, publish by
+publish.
 
 tokenmaxr reads logs only from the tools listed above, in your user profile.
 It may set Claude Code's `cleanupPeriodDays` and Grok CLI's `cleanup_ttl_days`
@@ -137,8 +142,11 @@ On Linux there is no tray: add the cron line the installer prints, which runs
 
 ## Your own server (optional)
 
-tokenmaxr can also send every individual event (and, encrypted, your prompts)
-to a server you run, for a private, finer-grained dashboard. A machine can do
+tokenmaxr can also send every individual event, and your prompts, to a server
+you run, for a private, finer-grained dashboard. They travel over HTTPS and the
+server encrypts the prompts before storing them (with a key it holds, so it can
+show and search them for you). Only machines connected to a server send prompts
+anywhere. A machine can do
 both: publish daily totals to GitHub *and* send events to your server (the
 app then offers both dashboards). `api/` is that
 server: Azure Functions with Azure Table Storage, deployable as the managed API

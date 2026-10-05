@@ -67,6 +67,12 @@ func Send(home string, v Verb) error {
 	return os.WriteFile(paths.AppSignal(home, string(v)), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 }
 
+// Waiting reports whether v was sent and no app has taken it yet.
+func Waiting(home string, v Verb) bool {
+	_, err := os.Stat(paths.AppSignal(home, string(v)))
+	return err == nil
+}
+
 // PollEvery is how often the app looks for requests.
 const PollEvery = time.Second
 

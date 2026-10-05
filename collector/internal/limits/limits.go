@@ -96,6 +96,9 @@ func applyAccounts(env *sources.Env, rows []model.LimitSnapshot) []model.LimitSn
 	return rows
 }
 
+// EmailOf is the email in an account label ("email · org"), or "".
+func EmailOf(label string) string { return emailOf(label) }
+
 func emailOf(label string) string {
 	for _, p := range strings.Split(label, " · ") {
 		p = strings.TrimSpace(p)

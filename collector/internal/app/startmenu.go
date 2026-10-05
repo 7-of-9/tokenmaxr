@@ -88,6 +88,15 @@ func (a *App) startMenuShortcut(programs string) Shortcut {
 	}
 }
 
+// startMenuMark records that this install made its Start-menu entry once,
+// so an entry the user deleted is not made again when the app starts (only
+// install makes it again).
+func startMenuMark(home string) string { return filepath.Join(home, "start-menu-added") }
+
+func markStartMenu(home string) {
+	_ = os.WriteFile(startMenuMark(home), []byte("1\n"), 0o600)
+}
+
 // addStartMenu creates (or refreshes) the Start-menu entry. It returns
 // the shortcut's path, "" when this install has none.
 func (a *App) addStartMenu() (string, error) {
@@ -109,6 +118,7 @@ func (a *App) addStartMenu() (string, error) {
 	if err := sm.Create(s); err != nil {
 		return "", err
 	}
+	markStartMenu(a.Home)
 	return s.Path, nil
 }
 
@@ -133,8 +143,9 @@ func (a *App) removeStartMenu() (bool, error) {
 // upgradeDesktopEntries brings an install made by an earlier version up to
 // this one's desktop entries when the app starts (self-update replaces the
 // binary, not the entries): the login item starts the app minimized, and
-// in window mode the Start-menu entry exists. Each is touched only when
-// this install registered autostart for the app.
+// in window mode the Start-menu entry is made, once (startMenuMark: one the
+// user deleted stays deleted). Each is touched only when this install
+// registered autostart for the app.
 func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	if !cfg.Autostart || !cfg.App {
 		return
@@ -153,8 +164,15 @@ func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	if sm == nil {
 		return
 	}
+	if fileExists(startMenuMark(a.Home)) {
+		return
+	}
 	programs, err := sm.Programs()
-	if err != nil || fileExists(StartMenuShortcutPath(programs)) {
+	if err != nil {
+		return
+	}
+	if fileExists(StartMenuShortcutPath(programs)) {
+		markStartMenu(a.Home) // made by an earlier version's install
 		return
 	}
 	if p, err := a.addStartMenu(); err != nil {

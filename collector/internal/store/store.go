@@ -73,6 +73,18 @@ type Config struct {
 	// fleet shares through the server (set when its owner stops publishing
 	// to GitHub here).
 	GitHubFleetOptOut bool `json:"githubFleetOptOut,omitempty"`
+	// GitHubKeptPrefs keeps the options an adopted sign-in's machine chose
+	// itself while the fleet's share is withdrawn, so adopting one again
+	// starts from them rather than from the sharer's.
+	GitHubKeptPrefs *KeptPrefs `json:"githubKeptPrefs,omitempty"`
+}
+
+// KeptPrefs are an adopted machine's own choices (GitHubConfig.LocalPrefs)
+// with their values.
+type KeptPrefs struct {
+	LocalPrefs         []string `json:"localPrefs"`
+	ShowCountry        bool     `json:"showCountry,omitempty"`
+	ShowAccountHistory bool     `json:"showAccountHistory,omitempty"`
 }
 
 // GitHubConfig is the GitHub publisher's settings. Everything published is
@@ -102,12 +114,45 @@ type GitHubConfig struct {
 	// Adopted: the sign-in is one another machine of the fleet shared through
 	// the server, not this machine's own; it is never shared again from here.
 	Adopted bool `json:"adopted,omitempty"`
+	// LocalPrefs names the shared options (PrefShowCountry,
+	// PrefShowAccountHistory) chosen on this machine: an adopted sign-in's
+	// sharer never changes those. The others follow the sharer's choices,
+	// and PrefsFrom is the sharer's public label ("" while none were taken).
+	LocalPrefs []string `json:"localPrefs,omitempty"`
+	PrefsFrom  string   `json:"prefsFrom,omitempty"`
 }
+
+// The options a sharer passes on to the machines that adopt its sign-in.
+const (
+	PrefShowCountry        = "showCountry"
+	PrefShowAccountHistory = "showAccountHistory"
+)
 
 // SharesWithFleet reports whether this machine's own sign-in is shared with
 // the fleet (the default), never an adopted one.
 func (g *GitHubConfig) SharesWithFleet() bool {
 	return !g.Adopted && (g.ShareWithFleet == nil || *g.ShareWithFleet)
+}
+
+// LocalPref reports whether option was chosen on this machine.
+func (g *GitHubConfig) LocalPref(option string) bool { return slices.Contains(g.LocalPrefs, option) }
+
+// SetLocalPref records that option was chosen on this machine, so a sharer
+// never changes it.
+func (g *GitHubConfig) SetLocalPref(option string) {
+	if !g.LocalPref(option) {
+		g.LocalPrefs = append(g.LocalPrefs, option)
+		slices.Sort(g.LocalPrefs)
+	}
+}
+
+// PrefFrom is the label of the sharer whose choice option follows, or ""
+// when it is this machine's own.
+func (g *GitHubConfig) PrefFrom(option string) string {
+	if !g.Adopted || g.LocalPref(option) {
+		return ""
+	}
+	return g.PrefsFrom
 }
 
 // PublishEvery returns the effective publishing interval.
@@ -518,6 +563,18 @@ type GitHubState struct {
 	RebuildCursors map[string]map[string]FileCursor `json:"rebuildCursors,omitempty"`
 	// Fleet is the GitHub sign-in shared with the fleet through the server.
 	Fleet FleetShareState `json:"fleet,omitzero"`
+	// Owner is what the owner.json last committed says.
+	Owner OwnerState `json:"owner,omitzero"`
+	// QuotaSwept is the repository@branch whose quota.json files (published
+	// in the clear before 0.4.2, by any machine) this machine deleted.
+	QuotaSwept string `json:"quotaSwept,omitempty"`
+}
+
+// OwnerState identifies what a committed owner.json says without keeping it
+// (ghpub.OwnerDigests): Data its rows, Meters the same without read times.
+type OwnerState struct {
+	Data   string `json:"data,omitempty"`
+	Meters string `json:"meters,omitempty"`
 }
 
 // FleetShareState is what the fleet sign-in sharing remembers. It never holds
@@ -529,6 +586,9 @@ type FleetShareState struct {
 	Shared   string    `json:"shared,omitempty"`
 	SharedAt time.Time `json:"sharedAt,omitzero"`
 	By       string    `json:"by,omitempty"`
+	// Prefs identifies the choices that share passed on
+	// (fleetshare.PrefsFingerprint): changed ones are shared again.
+	Prefs string `json:"prefs,omitempty"`
 	// Escrowed: the server keeps the fleet key (a fleet linked from the
 	// browser), so whoever runs it could read the share.
 	Escrowed bool `json:"escrowed,omitempty"`

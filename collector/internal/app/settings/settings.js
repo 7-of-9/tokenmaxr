@@ -1,5 +1,6 @@
 // Collector settings page: polls api/state and posts changes. Everything is
-// same-origin JSON; the page never sees a token or key.
+// same-origin JSON; the page never sees a token or key, apart from the
+// dashboard's owner key, fetched only to unlock the dashboard (below).
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -100,6 +101,10 @@ function render() {
     setInput("gh-quota", !g.noQuota);
     setInput("gh-country", !!g.showCountry);
     setInput("gh-history", !!g.showAccountHistory);
+    // An adopted sign-in follows its sharer's choices until one is made here.
+    $("gh-country-from").textContent = g.showCountryFrom ? "(from " + g.showCountryFrom + ")" : "";
+    $("gh-history-from").textContent = g.showAccountHistoryFrom ? "(from " + g.showAccountHistoryFrom + ")" : "";
+    show("gh-unlock-box", !!g.canUnlock);
   }
 
   // Server.
@@ -159,13 +164,14 @@ function busy(btn, fn) {
   };
 }
 
-function alertIn(btn, msg) {
+function alertIn(btn, msg, kind = "error") {
   const card = btn.closest(".card");
-  let p = card.querySelector(".error.inline");
+  let p = card.querySelector(".inline");
   if (!p) {
-    p = Object.assign(document.createElement("p"), { className: "error inline" });
+    p = document.createElement("p");
     btn.closest(".row, div").after(p);
   }
+  p.className = kind + " inline";
   p.textContent = msg;
   setTimeout(() => p.remove(), 8000);
 }
@@ -192,6 +198,51 @@ $("gh-save").addEventListener("click", busy($("gh-save"), async () => {
   ["gh-label", "gh-every", "gh-quota", "gh-country", "gh-history", "gh-share"].forEach((id) => dirty.delete(id));
 }));
 $("gh-publish").addEventListener("click", busy($("gh-publish"), () => api("sync", {})));
+
+// Owner unlock (pages/dashboard/owner.ts): the dashboard opened at #unlock
+// says it is ready; only then is the owner key fetched, and it is posted to
+// that window alone, at the dashboard's exact origin. It never goes into an
+// address, unless the owner copies the unlock link.
+let unlockWin = null;
+const dashboard = () => {
+  const u = state && state.github.canUnlock ? state.github.pagesUrl : "";
+  try {
+    return { base: u.split("#")[0], origin: new URL(u).origin };
+  } catch {
+    return null;
+  }
+};
+$("gh-unlock").addEventListener("click", () => {
+  const d = dashboard();
+  if (d) unlockWin = window.open(d.base + "#unlock", "_blank"); // keeps window.opener for the handoff
+});
+window.addEventListener("message", async (e) => {
+  const d = dashboard();
+  if (!d || !unlockWin || e.source !== unlockWin || e.origin !== d.origin || !e.data || e.data.type !== "tokenmaxr-unlock-ready") return;
+  const win = unlockWin;
+  try {
+    const r = await api("github/unlock", {});
+    win.postMessage({ type: "tokenmaxr-unlock", key: r.key }, d.origin);
+  } catch (err) {
+    alertIn($("gh-unlock"), err.message);
+  }
+});
+$("gh-unlock-copy").addEventListener("click", busy($("gh-unlock-copy"), async () => {
+  const d = dashboard();
+  if (!d) return;
+  const link = api("github/unlock", {}).then((r) => d.base + "#unlock=" + r.key);
+  if (window.ClipboardItem) {
+    // Safari copies only within the click: the write starts now, with the
+    // link to come.
+    const write = navigator.clipboard.write([new ClipboardItem({ "text/plain": link.then((t) => new Blob([t], { type: "text/plain" })) })]);
+    write.catch(() => {});
+    await link; // the server's error, if any, rather than the clipboard's
+    await write;
+  } else {
+    await navigator.clipboard.writeText(await link);
+  }
+  alertIn($("gh-unlock-copy"), "Copied. Treat the link like a password.", "hint");
+}));
 $("gh-signout").addEventListener("click", busy($("gh-signout"), async () => {
   const g = state ? state.github : {};
   const msg = g.adopted

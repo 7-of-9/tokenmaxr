@@ -19,20 +19,25 @@ quota left and when it resets, as on d0m1.com/tokens/agents.
 - `data/machines/<id>/` is written by the collectors, one folder per machine:
   - `meta.json`: the machine's public label, OS, collector version, when it
     last published, its first data day and newest event; its country only if
-    the owner turned on `github.showCountry` in the collector config (off by
-    default).
+    the owner turned on `github.showCountry` in the collector config or
+    settings page (off by default; a machine that publishes with the sign-in
+    another machine shared follows that machine's choice, unless it was set
+    on the machine itself).
   - `usage-YYYY-MM.json`: daily totals per provider, tool, model and account
     hash. Rows are read by the names in `cols`, so older files keep working.
     Prompt counts include prompts whose tokens were never recorded
     (`promptsNoUsage`) and, per model, prompts recorded for it
     (`modelPrompts`, a count; never the text).
-  - `quota.json`: plan quota meters as each tool last reported them, without
-    emails or organisation names. This dashboard does not show them (the
-    owner's Agents page reads `owner.json`).
   - `owner.json`: the owner's plan limits (the rows d0m1.com's owner-only
     `GET /api/limits` returns: account email, organisation, plan, each
     window's use and reset), **encrypted** for the owner (see *Owner
-    unlock*). Without the owner key it reveals nothing but its size.
+    unlock*). Without the owner key it reveals nothing but its size. It is
+    rewritten (with a fresh nonce) only when what it says changes, and
+    removed when the owner turns quota meters off.
+  - `quota.json` was published in the clear by collectors before 0.4.2
+    (plans and reset times). The first publish of a newer collector deletes
+    every machine's, a retired machine's too, and the dashboard does not
+    read it. Git history still holds the old files.
   - `account-usage.json` (Codex, when signed in with a ChatGPT account, and
     only if the owner turned on `github.showAccountHistory` in the collector
     config or settings page; off by default, and turning it off deletes the
@@ -50,9 +55,9 @@ quota left and when it resets, as on d0m1.com/tokens/agents.
     totals that contradict the local records are left out and the footer
     says so.
 
-  Daily totals and quota meters only in the clear: no prompts, code, file
-  paths or hostnames are ever published, and account emails and organisation
-  names only inside the encrypted `owner.json`. The dashboard shows accounts
+  Only daily totals are in the clear: no prompts, code, file paths or
+  hostnames are ever published, and plans, quota meters, account emails and
+  organisation names only inside the encrypted `owner.json`. The dashboard shows accounts
   as per-page aliases (`acct1`, `acct2`, ...), never their hashes.
 
   Each machine publishes totals of the logs it reads, and the dashboard adds
@@ -94,8 +99,9 @@ settings are in the link: `#/?period=90d`, `#/?view=detail`,
 ## Owner unlock
 
 Pages has no sign-in, so the owner's page is unlocked with a key instead.
-(The dashboard side is in place; collectors start publishing `owner.json` and
-offer the unlock in a coming release.)
+Collectors from 0.4.2 publish `owner.json` and offer the unlock on their
+Settings page (while they publish to GitHub and the dashboard has its
+address).
 
 1. On a machine you own, open the collector's Settings page and choose
    **Open my dashboard (unlocked)**. It opens the dashboard at `#unlock` and

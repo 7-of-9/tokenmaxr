@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,7 +80,10 @@ func (a *App) fleetGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	case sharing && on:
 		s := a.fleetShare(cfg, *sec)
 		changed := f.Shared != fleetshare.Fingerprint(sec.Key(), s) || f.By != sec.MachineID
-		if retry && (changed || now.Sub(f.SharedAt) >= fleetReshareEvery) {
+		// Changed choices (or label) to pass on go out now, over this
+		// machine's own share only (the periodic check).
+		prefs := f.Prefs != fleetshare.PrefsFingerprint(sec.Key(), s) && !f.Superseded
+		if retry && (changed || prefs || now.Sub(f.SharedAt) >= fleetReshareEvery) {
 			a.shareGitHub(ctx, cfg, *sec, st, !changed)
 		}
 	case f.Shared != "" && !sharing:
@@ -95,10 +99,12 @@ func (a *App) fleetGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	}
 }
 
-// fleetShare is this machine's own sign-in as it is shared.
+// fleetShare is this machine's own sign-in as it is shared, with the
+// publishing choices the machines that adopt it follow.
 func (a *App) fleetShare(cfg *store.Config, sec store.Secrets) fleetshare.Share {
 	return fleetshare.Share{Token: sec.GitHub.Token, Login: sec.GitHub.Login, UserID: sec.GitHub.UserID,
-		Repo: cfg.GitHub.Repo, Branch: cfg.GitHub.Branch, SharedAt: a.Now().UTC()}
+		Repo: cfg.GitHub.Repo, Branch: cfg.GitHub.Branch, SharedAt: a.Now().UTC(),
+		Prefs: &fleetshare.Prefs{From: cfg.GitHub.Label, ShowCountry: cfg.GitHub.ShowCountry, ShowAccountHistory: cfg.GitHub.ShowAccountHistory}}
 }
 
 // fleetFailed records a failed step; it is retried after fleetRetryEvery.
@@ -146,7 +152,7 @@ func (a *App) shareGitHub(ctx context.Context, cfg *store.Config, sec store.Secr
 	}
 	first := f.Shared == "" || f.Superseded
 	f.Shared, f.SharedAt, f.By, f.LastError = fleetshare.Fingerprint(sec.Key(), s), f.Polled, sec.MachineID, ""
-	f.Escrowed, f.Superseded = put.Escrowed, false
+	f.Prefs, f.Escrowed, f.Superseded = fleetshare.PrefsFingerprint(sec.Key(), s), put.Escrowed, false
 	if first {
 		a.Log.Printf("github: sign-in shared with the fleet through %s (sealed with the fleet key%s)", cfg.Endpoint, escrowNote(put.Escrowed))
 	}
@@ -183,7 +189,7 @@ func (a *App) unshareGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		return
 	}
 	f.Shared, f.SharedAt, f.By, f.LastError = "", time.Time{}, "", ""
-	f.Escrowed, f.Superseded = false, false
+	f.Prefs, f.Escrowed, f.Superseded = "", false, false
 	if mine {
 		a.Log.Printf("github: sign-in no longer shared with the fleet")
 	}
@@ -192,8 +198,9 @@ func (a *App) unshareGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 // adoptGitHub looks for the fleet's shared sign-in. A machine that does not
 // publish adopts it once the repository's fleet key proves to be its own,
 // and rebuilds its rollup from all history for its first publish (nothing is
-// queued for the server again). An adopted machine takes a renewed sign-in,
-// and stops publishing when the share is withdrawn (its data stays).
+// queued for the server again). An adopted machine takes a renewed sign-in
+// and the sharer's changed choices (followPrefs), and stops publishing when
+// the share is withdrawn (its data stays).
 func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Secrets, st *store.State) {
 	f := &st.GitHub.Fleet
 	f.Polled = a.Now()
@@ -208,6 +215,10 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	if cur == nil {
 		f.LastError = ""
 		if adopted {
+			if gh := cfg.GitHub; len(gh.LocalPrefs) > 0 {
+				// The choices made here outlast the share (adoptGitHub).
+				cfg.GitHubKeptPrefs = &store.KeptPrefs{LocalPrefs: gh.LocalPrefs, ShowCountry: gh.ShowCountry, ShowAccountHistory: gh.ShowAccountHistory}
+			}
 			cfg.GitHub, sec.GitHub = nil, nil
 			if err := a.saveGitHub(cfg, sec); err != nil {
 				a.fleetFailed(st, "stopping the fleet's GitHub sign-in", err)
@@ -227,8 +238,17 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	same := adopted && sec.GitHub != nil && sec.GitHub.Token == s.Token && sec.GitHub.Login == s.Login &&
 		cfg.GitHub.Repo == s.Repo && cfg.GitHub.Branch == s.Branch
 	if same {
-		if s.SharedAt.After(f.Seen) {
-			f.Seen = s.SharedAt // shared again, unchanged
+		// Shared again: the sign-in unchanged, maybe the choices. The share
+		// already taken also passes them on while none were taken, as when
+		// a collector before 0.4.2 took it and ignored them.
+		if s.SharedAt.After(f.Seen) || (s.SharedAt.Equal(f.Seen) && cfg.GitHub.PrefsFrom == "") {
+			if a.followPrefs(cfg.GitHub, st, s.Prefs) {
+				if err := store.SaveConfig(a.Home, *cfg); err != nil {
+					a.fleetFailed(st, "following the fleet's GitHub choices", err)
+					return
+				}
+			}
+			f.Seen = s.SharedAt
 		}
 		f.LastError = ""
 		return
@@ -260,9 +280,17 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 		if gh.Label == "" {
 			gh.Label = "machine-" + strings.TrimPrefix(st.GitHub.MachineID, "m_")[:4]
 		}
+		if kp := cfg.GitHubKeptPrefs; kp != nil {
+			// Chosen here under a share since withdrawn: still this machine's.
+			gh.LocalPrefs = slices.Clone(kp.LocalPrefs)
+			gh.ShowCountry = kp.ShowCountry && gh.LocalPref(store.PrefShowCountry)
+			gh.ShowAccountHistory = kp.ShowAccountHistory && gh.LocalPref(store.PrefShowAccountHistory)
+		}
 	}
 	gh.Repo, gh.Branch = s.Repo, s.Branch
+	a.followPrefs(gh, st, s.Prefs)
 	cfg.GitHub, sec.GitHub = gh, &store.GitHubSecrets{Token: s.Token, Login: s.Login, UserID: s.UserID}
+	cfg.GitHubKeptPrefs = nil
 	if err := a.saveGitHub(cfg, sec); err != nil {
 		a.fleetFailed(st, "adopting the fleet's GitHub sign-in", err)
 		return
@@ -281,6 +309,50 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 		return
 	}
 	a.Log.Printf("github: took the fleet's renewed GitHub sign-in for %s", s.Repo)
+}
+
+// followPrefs takes the sharer's publishing choices p (nil from a collector
+// before 0.4.2: nothing changes) into gh for every option not chosen on this
+// machine, records whose they are, and reports whether gh changed. An
+// adopted machine taking choices for the first time keeps an option it has
+// switched on (before 0.4.2 only its owner could have) as its own.
+func (a *App) followPrefs(gh *store.GitHubConfig, st *store.State, p *fleetshare.Prefs) bool {
+	if p == nil {
+		return false
+	}
+	from := CleanLabel(p.From)
+	if from == "" {
+		from = "another machine"
+	}
+	changed := false
+	for _, o := range []struct {
+		name string
+		cur  *bool
+		v    bool
+	}{
+		{store.PrefShowCountry, &gh.ShowCountry, p.ShowCountry},
+		{store.PrefShowAccountHistory, &gh.ShowAccountHistory, p.ShowAccountHistory},
+	} {
+		switch {
+		case gh.LocalPref(o.name):
+		case gh.PrefsFrom == "" && *o.cur:
+			gh.SetLocalPref(o.name)
+			changed = true
+		case *o.cur != o.v:
+			*o.cur, changed = o.v, true
+			if o.name == store.PrefShowCountry {
+				st.GitHub.LastPublish = time.Time{} // meta.json with (or without) the country now
+			} else if o.v {
+				st.AccountHistory.LastAttempt = time.Time{} // read the totals for that publish
+			}
+			st.GitHub.LastAttempt = time.Time{}
+			a.Log.Printf("github: %s %s, following %s", o.name, onOff(o.v), from)
+		}
+	}
+	if gh.PrefsFrom != from {
+		gh.PrefsFrom, changed = from, true
+	}
+	return changed
 }
 
 // saveGitHub saves the GitHub sign-in and settings.

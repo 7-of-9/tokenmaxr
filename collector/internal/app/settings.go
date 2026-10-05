@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
+	"github.com/7-of-9/tokenmaxr/collector/internal/ghpub"
 	"github.com/7-of-9/tokenmaxr/collector/internal/instance"
 	"github.com/7-of-9/tokenmaxr/collector/internal/joincode"
 	"github.com/7-of-9/tokenmaxr/collector/internal/lock"
@@ -170,6 +172,14 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.reply(w, nil, nil)
 	case "api/github/logout":
 		s.reply(w, nil, s.a.GitHubLogout())
+	case "api/github/unlock":
+		// The dashboard's owner key, for the page to hand to the dashboard
+		// it opened (or to copy as an unlock link). Never logged.
+		var in struct{}
+		if s.decode(w, r, &in) {
+			key, err := s.unlockKey()
+			s.reply(w, map[string]string{"key": key}, err)
+		}
 	case "api/github/options":
 		var in struct {
 			Label               string
@@ -265,10 +275,17 @@ type settingsState struct {
 		NoQuota             bool   `json:"noQuota"`
 		ShowCountry         bool   `json:"showCountry"`
 		ShowAccountHistory  bool   `json:"showAccountHistory"`
-		LastPublish         string `json:"lastPublish,omitempty"`
-		LastError           string `json:"lastError,omitempty"`
-		PagesURL            string `json:"pagesUrl,omitempty"`
-		App                 string `json:"app"`
+		// ShowCountryFrom, ShowAccountHistoryFrom: the label of the machine
+		// whose choice the option follows ("" when chosen here).
+		ShowCountryFrom        string `json:"showCountryFrom,omitempty"`
+		ShowAccountHistoryFrom string `json:"showAccountHistoryFrom,omitempty"`
+		LastPublish            string `json:"lastPublish,omitempty"`
+		LastError              string `json:"lastError,omitempty"`
+		PagesURL               string `json:"pagesUrl,omitempty"`
+		// CanUnlock: the dashboard and the fleet key are there, so the page
+		// offers to open it unlocked (api/github/unlock).
+		CanUnlock bool   `json:"canUnlock"`
+		App       string `json:"app"`
 		// Adopted: signed in through the fleet (the sign-in Login shared).
 		Adopted bool `json:"adopted"`
 		// CanShare: the sign-in is this machine's own and a server carries
@@ -353,6 +370,8 @@ func (s *Settings) state() (settingsState, error) {
 		g.On, g.Repo, g.Login, g.Label = true, cfg.GitHub.Repo, sec.GitHub.Login, cfg.GitHub.Label
 		g.PublishEveryMinutes, g.NoQuota = int(cfg.GitHub.PublishEvery()/time.Minute), cfg.GitHub.NoQuota
 		g.ShowCountry, g.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
+		g.ShowCountryFrom = cfg.GitHub.PrefFrom(store.PrefShowCountry)
+		g.ShowAccountHistoryFrom = cfg.GitHub.PrefFrom(store.PrefShowAccountHistory)
 		g.Adopted = cfg.GitHub.Adopted
 		g.CanShare, g.ShareWithFleet = !g.Adopted && serverOn(&cfg, sec), cfg.GitHub.SharesWithFleet()
 	}
@@ -370,6 +389,7 @@ func (s *Settings) state() (settingsState, error) {
 	if st != nil {
 		g.LastPublish, g.LastError, g.PagesURL = rfc(st.GitHub.LastPublish), st.GitHub.LastError, st.GitHub.PagesURL
 		g.FleetError = st.GitHub.Fleet.LastError
+		g.CanUnlock = g.On && dashboardURL(g.PagesURL) && sec.Key() != nil
 	}
 	sv := &v.Server
 	sv.URL, sv.Default = cfg.Server(), store.DefaultEndpoint
@@ -380,6 +400,38 @@ func (s *Settings) state() (settingsState, error) {
 		}
 	}
 	return v, nil
+}
+
+// dashboardURL: u is an https address the page may open and hand the key to.
+func dashboardURL(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && p.Scheme == "https" && p.Host != "" && p.User == nil
+}
+
+// unlockKey is the owner key that unlocks this machine's GitHub dashboard
+// (ghpub.OwnerKey of the fleet key, base64url): the page hands it only to
+// the dashboard it opened, or copies it into an unlock link.
+func (s *Settings) unlockKey() (string, error) {
+	cfg, err := retryRead(store.LoadConfig, s.a.Home)
+	if err != nil {
+		return "", err
+	}
+	sec, err := retryRead(store.LoadSecrets, s.a.Home)
+	if err != nil {
+		return "", err
+	}
+	st, err := retryRead(store.LoadState, s.a.Home)
+	switch {
+	case err != nil:
+		return "", err
+	case !githubEnabled(&cfg, sec):
+		return "", errors.New("not publishing to GitHub")
+	case !dashboardURL(st.GitHub.PagesURL):
+		return "", errors.New("the dashboard has no address yet (its first build takes a few minutes)")
+	case sec.Key() == nil:
+		return "", errors.New("this machine has no fleet key")
+	}
+	return base64.RawURLEncoding.EncodeToString(ghpub.OwnerKey(sec.Key())), nil
 }
 
 func fleetShort(k []byte) string {
@@ -469,7 +521,9 @@ func (s *Settings) cancelLogin() {
 // country and account-history opt-ins and (nil: unchanged) whether this
 // machine's own sign-in is shared with the fleet. A new label or choice is
 // published with the next publish, which is made due now; a sharing change
-// reaches the server with the next tick.
+// reaches the server with the next tick. On an adopted sign-in, an opt-in
+// changed here is this machine's own from then on: the sharer's choice no
+// longer changes it.
 func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCountry, showAccountHistory bool, share *bool) error {
 	a := s.a
 	label = strings.TrimSpace(label)
@@ -502,8 +556,15 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 	}
 	cfg.GitHub.NoQuota = noQuota
 	recountry := showCountry != cfg.GitHub.ShowCountry
+	rehistory := showAccountHistory != cfg.GitHub.ShowAccountHistory
+	if cfg.GitHub.Adopted && recountry {
+		cfg.GitHub.SetLocalPref(store.PrefShowCountry)
+	}
+	if cfg.GitHub.Adopted && rehistory {
+		cfg.GitHub.SetLocalPref(store.PrefShowAccountHistory)
+	}
 	cfg.GitHub.ShowCountry = showCountry
-	readHistory := showAccountHistory && !cfg.GitHub.ShowAccountHistory
+	readHistory := showAccountHistory && rehistory
 	cfg.GitHub.ShowAccountHistory = showAccountHistory
 	reshare := share != nil && *share != cfg.GitHub.SharesWithFleet() && !cfg.GitHub.Adopted
 	if reshare {

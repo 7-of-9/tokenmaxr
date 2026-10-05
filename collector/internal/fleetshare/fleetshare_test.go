@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -185,5 +186,109 @@ func TestFingerprint(t *testing.T) {
 	}
 	if Fingerprint(newKey(t), s) == fp {
 		t.Fatal("the fingerprint must depend on the fleet key")
+	}
+}
+
+// The choices a sharer passes on travel sealed with the rest; a share without
+// them (a collector before 0.4.2) opens with none.
+func TestPrefsRoundTrip(t *testing.T) {
+	k := newKey(t)
+	s := sample()
+	s.Prefs = &Prefs{From: "rabbit", ShowCountry: true}
+	blob, err := Seal(k, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(k, blob)
+	if err != nil || got.Prefs == nil || *got.Prefs != *s.Prefs {
+		t.Fatalf("prefs %+v: %v", got.Prefs, err)
+	}
+	old, _ := Seal(k, sample())
+	if got, err := Open(k, old); err != nil || got.Prefs != nil {
+		t.Fatalf("a share without prefs: %+v, %v", got.Prefs, err)
+	}
+	if fp := Fingerprint(k, s); fp != Fingerprint(k, sample()) {
+		t.Fatal("the prefs must not change the sign-in's fingerprint")
+	}
+	pf := PrefsFingerprint(k, s)
+	for name, mod := range map[string]func(*Prefs){
+		"from":    func(p *Prefs) { p.From = "fox" },
+		"country": func(p *Prefs) { p.ShowCountry = false },
+		"history": func(p *Prefs) { p.ShowAccountHistory = true },
+	} {
+		c := s
+		p := *s.Prefs
+		mod(&p)
+		c.Prefs = &p
+		if PrefsFingerprint(k, c) == pf {
+			t.Errorf("a changed %s keeps the prefs fingerprint", name)
+		}
+	}
+	if PrefsFingerprint(k, sample()) == pf {
+		t.Fatal("no prefs and prefs fingerprint the same")
+	}
+}
+
+// share041 and open041 are collector 0.4.1's decoder, verbatim apart from
+// the names: a share with prefs must still open there, as a plain sign-in.
+type share041 struct {
+	V        int       `json:"v"`
+	Token    string    `json:"token"`
+	Login    string    `json:"login"`
+	UserID   int64     `json:"userId"`
+	Repo     string    `json:"repo"`
+	Branch   string    `json:"branch"`
+	SharedAt time.Time `json:"sharedAt"`
+}
+
+func (s share041) valid() error {
+	owner, name, ok := strings.Cut(s.Repo, "/")
+	switch {
+	case s.V != 1:
+		return errors.New("version")
+	case s.Token == "" || s.Login == "":
+		return errors.New("no sign-in")
+	case !ok || owner == "" || name == "" || strings.Contains(name, "/"):
+		return errors.New("no repository")
+	}
+	return nil
+}
+
+func open041(k []byte, blob string) (share041, error) {
+	var s share041
+	b, err := base64.StdEncoding.DecodeString(blob)
+	if err != nil || len(b) > 4096 || len(b) < 4+12 || string(b[:4]) != "tmx1" {
+		return s, ErrFormat
+	}
+	m := hmac.New(sha256.New, k)
+	m.Write([]byte("tokenmaxr fleet github v1"))
+	c, _ := aes.NewCipher(m.Sum(nil))
+	g, _ := cipher.NewGCM(c)
+	rest := b[4:]
+	pt, err := g.Open(nil, rest[:12], rest[12:], []byte("tokenmaxr fleet github v1"))
+	if err != nil {
+		return s, ErrOpen
+	}
+	if err := json.Unmarshal(pt, &s); err != nil {
+		return share041{}, err
+	}
+	if err := s.valid(); err != nil {
+		return share041{}, err
+	}
+	return s, nil
+}
+
+func TestCollector041OpensAShareWithPrefs(t *testing.T) {
+	k := newKey(t)
+	s := sample()
+	s.Prefs = &Prefs{From: "rabbit", ShowCountry: true, ShowAccountHistory: true}
+	blob, err := Seal(k, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := open041(k, blob)
+	want := share041{V: 1, Token: s.Token, Login: s.Login, UserID: s.UserID, Repo: s.Repo, Branch: s.Branch, SharedAt: s.SharedAt}
+	if err != nil || got != want {
+		t.Fatalf("0.4.1 read %+v: %v", got, err)
 	}
 }

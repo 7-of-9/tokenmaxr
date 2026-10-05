@@ -278,11 +278,22 @@ func (a *App) githubRows(p *termfmt.Printer, cfg store.Config, sec store.Secrets
 	if cfg.GitHub.NoQuota {
 		more = append(more, p.Dim("quota meters not published"))
 	}
-	if cfg.GitHub.ShowCountry {
-		more = append(more, p.Dim("country (flag) published"))
-	}
-	if cfg.GitHub.ShowAccountHistory {
-		more = append(more, p.Dim("Codex account history published"))
+	for _, o := range []struct {
+		name, what string
+		on         bool
+	}{
+		{store.PrefShowCountry, "country (flag)", cfg.GitHub.ShowCountry},
+		{store.PrefShowAccountHistory, "Codex account history", cfg.GitHub.ShowAccountHistory},
+	} {
+		// A choice followed from the sharer is shown either way, with whose.
+		switch from := cfg.GitHub.PrefFrom(o.name); {
+		case from != "" && o.on:
+			more = append(more, p.Dim(o.what+" published (from "+from+")"))
+		case from != "":
+			more = append(more, p.Dim(o.what+" not published (from "+from+")"))
+		case o.on:
+			more = append(more, p.Dim(o.what+" published"))
+		}
 	}
 	who := " · signed in as " + sec.GitHub.Login
 	if cfg.GitHub.Adopted {

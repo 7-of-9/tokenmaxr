@@ -7,8 +7,9 @@ package ui
 // colour) and a normal titled window, "tokenmaxr", hosting the same sheet
 // view as the popup with the same rows and actions (tray.ClickWindow: the
 // window stays open after an action). Clicking the Dock icon shows it
-// (applicationShouldHandleReopen), closing it hides it, Cmd-Q quits. At
-// login it starts hidden, with its Dock icon. The window itself lives in
+// (applicationShouldHandleReopen), closing it hides it, Cmd-Q and the Dock
+// menu's Quit quit (applicationShouldTerminate), and Hide (Cmd-H) counts as
+// off screen. At login it starts hidden, with its Dock icon. The window itself lives in
 // native_darwin.go; this file is its state, as popup_darwin.go is the
 // popup's.
 
@@ -284,15 +285,19 @@ func windowResign() {
 	}
 }
 
-// windowQuit is Cmd-Q: quit as the Quit row does (no second question).
-func windowQuit() {
+// windowQuit is Cmd-Q, the Dock menu's Quit and a logout: quit as the Quit
+// row does (no second question). False: the app is not up yet (no window
+// mode started), so nothing quits it.
+func windowQuit() bool {
 	w := &macWin
 	w.mu.Lock()
 	h := w.h
 	w.mu.Unlock()
-	if h.Click != nil {
-		go h.Click(tray.ActQuitNow)
+	if h.Click == nil {
+		return false
 	}
+	go h.Click(tray.ActQuitNow)
+	return true
 }
 
 // windowDebug describes the main window for app.dump.

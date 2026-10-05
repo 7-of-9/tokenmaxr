@@ -32,7 +32,9 @@ func TestRestartArgs(t *testing.T) {
 		{[]string{"--home=x"}, false, []string{"--home=x", "app"}},
 		{[]string{"app", "--minimized"}, true, []string{"app", "--minimized"}},
 		{[]string{"app", "--minimized"}, false, []string{"app"}},
-		{[]string{"--home", "h", "app", "--watchdog", "-minimized=true"}, false, []string{"--home", "h", "app", "--watchdog"}},
+		// Shown: not as the watchdog's launch, which starts minimized.
+		{[]string{"--home", "h", "app", "--watchdog", "-minimized=true"}, false, []string{"--home", "h", "app"}},
+		{[]string{"app", "-watchdog=true"}, false, []string{"app"}},
 		{[]string{"--home", "h", "app", "--watchdog"}, true, []string{"--home", "h", "app", "--watchdog", "--minimized"}},
 	} {
 		if got := restartArgs(c.args, c.minimized); !slices.Equal(got, c.want) {
@@ -309,8 +311,8 @@ func TestInstallStartMenu(t *testing.T) {
 }
 
 // The app brings an earlier version's install up to date as it starts: the
-// login item starts it minimized, and the Start-menu entry exists in
-// window mode.
+// login item starts it minimized, and the Start-menu entry is made in
+// window mode, once: an entry the user deleted is not made again.
 func TestUpgradeDesktopEntries(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("drives the Windows entries")
@@ -338,8 +340,18 @@ func TestUpgradeDesktopEntries(t *testing.T) {
 		t.Fatalf("start menu %+v", sm.made)
 	}
 
-	// Tray only, or without autostart, nothing is added.
+	// Deleted by the user: it stays deleted.
 	os.Remove(filepath.Join(sm.programs, "tokenmaxr.lnk"))
+	if err := a.Desktop(context.Background(), DesktopOptions{Minimized: true, UI: func(*Desktop) {}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sm.made) != 1 || fileExists(filepath.Join(sm.programs, "tokenmaxr.lnk")) {
+		t.Fatalf("a deleted entry was made again: %+v", sm.made)
+	}
+
+	// Tray only, or without autostart, nothing is added (even before the
+	// entry was ever made).
+	os.Remove(startMenuMark(a.Home))
 	cfg.TrayOnly = true
 	store.SaveConfig(a.Home, cfg)
 	if err := a.Desktop(context.Background(), DesktopOptions{UI: func(*Desktop) {}}); err != nil {
@@ -352,5 +364,46 @@ func TestUpgradeDesktopEntries(t *testing.T) {
 	}
 	if len(sm.made) != 1 {
 		t.Fatalf("start menu entry added again: %+v", sm.made)
+	}
+
+	// An entry an earlier install made counts as made: deleting it sticks.
+	cfg.Autostart = true
+	store.SaveConfig(a.Home, cfg)
+	os.WriteFile(filepath.Join(sm.programs, "tokenmaxr.lnk"), []byte("lnk"), 0o600)
+	if err := a.Desktop(context.Background(), DesktopOptions{UI: func(*Desktop) {}}); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(sm.programs, "tokenmaxr.lnk"))
+	if err := a.Desktop(context.Background(), DesktopOptions{UI: func(*Desktop) {}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sm.made) != 1 {
+		t.Fatalf("start menu entry added again: %+v", sm.made)
+	}
+}
+
+// A headless run (Linux, or macOS without cgo: no UI) has no window, and
+// app.dump says so instead of describing one.
+func TestDumpHeadlessHasNoWindow(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	if err := os.MkdirAll(a.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := a.newDesktop(context.Background())
+	d.minimized = true // a watchdog or login start
+	if err := d.dump(); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(paths.AppView(a.Home))
+	view := string(b)
+	if !strings.Contains(view, "mode: headless") || strings.Contains(view, "window rows") || strings.Contains(view, "started minimized") || strings.Contains(view, "window on screen") {
+		t.Fatalf("headless app.view.txt:\n%s", view)
+	}
+	d.hasUI = true
+	if err := d.dump(); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(paths.AppView(a.Home)); !strings.Contains(string(b), "mode: window") || !strings.Contains(string(b), "window rows:") {
+		t.Fatalf("app.view.txt with a UI:\n%s", b)
 	}
 }
