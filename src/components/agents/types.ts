@@ -25,8 +25,13 @@ export type ModelBucket = Omit<TokenBucket, 'events'>
 
 /** Per machine or per country: exact + estimated tokens and all activity. */
 export interface PlaceBucket {
-  /** Account history without a known token split or machine attribution. */
+  /** Account history without a known token split (on machine "unknown" and country ZZ unless assigned). */
   unattributed?: number
+  /**
+   * Read-time only (attribution.ts): the part of `unattributed` assigned to this machine or country by estimate,
+   * from the provider's account totals. A subset, never added.
+   */
+  assigned?: number
   in: number
   cacheW: number
   cacheR: number
@@ -64,6 +69,11 @@ export interface ProviderDay {
   promptsByModel?: Record<string, number>
   /** Read-time only (infer.ts, "Estimate unrecorded"): the part of `estimated` inferred from those prompts. A subset, never added. */
   inferred?: TokenBucket
+  /**
+   * Read-time only, in a one-machine view (machines.ts, attribution.ts): the part of `exact.unattributed` assigned
+   * to that machine by estimate. A subset, never added; not recorded there, so it makes no active day.
+   */
+  assignedHistory?: number
   /** The same inferred tokens per model (a subset of models.estimated, never added). */
   inferredModels?: Record<string, ModelBucket>
   /** Read-time explanation of each workspace's monthly estimate. */

@@ -144,6 +144,13 @@ func (a *App) Status() error {
 			p.Row("Codex history", fmt.Sprintf("%d UTC days · %s account tokens", h.Days, tray.Compact(h.TotalTokens)), p.Dim("read ")+since(p, h.LastSuccess, now)+p.Dim(" · automatic every 15 min"))
 		}
 	}
+	// Sessions Codex's history.jsonl lists with no rollout here: their tokens
+	// reach the dashboard only as account history.
+	if m := a.codexMissing(a.lastHomes(st)); m.Sessions > 0 {
+		p.Row("Codex logs", p.Warn(m.Text()), p.Dim("their tokens count only through Codex account history, as an estimate per machine"))
+	} else if m.History > 0 {
+		p.Row("Codex logs", p.Dim(m.Text()))
+	}
 
 	// Sources.
 	p.Section("Sources")

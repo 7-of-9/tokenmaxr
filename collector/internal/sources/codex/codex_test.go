@@ -3,7 +3,10 @@ package codex
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,5 +272,122 @@ func TestImagePrompts(t *testing.T) {
 		if p := m.Prompts[id(model.KindPrompt, key)]; p.Text != text || p.Model != "gpt-5.5" {
 			t.Errorf("prompt %s = %+v", key, p)
 		}
+	}
+}
+
+// dirLink links link to the directory target: a symbolic link, or on
+// Windows without the symlink privilege a junction.
+func dirLink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+			t.Fatalf("junction: %v %s", err, out)
+		}
+		return
+	}
+	t.Fatalf("cannot link %s", link)
+}
+
+// A sessions folder moved elsewhere and linked back (and a linked archive
+// folder inside it) is read like a plain one.
+func TestLinkedSessionFolders(t *testing.T) {
+	home, env := setup(t, "2026-09-28T10:05:00Z")
+	codex := filepath.Join(home, ".codex")
+	moved := filepath.Join(t.TempDir(), "codex-sessions")
+	if err := os.Rename(filepath.Join(codex, "sessions"), moved); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, moved, filepath.Join(codex, "sessions"))
+	archive := filepath.Join(t.TempDir(), "archive")
+	if err := os.Rename(filepath.Join(codex, "archived_sessions"), archive); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(codex, "archived_sessions"), 0o755)
+	dirLink(t, archive, filepath.Join(codex, "archived_sessions", "2026"))
+	// A loop back to the Codex folder must not hang or repeat files.
+	dirLink(t, codex, filepath.Join(moved, "loop"))
+	files, err := New().Files(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 4 {
+		t.Fatalf("Files() = %v, want 3 rollouts + history", files)
+	}
+	for _, f := range files {
+		if !strings.HasPrefix(f, codex) {
+			t.Fatalf("%s is not reported under the Codex folder", f)
+		}
+	}
+	src := New()
+	if err := src.Prepare(env); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := sourcetest.Parse(t, src, env, rolloutA(home), sources.Cursor{})
+	if len(b.Usage) == 0 {
+		t.Fatal("a rollout under a linked folder is not parsed")
+	}
+	if m, _ := MissingLogs(at("2026-09-28T10:05:00Z"), codex); m.Sessions != 1 {
+		t.Fatalf("missing %+v: the linked rollouts count as present", m)
+	}
+}
+
+// MissingLogs counts history.jsonl sessions without a rollout: deleted, or
+// made on another machine. Injected context and the last minutes are left out.
+func TestMissingLogs(t *testing.T) {
+	home, _ := setup(t, "2026-09-28T10:05:00Z")
+	codex := filepath.Join(home, ".codex")
+	m, err := MissingLogs(at("2026-09-28T10:05:00Z"), codex)
+	if err != nil || m != (Missing{Sessions: 1, Prompts: 1, History: 2}) {
+		t.Fatalf("missing %+v %v", m, err)
+	}
+	if got := m.Text(); got != "1 Codex session has no log on this machine (deleted or made elsewhere): 1 prompt without token records" {
+		t.Fatalf("text %q", got)
+	}
+	// Later the brand-new entry counts too; deleting a rollout adds its session.
+	if err := os.Remove(rolloutA(home)); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = MissingLogs(at("2026-09-28T11:00:00Z"), codex)
+	if m != (Missing{Sessions: 3, Prompts: 3, History: 3}) {
+		t.Fatalf("missing %+v", m)
+	}
+	if !strings.HasPrefix(m.Text(), "3 Codex sessions have no log on this machine") {
+		t.Fatalf("text %q", m.Text())
+	}
+	// No history at all: nothing to report.
+	if m, err := MissingLogs(at("2026-09-28T11:00:00Z"), t.TempDir()); err != nil || m != (Missing{}) {
+		t.Fatalf("no history: %+v %v", m, err)
+	}
+	if !strings.HasPrefix((Missing{History: 4}).Text(), "every Codex session") {
+		t.Fatal("nothing missing reads as such")
+	}
+}
+
+// One machine's Codex directories are checked together: history.jsonl copied
+// to a new CODEX_HOME while the rollouts stayed in ~/.codex is not missing,
+// and a prompt listed in both histories counts once.
+func TestMissingLogsAcrossCodexDirs(t *testing.T) {
+	home, _ := setup(t, "2026-09-28T10:05:00Z")
+	codex := filepath.Join(home, ".codex")
+	moved := filepath.Join(t.TempDir(), "codex-home")
+	os.MkdirAll(moved, 0o755)
+	b, err := os.ReadFile(filepath.Join(codex, "history.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moved, "history.jsonl"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alone, _ := MissingLogs(at("2026-09-28T10:05:00Z"), moved)
+	if alone != (Missing{Sessions: 2, Prompts: 2, History: 2}) {
+		t.Fatalf("the moved directory alone has no rollouts: %+v", alone)
+	}
+	want, _ := MissingLogs(at("2026-09-28T10:05:00Z"), codex)
+	both, err := MissingLogs(at("2026-09-28T10:05:00Z"), moved, codex)
+	if err != nil || both != want {
+		t.Fatalf("both directories %+v %v, want %+v", both, err, want)
 	}
 }

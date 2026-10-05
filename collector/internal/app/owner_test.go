@@ -37,13 +37,17 @@ func ownerItems(t *testing.T, a *App, f *ghapitest.Fake, id string) []map[string
 	return body.Items
 }
 
-// writeClaudeMeter gives the test home's Claude login a weekly meter.
-func writeClaudeMeter(t *testing.T, a *App, used float64) {
+// writeClaudeMeter gives the test home's Claude login a weekly meter that
+// resets at resets. A meter read again keeps its reset time (the provider's
+// window end), so a caller passes the same one each time: one taken from the
+// clock per call would differ whenever the calls straddle a second, and the
+// meter would read as changed.
+func writeClaudeMeter(t *testing.T, a *App, used float64, resets time.Time) {
 	t.Helper()
 	b, _ := json.Marshal(map[string]any{
 		"oauthAccount": map[string]any{"accountUuid": "uuid-1", "emailAddress": "someone@example.com", "organizationName": "Org", "organizationRateLimitTier": "default_claude_max_20x"},
 		"cachedUsageUtilization": map[string]any{"fetchedAtMs": time.Now().UnixMilli(), "accountUuid": "uuid-1",
-			"utilization": map[string]any{"seven_day": map[string]any{"utilization": used, "resets_at": time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339)}}},
+			"utilization": map[string]any{"seven_day": map[string]any{"utilization": used, "resets_at": resets.UTC().Format(time.RFC3339)}}},
 	})
 	if err := os.WriteFile(filepath.Join(a.UserHome, ".claude.json"), b, 0o600); err != nil {
 		t.Fatal(err)
@@ -59,7 +63,8 @@ func TestGitHubPublishesQuotaMetersOnlyEncrypted(t *testing.T) {
 	f, _ := useFakeGitHub(t)
 	a, _, _ := newTestApp(t)
 	githubOnly(t, a, f)
-	writeClaudeMeter(t, a, 47)
+	resets := time.Now().Add(72 * time.Hour)
+	writeClaudeMeter(t, a, 47, resets)
 	st, _ := store.LoadState(a.Home)
 	st.GitHub.MachineID = "m_0123456789ab"
 	quota := ghpub.QuotaPath(st.GitHub.MachineID)
@@ -98,8 +103,8 @@ func TestGitHubPublishesQuotaMetersOnlyEncrypted(t *testing.T) {
 		t.Fatal("state.json holds the email")
 	}
 
-	// Read again, unchanged: nothing is committed.
-	writeClaudeMeter(t, a, 47)
+	// Read again, unchanged (a later fetch of the same window): nothing is committed.
+	writeClaudeMeter(t, a, 47, resets)
 	head := f.Head
 	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
 		t.Fatal(err)
@@ -108,7 +113,7 @@ func TestGitHubPublishesQuotaMetersOnlyEncrypted(t *testing.T) {
 		t.Fatal("a meter only read again made a commit")
 	}
 	// Changed: committed.
-	writeClaudeMeter(t, a, 61)
+	writeClaudeMeter(t, a, 61, resets)
 	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}

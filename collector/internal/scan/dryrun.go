@@ -11,6 +11,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/limits"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
+	"github.com/7-of-9/tokenmaxr/collector/internal/sources/codex"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/workspace"
 )
 
@@ -119,6 +120,9 @@ type Report struct {
 	// Limits is the newest plan window each tool has written, per account.
 	// Names are organization or plan labels. Emails are not included.
 	Limits []model.LimitSnapshot `json:"limits,omitempty"`
+	// CodexMissing counts the Codex sessions in history.jsonl that have no
+	// log on this machine (absent when there is no Codex history).
+	CodexMissing *codex.Missing `json:"codexMissing,omitempty"`
 }
 
 // Bound is an inclusive time filter given either as a local calendar date
@@ -501,6 +505,9 @@ func (r *Report) Text(w io.Writer) {
 		}
 	}
 	fmt.Fprintln(w, "\n(1h = the 1-hour-TTL part of cacheW; act = activity with usage / without usage; eff = in + cacheW + out + 0.1 x cacheR)")
+	if r.CodexMissing != nil {
+		fmt.Fprintf(w, "\ncodex logs: %s\n", r.CodexMissing.Text())
+	}
 	writeLimits(w, r.Limits)
 }
 

@@ -58,6 +58,9 @@ type App struct {
 	RefreshQuota func(ctx context.Context, provider string) error
 	// WSL overrides WSL home discovery (tests); nil uses the platform default.
 	WSL *homes.WSL
+	// CodexLookups find CODEX_HOME values set outside this process (New sets
+	// homes.DefaultCodexLookups); nil looks nowhere else (tests).
+	CodexLookups []homes.CodexLookup
 	// Autostart is the OS's login and scheduler entries (tests pass fakes);
 	// nil uses the platform's. TaskName and RunValue override the entry
 	// names (tests use TEST names).
@@ -112,6 +115,10 @@ func New(homeFlag, version string, out io.Writer) (*App, error) {
 		ReadAccountUsage: accountusage.ReadCodex,
 	}
 	a.RefreshQuota = a.refreshQuotaWithClient
+	if os.Getenv(paths.UserHomeEnv) == "" {
+		// A fixture home (D0M1_USER_HOME) ignores CODEX_HOME, wherever it is set.
+		a.CodexLookups = homes.DefaultCodexLookups()
+	}
 	return a, nil
 }
 
@@ -154,9 +161,20 @@ func TZOffsetMin(t time.Time) int {
 }
 
 // homes lists this tick's scan roots (SPEC "Scan roots"): the OS home,
-// config extraHomes and, on Windows, the homes of running WSL distros.
-func (a *App) homes(cfg *store.Config) homes.Result {
-	return homes.Discover(homes.Options{UserHome: a.UserHome, Extra: cfg.ExtraHomes, DiscoverWSL: cfg.DiscoverWSL, WSL: a.WSL})
+// config extraHomes, Codex directories set outside this process
+// (codexhomes.go) and, on Windows, the homes of running WSL distros.
+func (a *App) homes(cfg *store.Config) homes.Result { return a.discoverHomes(cfg, false) }
+
+// homesLive is homes with the CODEX_HOME lookups run now, not cached
+// (doctor and scan --dry-run report what is there at this moment).
+func (a *App) homesLive(cfg *store.Config) homes.Result { return a.discoverHomes(cfg, true) }
+
+func (a *App) discoverHomes(cfg *store.Config, live bool) homes.Result {
+	dirs, notes := a.codexDirs(live)
+	r := homes.Discover(homes.Options{UserHome: a.UserHome, Extra: cfg.ExtraHomes, OSCodexHome: a.CodexHome, CodexDirs: dirs,
+		DiscoverWSL: cfg.DiscoverWSL, WSL: a.WSL})
+	r.Notes = append(notes, r.Notes...)
+	return r
 }
 
 // hashFn hashes native account ids with the fleet key k (nil without one).
@@ -197,7 +215,22 @@ func (a *App) scanHomes(k []byte, cfg *store.Config, st *store.State, hs []homes
 	ix := evidence.Build(st.Evidence, accounts.Spans(st.Accounts))
 	out := make([]scan.Home, 0, len(hs))
 	for _, h := range hs {
-		out = append(out, scan.Home{Env: a.envFor(k, cfg, st, h, ix), Sources: a.enabledSources(cfg)})
+		out = append(out, scan.Home{Env: a.envFor(k, cfg, st, h, ix), Sources: sourcesFor(h, a.enabledSources(cfg))})
+	}
+	return out
+}
+
+// sourcesFor is the parsers that read home h: all of them, or the Codex
+// parser alone for a Codex directory (homes.KindCodex).
+func sourcesFor(h homes.Home, all []sources.Source) []sources.Source {
+	if !h.CodexOnly() {
+		return all
+	}
+	var out []sources.Source
+	for _, s := range all {
+		if s.Name() == model.SourceCodex {
+			out = append(out, s)
+		}
 	}
 	return out
 }
@@ -274,6 +307,15 @@ func checkKey(key string, h homes.Home) string {
 func (a *App) runChecksIn(fix bool, hs []homes.Home) configfix.Result {
 	res := configfix.Result{Checks: map[string]string{}}
 	for _, h := range hs {
+		if h.CodexOnly() {
+			// A Codex directory holds no Claude or Grok settings to check or fix.
+			st, msg := configfix.CodexHistory(filepath.Join(h.Path, "config.toml"))
+			res.Checks[checkKey("codexHistory", h)] = st
+			if msg != "" {
+				res.Notes = append(res.Notes, h.Label()+": codex: "+msg)
+			}
+			continue
+		}
 		r := configfix.Run(configfix.Options{UserHome: h.Path, CodexHome: h.CodexHome(a.CodexHome), Fix: fix})
 		for k, v := range r.Checks {
 			if k == "smartAppControl" && h.Kind != homes.KindOS {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/accounts"
+	"github.com/7-of-9/tokenmaxr/collector/internal/fsx"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/jsonl"
@@ -479,22 +480,15 @@ func codexPlan(p string) string {
 
 func codexLimits(env *sources.Env) []model.LimitSnapshot {
 	var out []model.LimitSnapshot
-	for _, sub := range []string{"sessions", "archived_sessions"} {
-		root := filepath.Join(codexDir(env), sub)
-		filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				if p == root {
-					return fs.SkipAll
-				}
-				return nil
-			}
-			if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(d.Name(), ".jsonl") {
-				return nil
-			}
-			out = append(out, codexFile(env, p)...)
+	// Linked session folders are followed, each real folder once (fsx.WalkFollow).
+	roots := []string{filepath.Join(codexDir(env), "sessions"), filepath.Join(codexDir(env), "archived_sessions")}
+	fsx.WalkFollow(roots, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(d.Name(), ".jsonl") {
 			return nil
-		})
-	}
+		}
+		out = append(out, codexFile(env, p)...)
+		return nil
+	})
 	// A fresh reading fetched through Codex's app server, written in the
 	// rollout format; Dedupe keeps whichever reading is newest.
 	if env.CodexQuota != "" {

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import pricing from '../../data/modelPricing.json'
+import { assignedNote } from './attribution'
 import { costRows, formatUsd, type CostRow, type PriceMode, type PricingTable } from './cost'
 import Flag from './Flag'
 import Numeral from './Numeral'
 import { usePriceMode } from './pricing'
 import TimeChart from './TimeChart'
-import type { PublicMachine } from './types'
+import type { Provider, PublicMachine } from './types'
 import {
   ACCOUNT_HISTORY,
   formatCompact,
@@ -85,43 +86,62 @@ interface ShareRow {
   live?: boolean
   value: number
   prompts: number
+  /** Part of value: account history assigned to this row by estimate. */
+  assigned: number
+  assignedProviders: Provider[]
 }
 
 const ShareList = ({ rows, noun, title }: { rows: ShareRow[]; noun: string; title: string }) => {
   const total = rows.reduce((sum, row) => sum + row.value, 0)
   if (rows.length === 0) return <p className="agents-muted">Nothing counted in this period.</p>
+  const estimated = rows.some(row => row.assigned > 0)
   return (
-    <ul className="agents-share" aria-label={title}>
-      {rows.map((row) => {
-        const share = total > 0 ? row.value / total : 0
-        return (
-          <li key={row.key} className="agents-share__row">
-            <Flag cc={row.cc} title={countryName(row.cc)} />
-            <span className="agents-share__label">
-              <span className="agents-share__name">{row.label}</span>
-              {row.live && (
-                <span className="agents-share__live" title="Reported in the last few minutes">
-                  <span className="sr-only">live</span>
-                </span>
+    <>
+      <ul className="agents-share" aria-label={title}>
+        {rows.map((row) => {
+          const share = total > 0 ? row.value / total : 0
+          const note = row.assigned > 0 ? assignedNote(row.assigned, row.assignedProviders) : null
+          return (
+            <li key={row.key} className="agents-share__row">
+              <Flag cc={row.cc} title={countryName(row.cc)} />
+              <span className="agents-share__label">
+                <span className="agents-share__name">{row.label}</span>
+                {note && (
+                  <span className="agents-share__est" title={`Partly estimated: ${note}`}>
+                    est.
+                  </span>
+                )}
+                {row.live && (
+                  <span className="agents-share__live" title="Reported in the last few minutes">
+                    <span className="sr-only">live</span>
+                  </span>
+                )}
+              </span>
+              {row.value > 0 ? (
+                <>
+                  <span className="agents-share__value" title={`${formatCompact(row.value)} ${noun}${note ? `; ${note}` : ''}`}>
+                    {formatCompact(row.value)}
+                  </span>
+                  <span className="agents-share__pct">{percent(share)}</span>
+                </>
+              ) : (
+                <span className="agents-share__value agents-share__value--muted">{plural(row.prompts, 'prompt')}</span>
               )}
-            </span>
-            {row.value > 0 ? (
-              <>
-                <span className="agents-share__value" title={`${formatCompact(row.value)} ${noun}`}>
-                  {formatCompact(row.value)}
-                </span>
-                <span className="agents-share__pct">{percent(share)}</span>
-              </>
-            ) : (
-              <span className="agents-share__value agents-share__value--muted">{plural(row.prompts, 'prompt')}</span>
-            )}
-            <span className="agents-share__track" aria-hidden="true">
-              {share > 0 && <span className={`gh-bar__fill${row === rows[0] ? ' is-lead' : ''}`} style={{ width: `${Math.max(1, share * 100)}%` }} />}
-            </span>
-          </li>
-        )
-      })}
-    </ul>
+              <span className="agents-share__track" aria-hidden="true">
+                {share > 0 && <span className={`gh-bar__fill${row === rows[0] ? ' is-lead' : ''}`} style={{ width: `${Math.max(1, share * 100)}%` }} />}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      {estimated && (
+        <p className="agents-footnote">
+          est.: includes account history placed by estimate. Account totals are per account and day, not per machine, so
+          they follow each machine's local activity for that provider on the day (or the nearest days): first its prompts
+          with no token records, then its recorded tokens.
+        </p>
+      )}
+    </>
   )
 }
 
@@ -147,7 +167,8 @@ const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeD
     const byId = new Map(machines.map((m) => [m.id, m]))
     return placeTotals(days, view, range.from, range.to, 'byMachine').map((t) => {
       const m = byId.get(t.key)
-      return { key: t.key, cc: m?.cc || 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts }
+      return { key: t.key, cc: m?.cc || 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts,
+        assigned: t.assigned, assignedProviders: t.assignedProviders }
     })
   }, [days, view, range, machines])
 
@@ -159,6 +180,8 @@ const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeD
         label: countryName(t.key),
         value: t.value,
         prompts: t.prompts,
+        assigned: t.assigned,
+        assignedProviders: t.assignedProviders,
       })),
     [days, view, range],
   )

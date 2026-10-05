@@ -270,8 +270,7 @@ export function buildCells(days: NormDay[], view: ViewOptions): Map<string, DayC
       const p = day.providers[provider]
       if (!p) continue
       const exact = metricOf(p.exact, view.metric)
-      const recordedTokens = metricOf(p.exact, 'tokens') + (view.exactOnly ? 0
-        : metricOf(p.estimated, 'tokens') - metricOf(p.inferred ?? ZERO_BUCKET, 'tokens'))
+      const recordedTokens = recordedOf(p, view)
       if (recordedTokens > 0) cell.recordedTokenDay = true
       const estimated = view.exactOnly ? 0 : metricOf(p.estimated, view.metric)
       const inferred = view.exactOnly ? 0 : metricOf(p.inferred ?? ZERO_BUCKET, view.metric)
@@ -422,6 +421,15 @@ export function periodRange(period: Period, today: string): PeriodRange {
 /** A period total per month (the cost tile's headline figure). */
 export const perMonth = (total: number, range: Pick<PeriodRange, 'months'>) => (range.months > 0 ? total / range.months : 0)
 
+/**
+ * A provider day's tokens that make it an active day: all but those inferred from prompts, and in a one-machine
+ * view all but the account history assigned to that machine by estimate (attribution.ts).
+ */
+function recordedOf(p: ProviderDay, view: ViewOptions) {
+  return metricOf(p.exact, 'tokens') - (p.assignedHistory ?? 0) + (view.exactOnly ? 0
+    : metricOf(p.estimated, 'tokens') - metricOf(p.inferred ?? ZERO_BUCKET, 'tokens'))
+}
+
 /** Recorded-token days in the selected scope, independent of the displayed token metric. */
 export function activeDayCount(days: NormDay[], view: ViewOptions, from: string, to: string): number {
   const active = new Set<string>()
@@ -429,10 +437,7 @@ export function activeDayCount(days: NormDay[], view: ViewOptions, from: string,
     if (day.date < from || day.date > to) continue
     for (const provider of providersOf(view)) {
       const p = day.providers[provider]
-      if (!p) continue
-      const recorded = metricOf(p.exact, 'tokens') + (view.exactOnly ? 0
-        : metricOf(p.estimated, 'tokens') - metricOf(p.inferred ?? ZERO_BUCKET, 'tokens'))
-      if (recorded > 0) {
+      if (p && recordedOf(p, view) > 0) {
         active.add(day.date)
         break
       }
@@ -591,6 +596,10 @@ export interface PlaceTotal {
   key: string
   value: number
   prompts: number
+  /** Part of value: account history assigned here by estimate (attribution.ts); Total only, like all account history. */
+  assigned: number
+  /** The providers whose account totals that estimate came from. */
+  assignedProviders: Provider[]
 }
 
 /** Tokens per machine or per country in the chosen metric (these buckets combine exact and estimated). */
@@ -609,9 +618,13 @@ export function placeTotals(
       if (!p) continue
       for (const [key, b] of Object.entries(p[field])) {
         const id = field === 'byCountry' ? (key || 'ZZ').toUpperCase() : key
-        const entry = totals.get(id) ?? { key: id, value: 0, prompts: 0 }
+        const entry = totals.get(id) ?? { key: id, value: 0, prompts: 0, assigned: 0, assignedProviders: [] }
         entry.value += metricOf(b, view.metric)
         entry.prompts += b.prompts
+        if (view.metric === 'tokens' && (b.assigned ?? 0) > 0) {
+          entry.assigned += b.assigned!
+          if (!entry.assignedProviders.includes(provider)) entry.assignedProviders.push(provider)
+        }
         totals.set(id, entry)
       }
     }

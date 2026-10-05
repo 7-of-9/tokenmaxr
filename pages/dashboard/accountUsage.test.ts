@@ -8,7 +8,8 @@ import { accountLedger, reconcileAccountUsage as serverReconcile } from '../../a
 // @ts-expect-error -- plain JS module without types (the d0m1 API's rollup).
 import { aliasAccts, computeRollup, hasData } from '../../api/src/lib/rollup.js'
 import type { Provider, RollupDay } from '../../src/components/agents/types.ts'
-import { activeDayCount, buildCells, DEFAULT_VIEW, normaliseDays, summarise, type NormDay } from '../../src/components/agents/usage.ts'
+import { addAssignedHistory, attributeAccountHistory } from '../../src/components/agents/attribution.ts'
+import { activeDayCount, buildCells, DEFAULT_VIEW, normaliseDays, placeTotals, summarise, type NormDay } from '../../src/components/agents/usage.ts'
 import { reconcileAccountUsage, surroundingDates, datesBetween, type AccountSnapshot, type LedgerDay } from './accountUsage.ts'
 import { buildUsage, readLedger, readSnapshots, type MachineFiles, type Published } from './githubSource.ts'
 
@@ -315,7 +316,7 @@ test('a local date a machine lists as unledgered keeps the totals it may overlap
   }
 })
 
-test('one machine’s view never includes account history', () => {
+test('one machine’s own rows hold no account history (the page adds its estimated share)', () => {
   const evs = events()
   const { a, b } = snapshots(evs)
   const published = collectorFiles(evs, { [A]: a, [B]: b })
@@ -323,6 +324,35 @@ test('one machine’s view never includes account history', () => {
   assert.equal(scoped.days.some(d => Object.values(d.providers).some(p => p!.accountUsage || p!.exact.unattributed)), false)
   assert.deepEqual([scoped.accountUsagePending, scoped.accountUsageConflicts], [0, 0])
   assert.equal(scoped.days.every(d => d.providers.openai === undefined || Object.keys(d.providers.openai.byMachine).join() === A), true)
+})
+
+test('account history is placed on machines and regions as d0m1.com places it, and machine views add up', () => {
+  const evs = events()
+  const { a, b } = snapshots(evs)
+  const published = collectorFiles(evs, { [A]: a, [B]: b })
+  const page = buildUsage(published, NOW)
+  const fleet = attributeAccountHistory(normaliseDays(page), page.machines!)
+  const server = serverResponse(evs, [...a, ...b])
+  const serverDays = attributeAccountHistory(normaliseDays({ generatedAt: '', lastIngestAt: null, days: server.days,
+    totals: { accounts: 0, accountsByProvider: {}, machines: 0, machinesLive: 0 } }), page.machines!)
+  const places = (days: NormDay[], field: 'byMachine' | 'byCountry') =>
+    placeTotals(days, DEFAULT_VIEW, '2026-09-01', TODAY, field).map(t => [t.key, t.value, t.assigned])
+  for (const field of ['byMachine', 'byCountry'] as const) {
+    assert.deepEqual(places(fleet, field), places(serverDays, field), `${field}: the page and the API place it alike`)
+  }
+  const machines = places(fleet, 'byMachine')
+  assert.deepEqual(machines.map(([key]) => key).sort(), [A, B], 'no unknown machine')
+  assert.ok(machines.every(([, , assigned]) => (assigned as number) > 0))
+  assert.deepEqual(places(fleet, 'byCountry').map(([key]) => key).sort(), ['JP', 'ZZ'], 'B publishes no country: its own region bucket')
+  const total = (days: NormDay[]) => summarise(buildCells(days, DEFAULT_VIEW), '2026-09-01', TODAY).total
+  assert.equal(total(fleet), total(normaliseDays(page)), 'totals unchanged')
+  // One machine's view: its own rows plus its share; the views add up to the fleet.
+  let views = 0
+  for (const m of page.machines!) {
+    const own = normaliseDays(buildUsage(published, NOW, { machine: m.id }))
+    views += total(addAssignedHistory(own, fleet, m.id, m.cc || 'ZZ'))
+  }
+  assert.equal(views, total(fleet))
 })
 
 test('account-usage.json is read by name and validated', () => {

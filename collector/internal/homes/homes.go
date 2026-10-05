@@ -1,7 +1,9 @@
 // Package homes builds the list of scan roots (docs/agents/SPEC.md "Scan
-// roots: multiple homes"): the OS user home, any extraHomes from config.json
-// and, on Windows, the homes inside running WSL distros. Every parser and
-// account probe runs once per home. A stopped distro is never touched, because
+// roots: multiple homes"): the OS user home, any extraHomes from config.json,
+// Codex directories set outside the collector's environment (codex.go) and,
+// on Windows, the homes inside running WSL distros. Every parser and account
+// probe runs once per home (a Codex directory: the Codex parser and its
+// account only). A stopped distro is never touched, because
 // opening \\wsl$\<distro> would boot it.
 package homes
 
@@ -46,17 +48,30 @@ func (h Home) Key() string {
 }
 
 // CodexHome is the Codex directory for this home. $CODEX_HOME applies to the
-// OS home only (osCodexHome); any other home uses its own .codex.
+// OS home only (osCodexHome); a KindCodex home is a Codex directory itself;
+// any other home uses its own .codex.
 func (h Home) CodexHome(osCodexHome string) string {
-	if h.Kind == KindOS && osCodexHome != "" {
+	switch {
+	case h.Kind == KindOS && osCodexHome != "":
 		return osCodexHome
+	case h.Kind == KindCodex:
+		return h.Path
 	}
 	return filepath.Join(h.Path, ".codex")
 }
 
+// CodexOnly reports whether only the Codex parser (and Codex's own checks
+// and account) reads this home.
+func (h Home) CodexOnly() bool { return h.Kind == KindCodex }
+
 type Options struct {
 	UserHome string
 	Extra    []string
+	// OSCodexHome is the OS home's Codex directory ($CODEX_HOME of this
+	// process, else ~/.codex); CodexDirs are more Codex directories, read
+	// when no other home reads them already (codex.go).
+	OSCodexHome string
+	CodexDirs   []string
 	// DiscoverWSL enables the WSL lookup (Windows only; a no-op elsewhere).
 	DiscoverWSL bool
 	// WSL overrides the WSL runner (tests). nil selects the platform default.
@@ -78,7 +93,8 @@ type Result struct {
 }
 
 // Discover builds the homes list: the OS home first, then extras (cleaned,
-// deduplicated, missing ones dropped), then WSL homes.
+// deduplicated, missing ones dropped), then Codex directories no home reads
+// yet, then WSL homes.
 func Discover(o Options) Result {
 	var r Result
 	seen := map[string]bool{}
@@ -107,6 +123,7 @@ func Discover(o Options) Result {
 		}
 		add(Home{Path: abs, Kind: KindExtra})
 	}
+	addCodexHomes(&r, o.CodexDirs, o.OSCodexHome, add)
 	if o.DiscoverWSL {
 		w := o.WSL
 		if w == nil {

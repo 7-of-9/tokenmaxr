@@ -354,7 +354,8 @@ export function buildUsage(published: Published, now: Date, options: BuildOption
   const countries = new Map(published.machines.map(m => [m.id, country(m.meta?.cc)]))
   const rows = options.machine === undefined ? all : all.filter(r => r.machine === options.machine)
   const local = buildDays(rows, aliases, id => countries.get(id) ?? '')
-  // Account history belongs to no machine (the API files it under machine "unknown"), so one machine's view has none.
+  // Account history belongs to no machine (the API files it under machine "unknown"), so one machine's own rows have
+  // none: the page adds that machine's estimated share of it (attribution.ts, addAssignedHistory), as for d0m1.com.
   const account = options.machine === undefined ? applyAccountUsage(local, published.machines, all, aliases, now) : { days: local, pending: 0, conflicts: 0 }
   const days = account.days.filter(day => Object.keys(day.providers).length > 0)
   const machines = publicMachines(published, all, now)

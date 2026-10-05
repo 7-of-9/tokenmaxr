@@ -324,6 +324,15 @@
   background: var(--gh-green-fg);
 }
 
+.agents-share__est {
+  flex: none;
+  border-bottom: 1px dotted currentcolor;
+  color: var(--gh-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  cursor: help;
+}
+
 .agents-share__value {
   color: var(--gh-muted);
   font-size: 12px;

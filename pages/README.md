@@ -47,7 +47,12 @@ quota left and when it resets, as on d0m1.com/tokens/agents.
     in `ledgerCols`). Next to the local-date usage rows, UTC days reveal the
     machine's time-zone offset, which is why it is opt-in. The dashboard adds
     only the part of each total that no machine recorded locally, shown as
-    **account history**, exactly as d0m1.com reconciles it. Totals that might
+    **account history**, exactly as d0m1.com reconciles it. The account counts
+    per account and day, not per machine, so the machine and region panels
+    place that part on the machines whose Codex ran that day (or the nearest
+    days), first on those whose prompts that day have no token records, then
+    by tokens, marked "est." with the estimated amount in the hover; it is
+    never shown as an unknown machine while any machine has used Codex. Totals that might
     overlap tokens of a machine that publishes no ledger (an older collector
     or one that has not opted in), or of a local date it lists in
     `unledgered` (totals kept from an older collector's records, whose UTC

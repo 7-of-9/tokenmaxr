@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { monthLong, type ActivityMonth } from './activity'
+import { assignedNote } from './attribution'
 import Flag from './Flag'
 import Bar from './UsageBar'
 import { ACCOUNT_HISTORY, formatCount, formatDayShort, modelLabel, plural, PROVIDER_LABEL } from './usage'
@@ -132,6 +133,7 @@ const ActivityFeed = ({ months, today, noun }: ActivityFeedProps) => {
         const topModel = month.models[0]?.value ?? 0
         const modelCount = month.models.filter(row => row.model !== ACCOUNT_HISTORY).length
         const topMachine = month.machines[0]?.value ?? 0
+        const machinesEstimated = month.machines.some(row => row.assigned > 0)
         return (
           <div key={month.month} className="gh-activity__month">
             <h3 className="gh-activity__divider">
@@ -161,7 +163,13 @@ const ActivityFeed = ({ months, today, noun }: ActivityFeedProps) => {
                       </li>
                     ))}
                   </ul>
-                  {month.accountHistory > 0 && <p className="agents-footnote">Account history has no model, project or machine breakdown.</p>}
+                  {month.accountHistory > 0 && (
+                    <p className="agents-footnote">
+                      {machinesEstimated
+                        ? 'Account history has no model or project breakdown; its machine split below is an estimate.'
+                        : 'Account history has no model, project or machine breakdown.'}
+                    </p>
+                  )}
                   {month.models.length > ROWS_FIRST && (
                     <button
                       type="button"
@@ -191,6 +199,11 @@ const ActivityFeed = ({ months, today, noun }: ActivityFeedProps) => {
                           <span className="gh-row__main">
                             <Flag cc={row.cc} />
                             <span className="gh-row__name">{row.label}</span>
+                            {row.assigned > 0 && (
+                              <span className="gh-row__est" title={`Partly estimated: ${assignedNote(row.assigned, row.assignedProviders)}`}>
+                                est.
+                              </span>
+                            )}
                             <span className="gh-row__count">{counts(row.value, row.prompts)}</span>
                           </span>
                           <Bar share={share} lead={machineTotal > 0 ? row.value === topMachine : row === month.machines[0]} />

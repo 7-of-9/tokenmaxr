@@ -134,7 +134,7 @@ func (a *App) ScanDryRun(asJSON bool, since, until string) error {
 		cfg = store.DefaultConfig()
 		cfg.DiscoverWSL = false
 	}
-	hr := a.homes(&cfg)
+	hr := a.homesLive(&cfg)
 	for _, n := range hr.Notes {
 		fmt.Fprintf(os.Stderr, "warning: %s\n", n)
 	}
@@ -172,9 +172,12 @@ func (a *App) ScanDryRun(asJSON bool, since, until string) error {
 			TZOffsetMin: TZOffsetMin,
 			Prompts:     true,
 		}
-		hs = append(hs, scan.Home{Env: env, Sources: a.Sources()})
+		hs = append(hs, scan.Home{Env: env, Sources: sourcesFor(h, a.Sources())})
 	}
 	rep, err := scan.DryRunHomes(hs, sb, ub, now, os.Stderr)
+	if missing := a.codexMissing(hr.Homes); missing.History > 0 {
+		rep.CodexMissing = &missing
+	}
 	conflicts := ix.Conflicts()
 	for _, st := range rep.Sources {
 		st.Conflicts = conflicts[st.Provider]
@@ -245,7 +248,7 @@ func (a *App) Doctor(ctx context.Context) error {
 	}
 
 	p.Section("Homes " + p.Dim("(live discovery; a stopped WSL distro is never started)"))
-	hr := a.homes(&cfg)
+	hr := a.homesLive(&cfg)
 	for _, h := range hr.Homes {
 		p.Item(h.Label(), 20, h.Path)
 	}
@@ -255,11 +258,20 @@ func (a *App) Doctor(ctx context.Context) error {
 	for _, n := range hr.Notes {
 		p.Line(p.Dim("· " + n))
 	}
+	if m := a.codexMissing(hr.Homes); m.Sessions > 0 {
+		p.Item("codex logs", 20, p.Warn(m.Text()))
+	} else if m.History > 0 {
+		p.Item("codex logs", 20, p.Good(m.Text()))
+	}
 
 	p.Section("Config checks " + p.Dim("(live, nothing changed)"))
 	res := a.runChecksIn(false, hr.Homes)
 	for _, h := range hr.Homes {
-		for _, k := range []string{"claudeRetention", "grokRetention", "codexHistory"} {
+		checks := []string{"claudeRetention", "grokRetention", "codexHistory"}
+		if h.CodexOnly() {
+			checks = []string{"codexHistory"}
+		}
+		for _, k := range checks {
 			key := checkKey(k, h)
 			p.Item(key, 34, ok(res.Checks[key]))
 		}

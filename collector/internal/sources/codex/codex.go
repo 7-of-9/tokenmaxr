@@ -6,6 +6,7 @@ package codex
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/7-of-9/tokenmaxr/collector/internal/fsx"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/jsonl"
@@ -57,27 +59,23 @@ func codexDir(env *sources.Env) string {
 
 func historyPath(env *sources.Env) string { return filepath.Join(codexDir(env), "history.jsonl") }
 
-func rolloutFiles(env *sources.Env) ([]string, error) {
+func rolloutFiles(env *sources.Env) ([]string, error) { return RolloutFiles(codexDir(env)), nil }
+
+// RolloutFiles lists the rollout files under a Codex directory's sessions
+// and archived_sessions folders. Symbolic links (and Windows junctions) to
+// folders are followed, those folders themselves included, and each real
+// folder is read once (fsx.WalkFollow), so a link loop cannot hang the scan.
+func RolloutFiles(dir string) []string {
 	var out []string
-	for _, sub := range []string{"sessions", "archived_sessions"} {
-		root := filepath.Join(codexDir(env), sub)
-		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if p == root {
-					return fs.SkipAll
-				}
-				return nil
-			}
-			if !d.IsDir() && rolloutName.MatchString(d.Name()) {
-				out = append(out, p)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
+	roots := []string{filepath.Join(dir, "sessions"), filepath.Join(dir, "archived_sessions")}
+	fsx.WalkFollow(roots, func(p string, d fs.DirEntry, err error) error {
+		// A missing folder or an unreadable entry: there is nothing to list there.
+		if err == nil && !d.IsDir() && rolloutName.MatchString(d.Name()) {
+			out = append(out, p)
 		}
-	}
-	return out, nil
+		return nil
+	})
+	return out
 }
 
 func (s *Source) Prepare(env *sources.Env) error {
@@ -463,6 +461,13 @@ func promptText(p payload) (string, bool) {
 
 // --- history.jsonl ---
 
+// typed reports whether a history entry is something a person typed, not
+// injected context (environment, AGENTS.md and other instructions).
+func typed(text string) bool {
+	t := strings.TrimSpace(text)
+	return t != "" && !strings.HasPrefix(t, "<") && !strings.HasPrefix(t, "# AGENTS")
+}
+
 type histLine struct {
 	SessionID string `json:"session_id"`
 	TS        int64  `json:"ts"`
@@ -506,8 +511,7 @@ func (s *Source) parseHistory(env *sources.Env, path string, cur sources.Cursor)
 			break
 		}
 		next.Offset = r.Offset()
-		t := strings.TrimSpace(h.Text)
-		if t == "" || strings.HasPrefix(t, "<") || strings.HasPrefix(t, "# AGENTS") {
+		if !typed(h.Text) {
 			continue
 		}
 		key := "hist:" + h.SessionID + ":" + strconv.FormatInt(h.TS, 10)
@@ -517,4 +521,101 @@ func (s *Source) parseHistory(env *sources.Env, path string, cur sources.Cursor)
 		}
 	}
 	return e.Batch, next, nil
+}
+
+// --- missing logs ---
+
+// Missing counts the Codex sessions that history.jsonl records but that have
+// no rollout file: deleted since, or made on another machine and synced
+// here. Their prompts are counted (as activity) but their tokens are not,
+// unless account history (internal/accountusage) covers them.
+type Missing struct {
+	Sessions int `json:"sessions"`
+	Prompts  int `json:"prompts"`
+	// History is the number of history.jsonl prompts checked (0: no history).
+	History int `json:"history"`
+}
+
+// MissingLogs reads the history.jsonl of every Codex directory in dirs
+// against the rollout files of all of them: one machine's Codex directories
+// (CODEX_HOME and ~/.codex) can hold different parts of the same history, and
+// a rollout read from either is a log on this machine. A prompt listed in
+// two histories (a copied history.jsonl) counts once. Entries from the last
+// pendingTimeout are left out: a new session's rollout may not be written
+// yet. Directories without history.jsonl have nothing missing; the first
+// unreadable history is returned with the counts of the others.
+func MissingLogs(at time.Time, dirs ...string) (Missing, error) {
+	var m Missing
+	have := map[string]bool{}
+	for _, dir := range dirs {
+		for _, f := range RolloutFiles(dir) {
+			if g := rolloutName.FindStringSubmatch(filepath.Base(f)); g != nil {
+				have[g[1]] = true
+			}
+		}
+	}
+	sessions := map[string]bool{}
+	prompts := map[string]bool{}
+	var first error
+	for _, dir := range dirs {
+		if err := missingIn(dir, at, have, sessions, prompts, &m); err != nil && first == nil {
+			first = err
+		}
+	}
+	return m, first
+}
+
+func missingIn(dir string, at time.Time, have, sessions, prompts map[string]bool, m *Missing) error {
+	r, err := jsonl.Open(filepath.Join(dir, "history.jsonl"), 0)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer r.Close()
+	for {
+		b, ok, err := r.Next()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		var h histLine
+		if !jsonl.Decode(b, &h) || h.TS == 0 || h.SessionID == "" || at.Sub(time.Unix(h.TS, 0)) < pendingTimeout || !typed(h.Text) {
+			continue
+		}
+		key := h.SessionID + ":" + strconv.FormatInt(h.TS, 10)
+		if prompts[key] {
+			continue
+		}
+		prompts[key] = true
+		m.History++
+		if have[h.SessionID] {
+			continue
+		}
+		m.Prompts++
+		if !sessions[h.SessionID] {
+			sessions[h.SessionID] = true
+			m.Sessions++
+		}
+	}
+}
+
+// Text is the one-line report status, doctor and scan --dry-run print.
+func (m Missing) Text() string {
+	if m.Sessions == 0 {
+		return "every Codex session in history.jsonl has its log on this machine"
+	}
+	s := "s have"
+	if m.Sessions == 1 {
+		s = " has"
+	}
+	p := "s"
+	if m.Prompts == 1 {
+		p = ""
+	}
+	return strconv.Itoa(m.Sessions) + " Codex session" + s + " no log on this machine (deleted or made elsewhere): " +
+		strconv.Itoa(m.Prompts) + " prompt" + p + " without token records"
 }

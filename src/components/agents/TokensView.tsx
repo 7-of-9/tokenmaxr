@@ -14,6 +14,7 @@ import { usePromptCounts } from './usePromptCounts'
 import { applyPromptCounts } from './promptCounts'
 import UsageLoading from './UsageLoading'
 import { machineDays } from './machines'
+import { addAssignedHistory, attributeAccountHistory, countryLookup } from './attribution'
 import type { Metric } from './types'
 import {
   activeDayCount,
@@ -74,12 +75,15 @@ const TokensView = () => {
   const requestedPeriod = searchParams.get('period') ?? '30d'
   const period: Period = requestedPeriod === 'recent' || isRollingPeriod(requestedPeriod) || /^\d{4}$/.test(requestedPeriod) ? requestedPeriod as Period : '30d'
   const [filters, setFilters] = useState<ViewOptions>(DEFAULT_VIEW)
-  // Overview uses every provider and the token counts supplied by the API.
-  const normalised = useMemo(() => normaliseDays(data), [data])
-  // A source that keeps each machine's own records scopes exactly; otherwise split the fleet days.
+  // Overview uses every provider and the token counts supplied by the API. Account history (filed under no
+  // machine) is assigned to the machines that most probably made it, as an estimate the panels mark.
+  const normalised = useMemo(() => attributeAccountHistory(normaliseDays(data), data?.machines ?? []), [data])
+  // A source that keeps each machine's own records scopes exactly (plus that machine's assigned account history);
+  // otherwise split the fleet days.
   const scoped = useMemo(() => {
     const exact = machine === 'all' || !data || mock ? null : source.scopeMachine?.(data, machine)
-    return exact ? { days: normaliseDays(exact), partial: false } : machineDays(normalised, machine)
+    const cc = countryLookup(data?.machines ?? [])(machine)
+    return exact ? { days: addAssignedHistory(normaliseDays(exact), normalised, machine, cc), partial: false } : machineDays(normalised, machine, cc)
   }, [normalised, machine, data, mock, source])
   const options = useMemo(() => view === 'detail' ? { ...filters, exactOnly: false } : DEFAULT_VIEW, [view, filters])
 

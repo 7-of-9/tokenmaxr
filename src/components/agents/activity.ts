@@ -17,6 +17,9 @@ export interface ActivityMachine {
   cc: string
   value: number
   prompts: number
+  /** Part of value: account history assigned to this machine by estimate (attribution.ts). */
+  assigned: number
+  assignedProviders: Provider[]
 }
 
 export interface ActivityStart {
@@ -31,7 +34,7 @@ export interface ActivityMonth {
   month: string
   total: number
   prompts: number
-  /** Included in total; the account history does not identify a machine or model. */
+  /** Included in total; the account history identifies no model, and its machine split is an estimate. */
   accountHistory: number
   /** Largest first. */
   models: ActivityModel[]
@@ -117,12 +120,19 @@ export function buildActivity(days: NormDay[], view: ViewOptions, machines: Publ
         entry.prompts = count === null || entry.prompts === null ? null : entry.prompts + count
         acc.models.set(key, entry)
       }
-      // Model buckets are what the total is made of, so the headline and the rows always add up.
+      // Model buckets are what the total is made of, so the headline and the rows always add up. Account history
+      // counts on a machine only once assigned to it (attribution.ts); what no machine could take stays out.
       for (const [id, b] of Object.entries(p.byMachine)) {
         const m = byId.get(id)
-        const entry = acc.machines.get(id) ?? { key: id, label: m?.label || 'Unnamed machine', cc: m?.cc || 'ZZ', value: 0, prompts: 0 }
-        entry.value += metricOf(b, view.metric) - (view.metric === 'tokens' ? b.unattributed ?? 0 : 0)
+        const entry = acc.machines.get(id) ?? { key: id, label: m?.label || (id === 'unknown' ? 'Unknown' : 'Unnamed machine'), cc: m?.cc || 'ZZ',
+          value: 0, prompts: 0, assigned: 0, assignedProviders: [] }
+        const assigned = view.metric === 'tokens' ? b.assigned ?? 0 : 0
+        entry.value += metricOf(b, view.metric) - (view.metric === 'tokens' ? (b.unattributed ?? 0) - assigned : 0)
         entry.prompts += b.prompts
+        if (assigned > 0) {
+          entry.assigned += assigned
+          if (!entry.assignedProviders.includes(provider)) entry.assignedProviders.push(provider)
+        }
         acc.machines.set(id, entry)
       }
     }

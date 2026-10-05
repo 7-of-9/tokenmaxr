@@ -14,6 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/7-of-9/tokenmaxr/collector/internal/fsx"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/jsonl"
 )
@@ -50,38 +51,30 @@ func (h *harvester) codexDir() string {
 
 func (h *harvester) codex() bool {
 	dir := h.codexDir()
-	for _, sub := range []string{"sessions", "archived_sessions"} {
-		root := filepath.Join(dir, sub)
-		var files []string
-		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				if p == root {
-					return fs.SkipAll
-				}
-				return nil
-			}
-			if !d.IsDir() && rolloutName.MatchString(d.Name()) {
-				files = append(files, p)
-			}
-			return nil
-		})
-		for _, p := range files {
-			st, changed := h.changed(p)
-			if !changed {
-				continue
-			}
-			if h.late() {
-				return false
-			}
-			m := h.marks[p]
-			if st.Size() < m.Off {
-				m = Mark{}
-			}
-			if h.codexRollout(p, &m) == nil {
-				m.Size, m.MtimeNs = st.Size(), st.ModTime().UnixNano()
-				h.marks[p] = m
-				h.res.Files++
-			}
+	// Linked session folders are followed, each real folder once (fsx.WalkFollow).
+	var files []string
+	fsx.WalkFollow([]string{filepath.Join(dir, "sessions"), filepath.Join(dir, "archived_sessions")}, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && rolloutName.MatchString(d.Name()) {
+			files = append(files, p)
+		}
+		return nil
+	})
+	for _, p := range files {
+		st, changed := h.changed(p)
+		if !changed {
+			continue
+		}
+		if h.late() {
+			return false
+		}
+		m := h.marks[p]
+		if st.Size() < m.Off {
+			m = Mark{}
+		}
+		if h.codexRollout(p, &m) == nil {
+			m.Size, m.MtimeNs = st.Size(), st.ModTime().UnixNano()
+			h.marks[p] = m
+			h.res.Files++
 		}
 	}
 	h.codexThreads(filepath.Join(dir, "state_5.sqlite"))
