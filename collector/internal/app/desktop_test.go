@@ -410,13 +410,15 @@ func TestInstallAutostartModes(t *testing.T) {
 		lk.Release()
 		t.Fatalf("reinstall: %v", err)
 	}
-	if got := <-took; !slices.Equal(got, []instance.Verb{instance.Restart}) || len(spawned) != 1 {
+	// The old app may take the show in the same sweep as the restart (it then
+	// leaves it for its successor, TestDesktopRestartLeavesLaterRequests).
+	got := <-took
+	if len(got) == 1 {
+		got = append(got, instance.Take(a.Home)...)
+	}
+	if !slices.Equal(got, []instance.Verb{instance.Restart, instance.Show}) || len(spawned) != 1 {
 		lk.Release()
 		t.Fatalf("requests %v, spawned %d", got, len(spawned))
-	}
-	if got := instance.Take(a.Home); !slices.Equal(got, []instance.Verb{instance.Show}) {
-		lk.Release()
-		t.Fatalf("after the restart: %v, want show", got)
 	}
 	out.Reset()
 	a.Status()
@@ -608,6 +610,23 @@ func TestDesktopRequestsWaitForTheUI(t *testing.T) {
 	d.requests()
 	if !instance.Waiting(a.Home, instance.Show) {
 		t.Fatal("a stopping app took the show meant for the next one")
+	}
+}
+
+// A restart taken together with a show (install's) leaves the show for the
+// process the restart starts.
+func TestDesktopRestartLeavesLaterRequests(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	d := a.newDesktop(context.Background())
+	os.MkdirAll(a.Home, 0o700)
+	instance.Send(a.Home, instance.Restart)
+	instance.Send(a.Home, instance.Show)
+	d.requests()
+	if !d.restart {
+		t.Fatal("no restart")
+	}
+	if got := instance.Take(a.Home); !slices.Equal(got, []instance.Verb{instance.Show}) {
+		t.Fatalf("left for the next process: %v, want show", got)
 	}
 }
 

@@ -747,7 +747,8 @@ func (d *Desktop) requests() {
 		// starts (install's show follows its restart).
 		return
 	}
-	for _, v := range instance.Take(d.a.Home) {
+	taken := instance.Take(d.a.Home)
+	for i, v := range taken {
 		switch v {
 		case instance.Quit:
 			d.a.Log.Printf("app: quit requested")
@@ -755,6 +756,13 @@ func (d *Desktop) requests() {
 			return
 		case instance.Restart:
 			d.a.Log.Printf("app: restart requested")
+			// What came with it (install's show) is for the process the
+			// restart starts: left for that one to take.
+			for _, later := range taken[i+1:] {
+				if err := instance.Send(d.a.Home, later); err != nil {
+					d.a.Log.Printf("app: %s: %v", later, err)
+				}
+			}
 			d.mu.Lock()
 			d.restart = true
 			d.mu.Unlock()
