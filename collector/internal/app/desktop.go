@@ -58,6 +58,11 @@ type DesktopOptions struct {
 	// app quit from its menu stopped until the next login, and a launch
 	// while the app runs stays silent.
 	Watchdog bool
+	// Minimized starts the main window minimized on the taskbar (macOS:
+	// hidden, with its Dock icon), so a launch at login never takes the
+	// focus (`app --minimized`, what autostart runs; the watchdog's launch
+	// implies it).
+	Minimized bool
 	// UI shows the icon until it quits, on the calling goroutine (the main
 	// one: the OS event loop needs it). nil runs headless: the collection
 	// loop alone, until ctx ends or a quit request.
@@ -79,18 +84,31 @@ type Desktop struct {
 	openText func(path string) error
 	copy     func(text string) error
 
-	mu       sync.Mutex
-	ui       tray.UI
-	loaded   bool
-	in       tray.Input
-	win      *recent.Window
-	view     tray.View
-	restart  bool
-	stopping bool
+	mu      sync.Mutex
+	ui      tray.UI
+	loaded  bool
+	in      tray.Input
+	win     *recent.Window
+	view    tray.View
+	restart bool
+	// restartShown restarts with the main window shown (a switch to window
+	// mode from the settings page); other restarts (an update, install)
+	// come back minimized, so they never take the focus.
+	restartShown bool
+	stopping     bool
 	// panel is the pinned panel as config.json keeps it.
 	panel store.Panel
 	// popup: the click popup is open.
 	popup bool
+	// trayOnly is config.json's trayOnly as the app started: no main
+	// window (a change restarts the app). minimized starts the window
+	// minimized; window is set while it is on screen (not minimized).
+	trayOnly  bool
+	minimized bool
+	window    bool
+	// hasUI: the app shows a UI (not headless), so the settings page may
+	// switch its mode, which restarts it.
+	hasUI bool
 	// every is the tick interval (tickInterval; tests shorten it).
 	every func(pinned bool) time.Duration
 	// next is when the collection loop's timer runs the next tick.
@@ -120,8 +138,15 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	lk, err := instance.Claim(a.Home)
 	if errors.Is(err, instance.ErrRunning) {
 		if !o.Watchdog {
+			// This launch is the user's (the Start-menu entry, a second
+			// start): let the running app bring its window to the front.
+			allowForeground()
 			instance.Send(a.Home, instance.Show)
-			a.printf(buildinfo.Product+" is already running; look for its icon in the %s\n", trayPlace())
+			if cfg, err := store.LoadConfig(a.Home); err == nil && !cfg.TrayOnly && o.UI != nil {
+				a.printf(buildinfo.Product + " is already running; showing its window\n")
+			} else {
+				a.printf(buildinfo.Product+" is already running; look for its icon in the %s\n", trayPlace())
+			}
 		}
 		return nil
 	}
@@ -141,8 +166,15 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	a.Log.Printf("app: started (%s)", a.Version)
 
 	d := a.newDesktop(ctx)
-	if cfg, err := store.LoadConfig(a.Home); err == nil && cfg.Panel != nil {
-		d.panel = *cfg.Panel // pinned stays pinned across restarts
+	d.minimized, d.hasUI = o.Minimized || o.Watchdog, o.UI != nil
+	if cfg, err := store.LoadConfig(a.Home); err == nil {
+		if cfg.Panel != nil {
+			d.panel = *cfg.Panel // pinned stays pinned across restarts
+		}
+		d.trayOnly = cfg.TrayOnly
+		if d.hasUI {
+			a.upgradeDesktopEntries(&cfg)
+		}
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -170,7 +202,7 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 		a.Log.Printf("app: quitting with a tick still running")
 	}
 	d.mu.Lock()
-	restart := d.restart
+	restart, shown := d.restart, d.restartShown
 	d.mu.Unlock()
 	a.Log.Printf("app: stopped")
 	if !restart {
@@ -178,7 +210,7 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	}
 	lk.Release()
 	a.Log.Close()
-	return a.reexecApp()
+	return a.reexecApp(!shown)
 }
 
 func (a *App) newDesktop(parent context.Context) *Desktop {
@@ -186,7 +218,7 @@ func (a *App) newDesktop(parent context.Context) *Desktop {
 	return &Desktop{
 		a: a, ctx: ctx, cancel: cancel,
 		kick: make(chan bool, 1), redraw: make(chan struct{}, 1),
-		open: tray.Open, openText: tray.OpenText, copy: tray.Copy,
+		open: openBrowser, openText: tray.OpenText, copy: tray.Copy,
 		ui: nopUI{}, every: tickInterval,
 	}
 }
@@ -235,6 +267,10 @@ func (d *Desktop) Click(act tray.Action) {
 		}
 	case tray.ActDashboard:
 		err = d.open(v.Dashboard)
+	case tray.ActGitHubDashboard:
+		if v.GitHubDashboard != "" {
+			err = d.open(v.GitHubDashboard)
+		}
 	case tray.ActSyncNow:
 		d.Sync()
 	case tray.ActOpenLog:
@@ -282,11 +318,39 @@ func (d *Desktop) PopupShown(open bool) {
 	}
 }
 
-// fastRedraw: the pinned panel or the popup is on screen.
+// WindowShown records that the main window was restored (true) or
+// minimized or hidden (ui.Handler.Shown): while it is on screen the view
+// redraws every second, like the popup's.
+func (d *Desktop) WindowShown(visible bool) {
+	d.mu.Lock()
+	d.window = visible
+	d.mu.Unlock()
+	if visible {
+		d.Refresh()
+	}
+}
+
+// WindowMode reports whether the app has its main window (a taskbar
+// button, a Dock icon): config.json's trayOnly as the app started.
+func (d *Desktop) WindowMode() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return !d.trayOnly
+}
+
+// StartMinimized reports whether the main window starts minimized (a launch
+// at login or by the watchdog).
+func (d *Desktop) StartMinimized() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.minimized
+}
+
+// fastRedraw: the pinned panel, the popup or the main window is on screen.
 func (d *Desktop) fastRedraw() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.panel.Pinned || d.popup
+	return d.panel.Pinned || d.popup || d.window
 }
 
 // SetPinned pins or unpins the live panel and remembers it in config.json.
@@ -386,11 +450,24 @@ func (d *Desktop) stop() {
 	u.Quit()
 }
 
+// restartFor restarts the app (a mode switch from the settings page): it
+// comes back with its main window shown, in the mode config.json now says.
+func (d *Desktop) restartFor(why string) {
+	d.a.Log.Printf("app: restarting (%s)", why)
+	d.mu.Lock()
+	d.restart, d.restartShown = true, true
+	d.mu.Unlock()
+	d.stop()
+}
+
 // openSettings opens the settings page in the browser.
 func (d *Desktop) openSettings() error {
 	d.mu.Lock()
 	if d.settings == nil {
 		d.settings = NewSettings(d.a, d.Sync)
+		if d.hasUI {
+			d.settings.restart = func() { d.restartFor("display mode changed in settings") }
+		}
 	}
 	set := d.settings
 	d.mu.Unlock()
@@ -573,6 +650,12 @@ func (d *Desktop) requests() {
 			d.stop()
 			return
 		case instance.Show:
+			d.mu.Lock()
+			u := d.ui
+			d.mu.Unlock()
+			u.ShowWindow()
+			d.Sync()
+		case instance.Sync:
 			d.Sync()
 		case instance.Pin:
 			d.SetPinned(true)
@@ -620,6 +703,7 @@ func (d *Desktop) draw() {
 	u.SetTooltip(v.Tooltip)
 	u.SetMenu(tray.Menu(v))
 	u.SetPopup(tray.Popup(v))
+	u.SetWindow(tray.Window(v))
 	ps := tray.PanelState{Shown: panel.Pinned, X: panel.X, Y: panel.Y, Placed: panel.Placed}
 	if ps.Shown {
 		ps.Lines = tray.Panel(v)
@@ -633,10 +717,16 @@ func (d *Desktop) draw() {
 func (d *Desktop) dump() error {
 	d.mu.Lock()
 	v, pinned, popup, u := d.view, d.panel.Pinned, d.popup, d.ui
+	trayOnly, minimized, window := d.trayOnly, d.minimized, d.window
 	d.mu.Unlock()
 	var b strings.Builder
+	mode := "window (main window with a taskbar button / Dock icon, and the tray icon)"
+	if trayOnly {
+		mode = "tray only (config.json trayOnly)"
+	}
+	fmt.Fprintf(&b, "mode: %s\nstarted minimized: %v\nwindow on screen: %v\n", mode, minimized, window)
 	fmt.Fprintf(&b, "pinned: %v\npopup open: %v\ntick every: %s\nrefresh every: %s\ncolor: %s\ntooltip: %s\n\nmenu model (the popup draws it):\n",
-		pinned, popup, tickInterval(pinned), refreshInterval(pinned || popup), v.Color, v.Tooltip)
+		pinned, popup, tickInterval(pinned), refreshInterval(pinned || popup || window), v.Color, v.Tooltip)
 	for _, it := range tray.Menu(v) {
 		switch {
 		case it.Hidden:
@@ -648,6 +738,9 @@ func (d *Desktop) dump() error {
 	}
 	b.WriteString("\npanel:\n" + tray.SheetText(tray.Panel(v), "  "))
 	b.WriteString("\npopup rows:\n" + tray.SheetText(tray.Popup(v), "  "))
+	if !trayOnly {
+		b.WriteString("\nwindow rows:\n" + tray.SheetText(tray.Window(v), "  "))
+	}
 	if s := u.Debug(); s != "" {
 		b.WriteString("\nui:\n" + s)
 	}
@@ -664,14 +757,16 @@ func (d *Desktop) View() tray.View {
 // nopUI stands in until the icon exists, and in headless mode.
 type nopUI struct{}
 
-func (nopUI) SetIcon(tray.Color)        {}
-func (nopUI) SetTooltip(string)         {}
-func (nopUI) SetMenu([]tray.Item)       {}
-func (nopUI) SetPanel(tray.PanelState)  {}
-func (nopUI) SetPopup([]tray.PanelLine) {}
-func (nopUI) Debug() string             { return "" }
-func (nopUI) Confirm(string) bool       { return false }
-func (nopUI) Quit()                     {}
+func (nopUI) SetIcon(tray.Color)         {}
+func (nopUI) SetTooltip(string)          {}
+func (nopUI) SetMenu([]tray.Item)        {}
+func (nopUI) SetPanel(tray.PanelState)   {}
+func (nopUI) SetPopup([]tray.PanelLine)  {}
+func (nopUI) SetWindow([]tray.PanelLine) {}
+func (nopUI) ShowWindow()                {}
+func (nopUI) Debug() string              { return "" }
+func (nopUI) Confirm(string) bool        { return false }
+func (nopUI) Quit()                      {}
 
 // appBinary is the binary the app restarts as: <home>/bin's copy when it
 // exists (install and self-update replace that one), else this one.
@@ -690,14 +785,48 @@ func (a *App) appBinary() (string, error) {
 }
 
 // reexecApp starts the app again on the current binary, with the same
-// arguments: on macOS in place (same pid, so launchd keeps tracking it), on
-// Windows as a detached new process once this one has let go of app.lock.
-func (a *App) reexecApp() error {
+// arguments (minimized, or not, as asked): on macOS in place (same pid, so
+// launchd keeps tracking it), on Windows as a detached new process once this
+// one has let go of app.lock.
+func (a *App) reexecApp(minimized bool) error {
 	exe, err := a.appBinary()
 	if err != nil {
 		return err
 	}
-	return reexec(exe, os.Args[1:])
+	return reexec(exe, restartArgs(os.Args[1:], minimized))
+}
+
+// restartArgs is the app's command line for a restart: its own arguments,
+// with the app command made explicit (a start with none, or only --home,
+// is the app) and --minimized set as asked.
+func restartArgs(args []string, minimized bool) []string {
+	var out []string
+	cmd := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !cmd && !strings.HasPrefix(arg, "-") {
+			cmd = true
+		}
+		if cmd {
+			if name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "="); strings.HasPrefix(arg, "-") && name == "minimized" {
+				continue
+			}
+			out = append(out, arg)
+			continue
+		}
+		out = append(out, arg)
+		if (arg == "--home" || arg == "-home") && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	if !cmd {
+		out = append(out, "app")
+	}
+	if minimized {
+		out = append(out, "--minimized")
+	}
+	return out
 }
 
 // autostartLine is status's autostart line.

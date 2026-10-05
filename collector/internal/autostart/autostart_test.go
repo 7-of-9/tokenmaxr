@@ -47,7 +47,7 @@ func TestWindowsModes(t *testing.T) {
 	if _, err := s.Register(o); err != nil {
 		t.Fatal(err)
 	}
-	want := `"` + exe + `" --home "C:\Users\A B\h \"q\"\\" app`
+	want := `"` + exe + `" --home "C:\Users\A B\h \"q\"\\" app --minimized`
 	if got := run["d0m1-collector-TEST"]; got != want {
 		t.Fatalf("Run value\n got %s\nwant %s", got, want)
 	}
@@ -57,7 +57,7 @@ func TestWindowsModes(t *testing.T) {
 	if m := s.Registered(o).Mode("windows"); m != "app" {
 		t.Fatalf("mode %s", m)
 	}
-	if err := s.Start(o); err != nil || len(spawned) != 1 || !slices.Equal(spawned[0], []string{exe, "--home", o.Home, "app"}) {
+	if err := s.Start(o); err != nil || len(spawned) != 1 || !slices.Equal(spawned[0], []string{exe, "--home", o.Home, "app", "--minimized"}) {
 		t.Fatalf("Start: %v %q", err, spawned)
 	}
 	if d := s.Describe(o); len(d) != 3 || d[0] != "login item: "+want {
@@ -118,7 +118,7 @@ func TestDarwinModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	plist := string(b)
-	for _, w := range []string{"<string>" + o.Exe + "</string>\n    <string>app</string>\n  </array>", "<key>RunAtLoad</key>\n  <true/>", "<key>KeepAlive</key>", "<key>SuccessfulExit</key>\n    <false/>", "<string>Aqua</string>"} {
+	for _, w := range []string{"<string>" + o.Exe + "</string>\n    <string>app</string>\n    <string>--minimized</string>\n  </array>", "<key>RunAtLoad</key>\n  <true/>", "<key>KeepAlive</key>", "<key>SuccessfulExit</key>\n    <false/>", "<string>Aqua</string>"} {
 		if !strings.Contains(plist, w) {
 			t.Errorf("app plist lacks %q", w)
 		}
@@ -176,6 +176,68 @@ func TestDarwinModes(t *testing.T) {
 		t.Fatalf("launchctl %q", calls)
 	}
 	if m := s.Registered(o).Mode("darwin"); m != "missing" {
+		t.Fatalf("mode %s", m)
+	}
+}
+
+// An app-mode entry from before --minimized is rewritten once; anything
+// else (the current entry, another binary's, headless mode) is left alone.
+func TestUpgradeLoginItem(t *testing.T) {
+	exe := `C:\Users\A B\AppData\Local\tokenmaxr\bin\tokenmaxrw.exe`
+	o := Options{RunValue: "tokenmaxr-TEST", Exe: exe, App: true}
+	old := `"` + exe + `" app`
+	run := fakeRun{"tokenmaxr-TEST": old}
+	s := &System{GOOS: "windows", Run: run, Tasks: &fakeTasks{tasks: map[string]Options{}}}
+	if up, err := s.UpgradeLoginItem(o); err != nil || !up || run["tokenmaxr-TEST"] != `"`+exe+`" app --minimized` {
+		t.Fatalf("upgrade: %v %v %q", up, err, run)
+	}
+	if up, err := s.UpgradeLoginItem(o); err != nil || up {
+		t.Fatalf("second upgrade: %v %v", up, err)
+	}
+	for _, v := range []string{`"D:\other\tokenmaxrw.exe" app`, `"` + exe + `" --home x app`} {
+		run["tokenmaxr-TEST"] = v
+		if up, _ := s.UpgradeLoginItem(o); up || run["tokenmaxr-TEST"] != v {
+			t.Fatalf("rewrote %q to %q", v, run["tokenmaxr-TEST"])
+		}
+	}
+	delete(run, "tokenmaxr-TEST")
+	if up, _ := s.UpgradeLoginItem(o); up || len(run) != 0 {
+		t.Fatalf("created a missing Run value: %v", run)
+	}
+	run["tokenmaxr-TEST"] = old
+	h := o
+	h.App = false
+	if up, _ := s.UpgradeLoginItem(h); up || run["tokenmaxr-TEST"] != old {
+		t.Fatal("headless mode upgraded the Run value")
+	}
+
+	// macOS: the plist an earlier version wrote gets --minimized; launchd is
+	// not touched (reloading the agent would stop the running app).
+	dir := filepath.Join(t.TempDir(), "LaunchAgents")
+	var calls []string
+	m := &System{GOOS: "darwin", AgentsDir: dir, Domain: "gui/501", Launchctl: func(args ...string) (string, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return "", nil
+	}}
+	mo := Options{Name: "com.tokenmaxr.collector.TEST", Exe: "/Users/a/Library/Application Support/tokenmaxr/bin/tokenmaxr", App: true}
+	os.MkdirAll(dir, 0o755)
+	p := filepath.Join(dir, mo.Name+".plist")
+	os.WriteFile(p, []byte(plist(mo.Name, mo, mo.AppArgs())), 0o644)
+	if up, err := m.UpgradeLoginItem(mo); err != nil || !up || len(calls) != 0 {
+		t.Fatalf("plist upgrade: %v %v %q", up, err, calls)
+	}
+	if b, _ := os.ReadFile(p); string(b) != Plist(mo.Name, mo) || !strings.Contains(string(b), "<string>--minimized</string>") {
+		t.Fatalf("upgraded plist:\n%s", b)
+	}
+	if up, _ := m.UpgradeLoginItem(mo); up {
+		t.Fatal("upgraded twice")
+	}
+	edited := strings.Replace(plist(mo.Name, mo, mo.AppArgs()), "<true/>", "<false/>", 1)
+	os.WriteFile(p, []byte(edited), 0o644)
+	if up, _ := m.UpgradeLoginItem(mo); up {
+		t.Fatal("rewrote a plist it did not write")
+	}
+	if m := m.Registered(mo).Mode("darwin"); m != "app" {
 		t.Fatalf("mode %s", m)
 	}
 }

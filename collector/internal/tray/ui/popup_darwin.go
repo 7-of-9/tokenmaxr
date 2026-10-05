@@ -174,7 +174,7 @@ func (p *macPopup) redraw(place bool) {
 	p.lines = lines
 	p.mu.Unlock()
 
-	text, kinds, spans, m, w, h := sheetBox(lines, wider)
+	text, kinds, spans, m, w, h := sheetBox(lines, wider, true)
 	p.mu.Lock()
 	if !p.open {
 		p.mu.Unlock()

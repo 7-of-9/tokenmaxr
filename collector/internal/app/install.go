@@ -184,7 +184,7 @@ func (a *App) Install(ctx context.Context, o InstallOptions) error {
 		server = "none (GitHub or local only)"
 	}
 	a.printf(buildinfo.Product+" %s\n  state dir: %s\n  server:    %s\n  machine:   %s (public)\n", a.Version, a.Home, server, cfg.MachineLabel)
-	mode := "app (" + trayPlace() + " icon)"
+	mode := "app (" + appPlace(&cfg) + ")"
 	if !cfg.App {
 		mode = "headless (a tick every minute)"
 	}
@@ -254,6 +254,19 @@ func (a *App) Install(ctx context.Context, o InstallOptions) error {
 		}
 		st.Checks["autostart"] = "ok"
 		a.printf("autostart: %s\n", registered)
+		switch {
+		case cfg.App && !cfg.TrayOnly:
+			// The app's window is in the taskbar; the Start menu finds it.
+			if p, err := a.addStartMenu(); err != nil {
+				a.printf("start menu: could not add the entry (%v)\n", err)
+			} else if p != "" {
+				a.printf("start menu: %s\n", p)
+			}
+		case !cfg.App:
+			if _, err := a.removeStartMenu(); err != nil {
+				a.printf("start menu: could not remove the entry (%v)\n", err)
+			}
+		}
 		if hint, err := a.pathAdd(paths.Bin(a.Home)); err != nil {
 			a.printf("PATH: could not update (%v)\n", err)
 		} else if hint != "" {
@@ -277,7 +290,7 @@ func (a *App) Install(ctx context.Context, o InstallOptions) error {
 			a.Log.Printf("install: start: %v", err)
 		}
 		if cfg.App {
-			a.printf("done. The app is in the %s; the first backfill runs in the background.\n", trayPlace())
+			a.printf("done. The app is in the %s; the first backfill runs in the background.\n", appPlace(&cfg))
 		} else {
 			a.printf("done. The first backfill runs in the background; `" + buildinfo.Product + " status` shows progress.\n")
 		}
@@ -356,6 +369,18 @@ func (a *App) autostartOptions(cfg *store.Config, warn bool) autostart.Options {
 // autostartMode is "app", "headless" or "missing".
 func (a *App) autostartMode(cfg *store.Config) string {
 	return a.autostartSys().Registered(a.autostartOptions(cfg, false)).Mode(runtime.GOOS)
+}
+
+// appPlace is where the app shows: its window's taskbar button or Dock
+// icon and the tray icon, or (tray only) the icon alone.
+func appPlace(cfg *store.Config) string {
+	if cfg.TrayOnly {
+		return trayPlace() + " (icon only)"
+	}
+	if runtime.GOOS == "darwin" {
+		return "Dock and the menu bar"
+	}
+	return "taskbar and the notification area"
 }
 
 // trayPlace is where the app's icon lives.
@@ -471,6 +496,11 @@ func (a *App) Uninstall(o UninstallOptions) error {
 		errs = append(errs, err)
 	} else {
 		a.printf("autostart removed\n")
+	}
+	if removed, err := a.removeStartMenu(); err != nil {
+		errs = append(errs, err)
+	} else if removed {
+		a.printf("start menu entry removed\n")
 	}
 	if instance.Running(a.Home) {
 		if instance.Stop(a.Home, appStopWait) {

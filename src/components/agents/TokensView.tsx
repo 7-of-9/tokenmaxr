@@ -41,8 +41,8 @@ import {
 import './agents-base.css'
 import './AgentsPage.css'
 
-// The /tokens page body, shared by d0m1.com (AgentsPage, inside TokensShell) and the tokenmaxr GitHub Pages
-// dashboard (pages/dashboard). The UsageSource in context says where its data comes from.
+// The /tokens page body, shared by d0m1.com and the tokenmaxr GitHub Pages dashboard (pages/dashboard), both
+// through AgentsPage (inside TokensShell). The UsageSource in context says where its data comes from.
 
 // Detail (charts, pricing table, flags) loads only when someone asks for it.
 const AgentsDetail = lazy(() => import('./AgentsDetail'))
@@ -61,12 +61,7 @@ type View = 'overview' | 'detail'
 const CollectorLink = ({ href, children }: { href: string; children: ReactNode }) =>
   href.startsWith('/') ? <Link to={href}>{children}</Link> : <a href={href}>{children}</a>
 
-interface TokensViewProps {
-  /** Extra Overview content under the graph (the Pages dashboard's quota card), for the selected machine. */
-  aside?: (machine: string) => ReactNode
-}
-
-const TokensView = ({ aside }: TokensViewProps) => {
+const TokensView = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const source = useUsageSource()
   const mock = searchParams.get('mock') === '1'
@@ -287,8 +282,6 @@ const TokensView = ({ aside }: TokensViewProps) => {
                 </div>
               </section>
 
-              {view === 'overview' && data && aside?.(machine)}
-
               {view === 'overview' && data && <ActivityFeed key={activePeriod} months={activity} today={today} noun={noun} />}
 
               {view === 'detail' && data && (
@@ -320,6 +313,7 @@ const TokensView = ({ aside }: TokensViewProps) => {
 
       <footer className="agents-foot">
         <CollectorLink href={source.collectorHref}>Counted by tokenmaxr</CollectorLink>
+        {source.publicHref && <span> · <a href={source.publicHref} target="_blank" rel="noopener noreferrer">Public page on GitHub ↗</a></span>}
         <span> · {mock ? 'Mock data (no API)' : source.label}</span>
         {(data?.accountUsagePending ?? 0) > 0 && <span role="status"> · Account history: {plural(data!.accountUsagePending!, 'day')} awaiting reconciliation</span>}
         {(data?.accountUsageConflicts ?? 0) > 0 && <span role="status"> · Some account history excluded: totals conflict with local records</span>}

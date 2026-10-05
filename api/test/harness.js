@@ -18,6 +18,7 @@ import { handlePrompts } from '../src/lib/prompts.js'
 import { handlePromptCounts } from '../src/lib/prompt-counts.js'
 import { handleLimits } from '../src/lib/limits.js'
 import { handleLink } from '../src/lib/link.js'
+import { handleFleetGitHub } from '../src/lib/fleet-github.js'
 import { resolveConnectionString } from '../scripts/storage-env.js'
 
 const ROUTES = [
@@ -30,6 +31,7 @@ const ROUTES = [
   ['GET', /^\/api\/limits$/, handleLimits],
   ['GET', /^\/api\/prompts$/, handlePrompts],
   ['GET', /^\/api\/prompts\/([^/]+)$/, handlePrompts, 'id'],
+  ['GET,PUT,DELETE', /^\/api\/fleet\/github$/, handleFleetGitHub],
 ]
 
 function readBody(req) {
@@ -49,7 +51,7 @@ export function createHarness(ctx) {
     let headers = { 'Content-Type': 'application/json' }
     let payload = { ok: false, error: 'not found' }
     const route = ROUTES.find(([, re]) => re.test(url.pathname))
-    if (route && route[0] !== req.method) {
+    if (route && !route[0].split(',').includes(req.method)) {
       status = 405
       payload = { ok: false, error: 'method not allowed' }
     } else if (route) {

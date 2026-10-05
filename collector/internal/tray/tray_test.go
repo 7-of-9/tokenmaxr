@@ -242,7 +242,7 @@ func TestMenu(t *testing.T) {
 	for _, it := range items {
 		keys = append(keys, it.Key)
 	}
-	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard pin sync settings log quit"
+	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard github-dashboard pin sync settings log quit"
 	if got := strings.Join(keys, " "); got != wantKeys {
 		t.Fatalf("keys\n got %s\nwant %s", got, wantKeys)
 	}
@@ -423,6 +423,33 @@ func TestDestinationsWithoutAServer(t *testing.T) {
 	gh := Evaluate(in)
 	if gh.Color != Green || gh.Dashboard != in.PagesURL {
 		t.Fatalf("github-only %+v", gh)
+	}
+	if gh.GitHubDashboard != "" {
+		t.Fatalf("github-only has one dashboard: %+v", gh)
+	}
+
+	// GitHub and a server: the menu opens either dashboard.
+	both := in
+	both.Enrolled, both.Endpoint = true, "https://d0m1.com/api"
+	bv := Evaluate(both)
+	if bv.Dashboard != "https://d0m1.com/tokens" || bv.GitHubDashboard != in.PagesURL {
+		t.Fatalf("both %+v", bv)
+	}
+	shown := map[string]bool{}
+	for _, it := range Menu(bv) {
+		shown[it.Key] = !it.Hidden
+	}
+	if !shown["dashboard"] || !shown["github-dashboard"] {
+		t.Fatalf("both dashboards in the menu: %v", shown)
+	}
+	var rows []Action
+	for _, l := range Popup(bv) {
+		if l.Action == ActDashboard || l.Action == ActGitHubDashboard {
+			rows = append(rows, l.Action)
+		}
+	}
+	if len(rows) != 2 || rows[0] != ActDashboard || rows[1] != ActGitHubDashboard {
+		t.Fatalf("popup dashboard rows %v", rows)
 	}
 	in.GitHubErr = "the tokenmaxor App cannot write to the repository: check it is installed with access to it"
 	if bad := Evaluate(in); bad.Color != Red || !strings.HasPrefix(bad.Status, "● Error: GitHub: ") {

@@ -200,9 +200,6 @@ test('loading: relative paths, progress, a missing index and a failed file', asy
   assert.ok(requested.includes(`data/machines/${A}/account-usage.json`))
   assert.equal(phases.at(-1), 'processing')
 
-  const meters = await source.fetchMeters()
-  assert.deepEqual(meters.map(m => [m.machine, m.window]), [[A, 'week']])
-
   await assert.rejects(githubSource({ fetch: fakeFetch({}) }).fetchUsage(new AbortController().signal, () => {}), /Nothing has been published yet/)
   const broken = { ...fixtures }
   delete broken[`data/machines/${B}/usage-2026-08.json`]
@@ -403,7 +400,6 @@ function files(p: Published): Record<string, unknown> {
     if (m.meta) put('meta.json', m.meta)
     for (const u of m.usage) put(`usage-${u.month}.json`, u)
     if (m.accountUsage) put('account-usage.json', m.accountUsage)
-    if (m.id === A) put('quota.json', { schema: 1, machine: A, meters: [{ provider: 'anthropic', source: 'claude-code', acct: H1, window: 'week', usedPercent: 40, observedAt: '2026-09-30T11:00:00Z' }] })
     index.machines.push({ id: m.id, files: names.sort() })
   }
   out['data/index.json'] = index

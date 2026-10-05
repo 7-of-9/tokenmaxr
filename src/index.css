@@ -1,0 +1,105 @@
+:root {
+  font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #000000 !important;
+  background: #000000 !important;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Remove all focus outlines */
+*:focus,
+*:focus-visible {
+  outline: none !important;
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  overflow-x: hidden;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  /* iOS-specific fixes */
+  -webkit-overflow-scrolling: touch;
+  /* Prevent pull-to-refresh and overscroll bounce on iOS */
+  overscroll-behavior: none;
+  -webkit-overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #000000 !important;
+  background-color: #000000 !important;
+}
+
+#root {
+  height: 100%;
+  width: 100%;
+  background: #000000 !important;
+  background-color: #000000 !important;
+}
+
+a {
+  font-weight: 500;
+  color: #00ff41;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #00ff41;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #00ff41;
+}
+button:focus,
+button:focus-visible {
+  outline: none !important;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: rgba(255, 255, 255, 0.87);
+    background-color: #000000 !important;
+    background: #000000 !important;
+  }
+  html, body {
+    background-color: #000000 !important;
+    background: #000000 !important;
+  }
+  a:hover {
+    color: #00ff41;
+  }
+  button {
+    background-color: #1a1a1a;
+  }
+}

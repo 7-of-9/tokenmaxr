@@ -105,9 +105,12 @@ type View struct {
 	Identity  string
 	Fleet     string
 	Dashboard string
-	CanSync   bool
-	Syncing   bool
-	SyncLabel string
+	// GitHubDashboard is the GitHub Pages dashboard when Dashboard is the
+	// server's ("" otherwise).
+	GitHubDashboard string
+	CanSync         bool
+	Syncing         bool
+	SyncLabel       string
 	// Pinned: the live panel is on screen.
 	Pinned bool
 	// Build is the recessive footer naming the running version and its
@@ -177,16 +180,17 @@ func Name(provider string) string {
 func Evaluate(in Input) View {
 	in.SetUp = in.SetUp || in.Enrolled // a server enrolment holds the fleet key
 	v := View{
-		Machine:   machineName(in.Machine),
-		Providers: providerLines(in.Providers, in.Now),
-		Identity:  identity(in),
-		Dashboard: dashboard(in),
-		CanSync:   in.SetUp && in.ConfigErr == "",
-		Syncing:   in.Ticking,
-		SyncLabel: "Sync in progress…",
-		Pinned:    in.Pinned,
-		Build:     BuildLabel(in.Version, in.BuildTime),
-		Account:   account(in),
+		Machine:         machineName(in.Machine),
+		Providers:       providerLines(in.Providers, in.Now),
+		Identity:        identity(in),
+		Dashboard:       dashboard(in),
+		GitHubDashboard: githubDashboard(in),
+		CanSync:         in.SetUp && in.ConfigErr == "",
+		Syncing:         in.Ticking,
+		SyncLabel:       "Sync in progress…",
+		Pinned:          in.Pinned,
+		Build:           BuildLabel(in.Version, in.BuildTime),
+		Account:         account(in),
 	}
 	if in.SetUp {
 		v.Fleet = in.Fleet
@@ -351,6 +355,15 @@ func dashboard(in Input) string {
 		return DashboardURL(in.Endpoint)
 	}
 	if in.GitHub != "" {
+		return in.PagesURL
+	}
+	return ""
+}
+
+// githubDashboard is the GitHub Pages dashboard of a machine that publishes to
+// GitHub and a server (dashboard is then the server's).
+func githubDashboard(in Input) string {
+	if in.Enrolled && in.GitHub != "" && in.PagesURL != dashboard(in) {
 		return in.PagesURL
 	}
 	return ""

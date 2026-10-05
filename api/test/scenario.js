@@ -72,6 +72,24 @@ export async function runScenario(t, { call, store }) {
     assert.equal((await call('POST', '/api/invite', { headers: owner })).status, 200)
   })
 
+  await t.test('fleet GitHub share: machines only, opaque, deletable', async () => {
+    const blob = Buffer.from('tmx1' + 'synthetic-ciphertext'.repeat(4)).toString('base64')
+    assert.equal((await call('GET', '/api/fleet/github')).status, 401)
+    assert.equal((await call('GET', '/api/fleet/github', { headers: owner })).status, 401)
+    assert.equal((await call('GET', '/api/fleet/github', { headers: tok() })).status, 404)
+    assert.equal((await call('PUT', '/api/fleet/github', { headers: tok(), body: { blob: 'eyJ0b2tlbiI6MX0=' } })).status, 400)
+    const put = await call('PUT', '/api/fleet/github', { headers: tok(), body: { blob } })
+    assert.equal(put.status, 200, put.raw)
+    assert.equal(typeof put.body.escrowed, 'boolean')
+    const got = await call('GET', '/api/fleet/github', { headers: { 'x-d0m1-token': token2 } })
+    assert.equal(got.status, 200, got.raw)
+    assert.equal(got.headers.get('cache-control'), 'private, no-store')
+    assert.deepEqual(got.body, { blob, updatedAt: put.body.updatedAt, by: machine1 })
+    assert.equal((await call('DELETE', '/api/fleet/github', { headers: tok() })).status, 204)
+    assert.equal((await call('DELETE', '/api/fleet/github', { headers: tok() })).status, 204)
+    assert.equal((await call('GET', '/api/fleet/github', { headers: tok() })).status, 404)
+  })
+
   await t.test('ingest auth and request errors', async () => {
     assert.equal((await call('POST', '/api/ingest', { body: batch({}) })).status, 401)
     assert.equal((await call('POST', '/api/ingest', { headers: { 'x-d0m1-token': 'x'.repeat(43) }, body: batch({}) })).status, 401)

@@ -34,6 +34,9 @@ func Popup(v View) []PanelLine {
 	if v.Dashboard != "" {
 		out = append(out, PanelLine{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard})
 	}
+	if v.GitHubDashboard != "" {
+		out = append(out, PanelLine{Text: "Open GitHub dashboard", Kind: LineAction, Action: ActGitHubDashboard})
+	}
 	out = append(out, pin)
 	// While a sync runs the status line says so: no Sync row.
 	if !v.Syncing {
@@ -344,7 +347,7 @@ func (a Action) String() string {
 	names := map[Action]string{
 		ActNone: "none", ActCopyFleet: "copy-fleet", ActDashboard: "dashboard", ActSyncNow: "sync",
 		ActOpenLog: "log", ActQuit: "quit", ActPin: "pin", ActUnpin: "unpin", ActQuitNow: "quit-now",
-		ActSettings: "settings",
+		ActSettings: "settings", ActGitHubDashboard: "github-dashboard",
 	}
 	if n, ok := names[a]; ok {
 		return n

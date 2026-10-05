@@ -36,8 +36,11 @@ func (a *App) GitHubLoginCLI(ctx context.Context, label string) error {
 	if res.Rehash {
 		a.printf("This machine joined your existing fleet: its history is being re-read.\n")
 	}
+	if res.Shared {
+		a.printf("Your other machines on your server publish with this sign-in too (shared through the server, sealed with the fleet key%s; turn it off in Settings).\n", escrowNote(res.Escrowed))
+	}
 	if instance.Running(a.Home) {
-		_ = instance.Send(a.Home, instance.Show)
+		_ = instance.Send(a.Home, instance.Sync)
 		a.printf("The app is publishing now; afterwards every %s.\n", publishEveryText(a))
 	} else {
 		a.printf("Publishing starts with the next tick (`" + buildinfo.Product + " sync-now` to publish now).\n")
@@ -60,10 +63,13 @@ func (a *App) GitHubLogoutCLI() error {
 	if err := a.GitHubLogout(); err != nil {
 		return err
 	}
-	if cfg.GitHub != nil {
-		a.printf("This machine no longer publishes to %s. What it published stays there; revoke the App's access at https://github.com/settings/installations if you want.\n", cfg.GitHub.Repo)
+	if cfg.GitHub != nil && cfg.GitHub.Adopted {
+		// Revoking the App here would cut off every machine of the fleet.
+		a.printf("This machine no longer publishes to %s, and does not take the sign-in your fleet shares. What it published stays there.\n", cfg.GitHub.Repo)
+	} else if cfg.GitHub != nil {
+		a.printf("This machine no longer publishes to %s, and does not take the sign-in your fleet shares. What it published stays there; revoke the App's access at https://github.com/settings/installations if you want.\n", cfg.GitHub.Repo)
 	} else {
-		a.printf("This machine was not publishing to GitHub.\n")
+		a.printf("This machine was not publishing to GitHub. It now does not take the sign-in your fleet shares either (" + buildinfo.Product + " github login here undoes that).\n")
 	}
 	return nil
 }

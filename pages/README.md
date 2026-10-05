@@ -2,15 +2,19 @@
 
 This repository holds AI token usage published by
 [tokenmaxr](https://github.com/7-of-9/tokenmaxr) collectors, and the static
-dashboard that GitHub Pages serves from it: the same page as
-[d0m1.com/tokens](https://d0m1.com/tokens), reading this repository's files.
+dashboard that GitHub Pages serves from it: the same pages as
+[d0m1.com/tokens](https://d0m1.com/tokens), built from the same code, reading
+this repository's files.
 
 It shows tokens and prompts per active day, the number of active days (days
 with recorded tokens), a daily heatmap with days that had prompts but no
 recorded tokens outlined, exact and estimated tokens, prompts per model, an
-API-equivalent cost, a monthly activity feed, machines, plan quota meters and,
-under Detail, charts per provider, model, machine and country. Pick one
-machine from the menu to see only its own records.
+API-equivalent cost, a monthly activity feed, machines (with their country's
+flag when the owner publishes it) and, under Detail, charts per provider,
+model, machine and country. Pick one machine from the menu to see only its
+own records. Once the owner unlocks it (below), the owner also gets the
+**Agents** page: every AI account's plan, email and organisation, the weekly
+quota left and when it resets, as on d0m1.com/tokens/agents.
 
 - `data/machines/<id>/` is written by the collectors, one folder per machine:
   - `meta.json`: the machine's public label, OS, collector version, when it
@@ -22,7 +26,13 @@ machine from the menu to see only its own records.
     Prompt counts include prompts whose tokens were never recorded
     (`promptsNoUsage`) and, per model, prompts recorded for it
     (`modelPrompts`, a count; never the text).
-  - `quota.json`: plan quota meters as each tool last reported them.
+  - `quota.json`: plan quota meters as each tool last reported them, without
+    emails or organisation names. This dashboard does not show them (the
+    owner's Agents page reads `owner.json`).
+  - `owner.json`: the owner's plan limits (the rows d0m1.com's owner-only
+    `GET /api/limits` returns: account email, organisation, plan, each
+    window's use and reset), **encrypted** for the owner (see *Owner
+    unlock*). Without the owner key it reveals nothing but its size.
   - `account-usage.json` (Codex, when signed in with a ChatGPT account, and
     only if the owner turned on `github.showAccountHistory` in the collector
     config or settings page; off by default, and turning it off deletes the
@@ -40,9 +50,10 @@ machine from the menu to see only its own records.
     totals that contradict the local records are left out and the footer
     says so.
 
-  Daily totals and quota meters only: no prompts, code, file paths, hostnames
-  or account emails are ever published. The dashboard shows accounts as
-  per-page aliases (`acct1`, `acct2`, ...), never their hashes.
+  Daily totals and quota meters only in the clear: no prompts, code, file
+  paths or hostnames are ever published, and account emails and organisation
+  names only inside the encrypted `owner.json`. The dashboard shows accounts
+  as per-page aliases (`acct1`, `acct2`, ...), never their hashes.
 
   Each machine publishes totals of the logs it reads, and the dashboard adds
   the machines up. Two collectors that read the same logs (a Windows
@@ -70,12 +81,77 @@ machine from the menu to see only its own records.
   fail when the two differ or `version.json` does not match the files.
 - `.github/workflows/pages.yml` rebuilds `data/index.json` (the list of
   machines and files; Pages cannot list folders) and deploys on every push.
+  `scripts/build-index.mjs` writes schema 3, which lists `owner.json`; under
+  an older index the unlocked dashboard looks for each machine's `owner.json`
+  itself (a 404 means none).
 - `tokenmaxr.json` marks this repository for the collector; set `title` there
   to rename the dashboard.
 
 The dashboard lives at `https://<you>.github.io/<this repository>/`. Its
 settings are in the link: `#/?period=90d`, `#/?view=detail`,
-`#/?machine=<id>`.
+`#/?machine=<id>`; the owner's Agents page is `#/agents`.
+
+## Owner unlock
+
+Pages has no sign-in, so the owner's page is unlocked with a key instead.
+(The dashboard side is in place; collectors start publishing `owner.json` and
+offer the unlock in a coming release.)
+
+1. On a machine you own, open the collector's Settings page and choose
+   **Open my dashboard (unlocked)**. It opens the dashboard at `#unlock` and
+   hands it the key by `postMessage`, so the key is never in an address or
+   the browser's history. (**Copy unlock link**, for a phone or another
+   browser, gives `https://<you>.github.io/<this repository>/#unlock=<key>`
+   instead; that link does stay in that browser's history.)
+2. The dashboard takes the key out of the address bar at once, turns it into
+   a WebCrypto key that cannot be read back out (non-extractable), keeps that
+   in this browser's IndexedDB for this dashboard, and shows **Agents** in the
+   header and **Lock** where d0m1.com has Sign out.
+3. From then on the browser fetches each machine's `owner.json` and decrypts
+   it locally (WebCrypto, AES-256-GCM). The key is never sent anywhere: no
+   request carries it, and fragments (`#...`) are never sent to a server.
+   The Agents page's choices (which accounts are tracked, by email) are kept
+   encrypted with the same key. **Lock** forgets the key and those choices in
+   this browser, and in its other tabs of this dashboard.
+
+The key is derived from the fleet key (`TOKENMAXR_FLEET_KEY`):
+HMAC-SHA256(fleet key, `tokenmaxr dashboard owner v1`). The collectors encrypt
+with it; the page never sees the fleet key itself. Each file is bound to its
+machine (the AES-GCM additional data is `tokenmaxr dashboard owner v1|<machine
+id>`), so a file moved between machines, altered, or opened with another key
+does not open, and the page stays locked rather than failing. Anyone who has
+the key (or the unlock link) can read the owner's accounts, now and in every
+later `owner.json`: treat the link like a password. Whoever can read the fleet
+key (the repository's collaborators) can derive it.
+
+What the browser keeps, and who else could reach it:
+
+- **The unlock link stays in the browser's history.** Taking the key out of
+  the address bar does not remove the visit the browser has already recorded,
+  and a browser that syncs its history copies the link to your other devices
+  and offers it as an address-bar suggestion. Lock does not remove it either.
+  After unlocking, delete that history entry (search history for `unlock=`),
+  or unlock in a browser profile that does not sync history.
+- **Every Pages site of your account shares one origin** (`<you>.github.io`),
+  and with it the storage this dashboard uses. Any script on any of those
+  sites (another repository's page, its analytics or a library it loads)
+  could use the stored key to decrypt `owner.json` while this browser is
+  unlocked. Because the key is non-extractable, it cannot copy the key out to
+  use after you lock. To keep the dashboard on an origin of its own, give
+  this repository's Pages a custom domain; otherwise unlock only in a
+  browser profile that does not visit your other Pages sites, and Lock when
+  done.
+
+## Differences from d0m1.com/tokens
+
+The pages, shell and styles are d0m1.com's own. What differs on purpose: the
+breadcrumb starts with this dashboard's title (long titles are cut short)
+where d0m1.com has "d0m1", and `<` does nothing on the first page (there is
+no home page above it); the owner gets in with the unlock link and **Lock**
+instead of Sign in and Sign out; there is no Prompts page (prompt text is
+never published); and
+the page sits on plain black, without d0m1.com's background video, theme
+controls, page-slide transitions or site footer.
 
 Preview locally:
 

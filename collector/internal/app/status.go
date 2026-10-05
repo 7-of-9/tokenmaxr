@@ -238,10 +238,30 @@ func (a *App) healthText(p *termfmt.Printer, s string) string {
 // githubRows are the GitHub publisher's rows (status and github status).
 func (a *App) githubRows(p *termfmt.Printer, cfg store.Config, sec store.Secrets, st *store.State, now time.Time) {
 	if !githubEnabled(&cfg, sec) {
-		p.Row("GitHub", p.Dim("off")+" · publish to your own GitHub: "+p.Bold(buildinfo.Product+" github login"))
+		more := []string{}
+		if serverOn(&cfg, sec) {
+			if cfg.GitHubFleetOptOut {
+				more = append(more, p.Dim("opted out of the sign-in your fleet shares (signing in here undoes it)"))
+			} else {
+				more = append(more, p.Dim("publishes with the sign-in your fleet shares through your server, once one of your machines signs in"))
+			}
+		}
+		if st != nil && st.GitHub.Fleet.LastError != "" {
+			more = append(more, p.Warn(st.GitHub.Fleet.LastError))
+		}
+		p.Row("GitHub", p.Dim("off")+" · publish to your own GitHub: "+p.Bold(buildinfo.Product+" github login"), more...)
 		return
 	}
 	more := []string{}
+	if l := fleetLine(&cfg, sec, st); l != "" {
+		more = append(more, p.Dim(l))
+	}
+	if cfg.GitHub.Adopted {
+		more = append(more, p.Dim("stop publishing here ("+buildinfo.Product+" github logout) to opt this machine out"))
+	}
+	if st != nil && st.GitHub.Fleet.LastError != "" {
+		more = append(more, p.Warn(st.GitHub.Fleet.LastError))
+	}
 	if st != nil {
 		pub := "published " + since(p, st.GitHub.LastPublish, now) + p.Dim(" · "+every(cfg.GitHub.PublishEvery()))
 		if st.GitHub.Rebuild {
@@ -264,5 +284,9 @@ func (a *App) githubRows(p *termfmt.Printer, cfg store.Config, sec store.Secrets
 	if cfg.GitHub.ShowAccountHistory {
 		more = append(more, p.Dim("Codex account history published"))
 	}
-	p.Row("GitHub", cfg.GitHub.Repo+" as "+p.Bold(fmt.Sprintf("%q", cfg.GitHub.Label))+p.Dim(" · signed in as "+sec.GitHub.Login), more...)
+	who := " · signed in as " + sec.GitHub.Login
+	if cfg.GitHub.Adopted {
+		who = "" // the fleet line says whose sign-in it is
+	}
+	p.Row("GitHub", cfg.GitHub.Repo+" as "+p.Bold(fmt.Sprintf("%q", cfg.GitHub.Label))+p.Dim(who), more...)
 }

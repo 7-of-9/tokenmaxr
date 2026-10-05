@@ -17,8 +17,12 @@ import (
 type Verb string
 
 const (
-	// Show: a second launch; the app refreshes and syncs now.
+	// Show: a second launch (or the Start-menu entry); the app shows its
+	// main window and syncs now.
 	Show Verb = "show"
+	// Sync: the app refreshes and syncs now, without showing anything (a
+	// GitHub sign-in from the CLI).
+	Sync Verb = "sync"
 	// Quit: uninstall or a switch to headless mode.
 	Quit Verb = "quit"
 	// Restart: its binary was replaced; it re-execs the new one.
@@ -34,7 +38,7 @@ const (
 )
 
 // verbs in the order Take reports them (the most final first).
-var verbs = []Verb{Quit, Restart, Show, Pin, Unpin, Dump, Settings}
+var verbs = []Verb{Quit, Restart, Show, Sync, Pin, Unpin, Dump, Settings}
 
 // ErrRunning means another process holds app.lock.
 var ErrRunning = errors.New("the app is already running")

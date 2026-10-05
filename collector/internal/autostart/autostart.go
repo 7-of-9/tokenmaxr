@@ -79,6 +79,11 @@ func (o Options) home() []string {
 // AppArgs is how the app is started: [--home H] app.
 func (o Options) AppArgs() []string { return append(o.home(), "app") }
 
+// LoginArgs is the app as login (and install) starts it:
+// [--home H] app --minimized. Its main window starts minimized on the
+// taskbar (macOS: hidden, with its Dock icon), so it never takes the focus.
+func (o Options) LoginArgs() []string { return append(o.AppArgs(), "--minimized") }
+
 // WatchdogArgs is the Windows watchdog's command: the app, marked so that a
 // Quit from its menu is honoured until the next login.
 func (o Options) WatchdogArgs() []string { return append(o.AppArgs(), "--watchdog") }
@@ -169,7 +174,7 @@ func (s *System) Register(o Options) (string, error) {
 			}
 			return "task " + name + " (a tick every minute)", nil
 		}
-		if err := s.Run.Set(o.runValue(), CommandLine(o.Exe, o.AppArgs())); err != nil {
+		if err := s.Run.Set(o.runValue(), CommandLine(o.Exe, o.LoginArgs())); err != nil {
 			return "", fmt.Errorf("login item: %w", err)
 		}
 		name, err := s.Tasks.Install(o)
@@ -217,7 +222,7 @@ func (s *System) Start(o Options) error {
 		if s.Spawn == nil {
 			return errUnsupported
 		}
-		return s.Spawn(o.Exe, o.AppArgs())
+		return s.Spawn(o.Exe, o.LoginArgs())
 	case "darwin":
 		if !o.App {
 			return nil
@@ -257,6 +262,48 @@ func (s *System) Unregister(o Options) error {
 		}
 	}
 	return nil
+}
+
+// UpgradeLoginItem rewrites an app-mode login entry that an earlier version
+// registered without --minimized (self-update replaces the binary, not the
+// entries), so the next login starts the window minimized. Only an entry
+// that is exactly what that version wrote for o is touched: Windows' Run
+// value (`"exe" [--home H] app`), or the macOS plist, whose new contents
+// launchd reads at the next login (it is not reloaded now, which would stop
+// the running app). It reports whether it rewrote one.
+func (s *System) UpgradeLoginItem(o Options) (bool, error) {
+	if !o.App {
+		return false, nil
+	}
+	switch s.GOOS {
+	case "windows":
+		if s.Run == nil {
+			return false, nil
+		}
+		v, ok, err := s.Run.Get(o.runValue())
+		if err != nil || !ok || v != CommandLine(o.Exe, o.AppArgs()) {
+			return false, err
+		}
+		if err := s.Run.Set(o.runValue(), CommandLine(o.Exe, o.LoginArgs())); err != nil {
+			return false, fmt.Errorf("login item: %w", err)
+		}
+		return true, nil
+	case "darwin":
+		if s.AgentsDir == "" {
+			return false, nil
+		}
+		label := o.label()
+		p := s.plistPath(label)
+		b, err := os.ReadFile(p)
+		if err != nil || string(b) != plist(label, o, o.AppArgs()) {
+			return false, nil
+		}
+		if err := os.WriteFile(p, []byte(Plist(label, o)), 0o644); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // Registration is what is registered.
@@ -380,9 +427,18 @@ func winQuote(s string) string {
 
 // CommandLine is a Windows command line: "<exe>" args...
 func CommandLine(exe string, args []string) string {
-	parts := []string{`"` + exe + `"`}
-	for _, a := range args {
-		parts = append(parts, winQuote(a))
+	if len(args) == 0 {
+		return `"` + exe + `"`
+	}
+	return `"` + exe + `" ` + ArgLine(args)
+}
+
+// ArgLine is args quoted for CommandLineToArgvW and joined (a shell
+// link's arguments).
+func ArgLine(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = winQuote(a)
 	}
 	return strings.Join(parts, " ")
 }
@@ -401,8 +457,13 @@ func Plist(label string, o Options) string {
 	// launchd itself is the watchdog on macOS: the app gets no --watchdog.
 	run := o.RunArgs()
 	if o.App {
-		run = o.AppArgs()
+		run = o.LoginArgs()
 	}
+	return plist(label, o, run)
+}
+
+// plist renders the LaunchAgent with run as the program's arguments.
+func plist(label string, o Options, run []string) string {
 	var args strings.Builder
 	for _, a := range append([]string{o.Exe}, run...) {
 		args.WriteString("    <string>" + xmlText(a) + "</string>\n")

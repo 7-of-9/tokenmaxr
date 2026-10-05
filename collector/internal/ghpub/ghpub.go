@@ -75,9 +75,10 @@ type Guide struct {
 // Ready reports whether publishing can start.
 func (g Guide) Ready() bool { return g.Repo != nil }
 
-// Discover finds the user, the App's installation on their account and the
-// first repository it can access that holds MarkerFile.
-func Discover(ctx context.Context, c *ghapi.Client, appSlug, template string) (Guide, error) {
+// Discover finds the user, the App's installation on their account (by its
+// id, or by its slug when the id is 0) and the first repository it can access
+// that holds MarkerFile.
+func Discover(ctx context.Context, c *ghapi.Client, appSlug string, appID int64, template string) (Guide, error) {
 	var g Guide
 	u, err := c.User(ctx)
 	if err != nil {
@@ -97,7 +98,7 @@ func Discover(ctx context.Context, c *ghapi.Client, appSlug, template string) (G
 		return g, err
 	}
 	for i := range insts {
-		if insts[i].AppSlug == appSlug && insts[i].Account.ID == u.ID {
+		if (insts[i].AppSlug == appSlug || appID != 0 && insts[i].AppID == appID) && insts[i].Account.ID == u.ID {
 			g.Installation = &insts[i]
 			g.InstallURL = fmt.Sprintf("https://github.com/settings/installations/%d", insts[i].ID)
 			break

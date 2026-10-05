@@ -113,6 +113,11 @@ func IconICO(c Color) []byte {
 	return b.Bytes()
 }
 
+// IconDIB is the dot at size × size as one icon image (the bytes of an
+// RT_ICON resource), for CreateIconFromResourceEx: the main window's
+// title-bar and taskbar icons.
+func IconDIB(c Color, size int) []byte { return dib(DrawIcon(c, size, WindowsInset)) }
+
 // dib encodes img as an icon DIB: BITMAPINFOHEADER with doubled height,
 // bottom-up BGRA rows, then a 1-bit AND mask (all zero: alpha decides).
 func dib(img *image.NRGBA) []byte {

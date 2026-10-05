@@ -33,7 +33,10 @@ var (
 
 	// GitHubAppSlug and GitHubClientID identify the GitHub App the collector
 	// signs in with (device flow: the client id is public, no secret is used).
+	// GitHubAppID is the App's permanent id: installations are matched by it,
+	// so renaming the App (which changes its slug) breaks nothing.
 	GitHubAppSlug  = "tokenmaxor"
+	GitHubAppID    = "5184946"
 	GitHubClientID = "Iv23lisUk4XpDfcdK0Mh"
 	// GitHubTemplateRepo is "owner/name" of the template a user's publishing
 	// repository is created from.
@@ -47,6 +50,7 @@ var LDFlagNames = map[string]string{
 	"downloadBase":       "DownloadBase",
 	"releasePublicKey":   "ReleasePublicKey",
 	"githubAppSlug":      "GitHubAppSlug",
+	"githubAppId":        "GitHubAppID",
 	"githubClientId":     "GitHubClientID",
 	"githubTemplateRepo": "GitHubTemplateRepo",
 }

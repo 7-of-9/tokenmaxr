@@ -1,0 +1,1704 @@
+/* Gallery Page Styles */
+:root {
+  --header-height: 80px;
+}
+
+.gallery-page {
+  min-height: 100vh;
+  min-height: 100dvh; /* Dynamic viewport height - accounts for visible browser UI on mobile */
+  width: 100%;
+  background: transparent;
+    /* Allow video background to show through */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+    /* Allow vertical scrolling when touching tiles */
+  overflow-y: auto;
+  height: 100vh;
+  height: 100dvh; /* Dynamic viewport height - accounts for visible browser UI on mobile */
+  padding-top: var(--header-height); /* Compensate for fixed header */
+  /* Prevent elastic over-scroll from revealing extra space at bottom */
+  overscroll-behavior-y: contain;
+}
+
+/* Header Section - Fixed on all devices for stability */
+.gallery-header {
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  position: fixed; /* Changed from sticky to fixed */
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 1002;
+    /* Increased to be above background controls toggle area (1001) */
+  backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.95);
+  border-bottom: 1px solid rgba(0, 255, 65, 0.2);
+  padding: 0 2rem;
+  flex-shrink: 0;
+  /* Prevent touch scrolling from starting on header */
+    touch-action: none;
+    pointer-events: auto;
+  /* Auto-hide animation */
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateY(0);
+}
+
+/* Header hidden state - slides up and out of view */
+.gallery-header.header-hidden {
+  transform: translateY(-100%);
+}
+
+/* Header visible state - slides down into view */
+.gallery-header.header-visible {
+  transform: translateY(0);
+}
+
+.back-button {
+  background: transparent;
+  border: none;
+  color: #00ff41;
+  font-size: 3.5rem;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  margin-right: 2rem;
+  font-family: var(--mono-font-1);
+  text-shadow: 
+    0 0 15px #00ff41,
+    0 0 25px #00ff41,
+    0 0 35px #00ff41;
+  min-width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Ensure button is clickable and doesn't trigger page scroll */
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.back-button:hover {
+  background: rgba(0, 255, 65, 0.1);
+  transform: scale(1.2);
+  text-shadow: 
+    0 0 20px #00ff41,
+    0 0 30px #00ff41,
+    0 0 40px #00ff41,
+    0 0 50px #00ff41;
+}
+
+.gallery-title {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 0.5rem;
+  overflow: hidden;
+  transform-origin: left center;
+  transition: transform 0.2s ease;
+  white-space: nowrap;
+  min-width: 0;
+  /* Allow clicks on title elements */
+    pointer-events: auto;
+    touch-action: none;
+}
+
+.gallery-d0m1 {
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: var(--mono-font-1);
+  color: #00ff41;
+  text-decoration: none;
+  text-shadow: 
+    0 0 1px #00ff41,
+    0 0 2px #00ff41,
+    0 0 3px #00ff41;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.gallery-d0m1:hover {
+  transform: scale(1.05);
+  text-shadow: 
+    0 0 1px #00ff41,
+    0 0 2px #00ff41,
+    0 0 3px #00ff41;
+}
+
+.gallery-path {
+  font-size: 1rem;
+  font-weight: 400;
+  font-family: var(--mono-font-1);
+  color: white;
+  margin: 0;
+}
+
+.gallery-path-display {
+  font-size: 2rem;
+  font-weight: lighter;
+  font-family: var(--mono-font-1);
+  color: white;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.path-component {
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-component:hover {
+  background: rgba(0, 255, 65, 0.1);
+  color: #00ff41;
+  text-shadow: 
+    0 0 10px #00ff41,
+    0 0 20px #00ff41;
+}
+
+.path-component.root {
+  font-weight: lighter;
+  flex-shrink: 0;
+  }
+  
+  .path-component.last {
+  font-weight: bold;
+  flex-shrink: 1;
+}
+
+.path-separator {
+  margin: 0 0.2rem;
+  color: rgba(255, 255, 255, 0.7);
+  flex-shrink: 0;
+}
+
+.path-component.ellipsis {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.path-component.ellipsis:hover {
+  background: none;
+  color: rgba(255, 255, 255, 0.5);
+  text-shadow: none;
+}
+
+@keyframes terminalGlow {
+  from {
+    text-shadow: 
+      0 0 1px #00ff41,
+      0 0 2px #00ff41,
+      0 0 2px #00ff41;
+  }
+  to {
+    text-shadow: 
+      0 0 1px #00ff41,
+      0 0 2px #00ff41,
+      0 0 3px #00ff41;
+  }
+}
+
+/* Gallery Section */
+.gallery-section {
+  flex: 1;
+  padding: 0 2rem 2rem 2rem;  /* Zero top padding */
+  position: relative;
+  /* Prevent touch scrolling on the background - only tiles should be scrollable */
+  pointer-events: none;
+}
+
+/* Add top padding when there's no directory title bar */
+.gallery-section.no-title {
+  padding-top: 1rem;
+}
+
+/* Directory Title Bar */
+.directory-title-bar {
+  /* Flat, full-width panel similar to navbar */
+  margin-bottom: 2rem;
+  margin-left: -2rem;  /* Escape gallery-section padding */
+  margin-right: -2rem;  /* Escape gallery-section padding */
+  width: calc(100% + 4rem);  /* Full viewport width */
+  text-align: center;
+  padding: 12px;  /* 12px all sides on larger screens */
+  background: rgba(0, 255, 65, 0.05);
+  border: none;  /* Remove border for flat appearance */
+  border-bottom: 1px solid rgba(0, 255, 65, 0.2);  /* Only bottom border like navbar */
+  border-radius: 0;  /* Flat rectangular panel */
+  backdrop-filter: blur(10px);
+  box-shadow: none;  /* Remove 3D shadows for flat appearance */
+  transition: all 0.3s ease;
+  /* Re-enable pointer events for title bar (parent has pointer-events: none) */
+  pointer-events: auto;
+}
+
+/* Directory Title Bar - Clickable state (when README is present) */
+.directory-title-bar[style*="pointer"] {
+  transition: all 0.3s ease;
+}
+
+.directory-title-bar[style*="pointer"]:hover {
+  background: rgba(0, 255, 65, 0.1);
+  border-bottom-color: rgba(0, 255, 65, 0.4);
+  box-shadow: none;  /* Keep flat appearance on hover */
+}
+
+.directory-title-bar[style*="pointer"]:hover .directory-title {
+  text-shadow: 
+    0 0 15px rgba(0, 255, 65, 0.7),
+    0 0 25px rgba(0, 255, 65, 0.5);
+}
+
+.directory-title-bar[style*="pointer"]:hover .directory-subtitle {
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.directory-title-bar[style*="pointer"] .directory-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7em;
+  max-width: 100%;
+}
+
+/* Add book icon inline with title when clickable */
+.directory-title-bar[style*="pointer"] .directory-title::after {
+  content: '📖';
+  font-size: 1.8em;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 0.3s ease;
+  flex-shrink: 0;
+}
+
+.directory-title-bar[style*="pointer"]:hover .directory-title::after {
+  opacity: 1;
+}
+
+.directory-title {
+  color: #00ff41;
+  font-family: var(--cursive-font);
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin: 0;
+  text-shadow: 
+    0 0 10px rgba(0, 255, 65, 0.5),
+    0 0 20px rgba(0, 255, 65, 0.3);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.directory-subtitle {
+  color: rgba(255, 255, 255, 0.85);
+  font-family: var(--mono-font-2);
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 0.75rem 0 0 0;
+  line-height: 1.5;
+  word-wrap: break-word;
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+.directory-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;  /* Wrap only when reaching container bounds */
+}
+
+.directory-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #44ccff;
+  font-family: var(--mono-font-1);
+  font-size: 0.9rem;
+  line-height: 1.1;
+  text-decoration: none;
+  padding: 0.4rem 0.8rem;
+  min-height: 2.25rem;
+  border-radius: 6px;
+  border: 1px solid rgba(68, 204, 255, 0.3);
+  background: rgba(68, 204, 255, 0.05);
+  transition: all 0.3s ease;
+  text-shadow: 0 0 5px rgba(68, 204, 255, 0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: none;  /* Remove max-width constraint to allow links to be as wide as needed */
+  flex-shrink: 0;  /* Prevent links from shrinking */
+}
+
+.directory-link:hover {
+  background: rgba(68, 204, 255, 0.15);
+  border-color: rgba(68, 204, 255, 0.6);
+  text-shadow: 
+    0 0 10px rgba(68, 204, 255, 0.6),
+    0 0 20px rgba(68, 204, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(68, 204, 255, 0.2);
+}
+.gallery-container {
+  width: 100%;
+  /* Re-enable pointer events for gallery container (parent has pointer-events: none) */
+    pointer-events: auto;
+}
+
+.gallery-track {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 2rem;
+  align-items: start;
+  justify-items: stretch;
+  padding: 0;
+  touch-action: pan-y;
+    /* Allow vertical scrolling on tiles */
+    /* Re-enable pointer events for gallery track */
+    pointer-events: auto;
+}
+
+/* Larger tiles on desktop/wide viewports */
+@media (min-width: 1025px) {
+  .gallery-track {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 2.5rem;
+  }
+}
+
+/* Project subfolder: slightly smaller tiles for denser grid */
+.gallery-track.project-subfolder {
+  /* Desktop: 3+ columns with 1.5rem gap */
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.5rem;
+}
+
+/* Mobile: Force 1 column like regular galleries */
+@media (max-width: 600px) {
+  .gallery-track.project-subfolder {
+    /* Single column for easier viewing on mobile at default zoom */
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+  }
+}
+
+
+
+/* Directory preview styles */
+.directory-content {
+  position: relative;
+  width: 100%;  
+  height: 100%;
+  border-radius: 20px;
+  overflow: hidden;
+  touch-action: pan-y; /* Allow vertical scrolling on touch devices */
+}
+
+.directory-preview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  /*filter: blur(0.5px) grayscale(1);*/
+  gap: 1px;
+}
+
+.preview-image {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.preview-0 {
+  grid-column: 1 / 2;
+  grid-row: 1 / 2;
+}
+
+.preview-1 {
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+}
+
+.preview-2 {
+  grid-column: 1 / 2;
+  grid-row: 2 / 3;
+}
+
+.preview-3 {
+  grid-column: 2 / 3;
+  grid-row: 2 / 3;
+}
+
+.directory-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+}
+
+.directory-overlay .file-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+  filter: drop-shadow(0 0 10px rgba(0, 255, 65, 0.5));
+}
+
+.directory-overlay .file-name {
+  color: #00ff41;
+  font-size: 2.5rem;
+  font-weight: 600;
+  font-family: var(--mono-font-1);
+  text-shadow: 
+    2px 2px 4px rgba(0, 0, 0, 0.8),
+    0 0 10px #00ff41,
+    0 0 20px #00ff41;
+  word-break: break-word;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* Loading and Error States */
+.gallery-loading, .gallery-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-family: var(--mono-font-1);
+}
+
+.error-message {
+  font-size: 1.5rem;
+  color: #ff4444;
+  text-shadow: 0 0 10px #ff4444;
+}
+
+/* Modal Styles - reused from LandingPage */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(10px) brightness(0.4) grayscale(1);
+  padding: 0;
+  cursor: pointer;
+  /* Prevent scrolling on mobile - only allow tap to close */
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.modal-overlay.modal-opening {
+  animation: modalFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.modal-closing {
+  animation: modalFadeOut 0.32s cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px) brightness(1) grayscale(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(10px) brightness(0.4) grayscale(1);
+  }
+}
+
+@keyframes modalFadeOut {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(10px) brightness(0.4) grayscale(1);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px) brightness(1) grayscale(0);
+  }
+}
+
+.modal-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  border: none;
+  cursor: default;
+  /* Allow horizontal swipes for navigation but prevent vertical scrolling */
+  touch-action: pan-x;
+}
+
+/* Fullscreen for image modals (but not PDF, video, or text modals) */
+.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text):not(.modal-readme-fullscreen) {
+  width: 100vw;
+  height: 100vh;
+  /* Use dvh (dynamic viewport height) for iOS to account for browser UI */
+    height: 100dvh;
+}
+.modal-overlay.modal-opening .modal-content {
+  animation: modalContentZoomIn 0.48s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-overlay.modal-closing .modal-content {
+  animation: modalContentZoomOut 0.32s cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes modalContentZoomIn {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes modalContentZoomOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+}
+
+.modal-content img {
+  max-width: 100vw;
+  max-height: 100vh;
+  max-height: 100dvh;
+    /* iOS: Use dynamic viewport height */
+  width: 100vw;
+    height: 100vh;
+  height: 100dvh;
+    /* iOS: Use dynamic viewport height */
+  object-fit: contain;
+  border-radius: 0;
+  border: none;
+    box-shadow: none;
+  transition: all 0.3s ease;
+}
+
+.lightbox-stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.lightbox-stage img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  transition: none;
+}
+
+.lightbox-preview {
+  z-index: 0;
+}
+
+.lightbox-full {
+  z-index: 1;
+}
+
+/* Image metadata display in modal */
+.image-metadata {
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  border: 1px solid rgba(0, 255, 65, 0.2);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(0, 255, 65, 0.1);
+  max-width: 90vw;
+  z-index: 1001;
+  pointer-events: none;
+  /* Allow clicks to pass through to close modal */
+}
+
+
+
+.metadata-item {
+  color: #00ff41;
+  font-family: var(--mono-font-1);
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metadata-item:first-child {
+  margin-top: 0;
+}
+
+.metadata-item:last-child {
+  margin-bottom: 0;
+}
+
+/* Image metadata overlay floating on bottom center of viewport */
+.image-metadata-overlay {
+  position: fixed;
+  bottom: env(safe-area-inset-bottom, 0px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100vw - 1.25rem);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(4px);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 0;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  font-size: 0.8rem;
+  font-family: var(--mono-font-1);
+  font-weight: 600;
+  pointer-events: auto;
+  z-index: 2147483647;
+  text-align: center;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  cursor: pointer;
+}
+
+/* Hidden state for toggle */
+.image-metadata-overlay.hidden {
+  opacity: 0;
+  transform: translateX(-50%) translateY(100%);
+  pointer-events: none;
+}
+
+/* Desktop: keep at very bottom */
+@media (min-width: 1025px) and (hover: hover) and (pointer: fine) {
+  .image-metadata-overlay {
+    bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+.image-metadata-overlay .date-time-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.85rem;
+  width: auto;
+  max-width: 100%;
+  line-height: 1.3;
+  margin-bottom: 4px;
+  color: #00ff41;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.image-metadata-overlay .date-time-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.image-metadata-overlay .apple-score-inline {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: #ffcc44;
+}
+
+.image-metadata-overlay .location-text {
+  line-height: 1.35;
+  color: #44ccff;
+  font-size: 0.7rem;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.image-metadata-overlay .apple-labels-line {
+  line-height: 1.35;
+  margin-top: 4px;
+  color: #c9a8ff;
+  font-size: 0.65rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Video metadata overlay - ensure visibility in fullscreen */
+.video-metadata-overlay {
+  z-index: 2147483647; /* Maximum z-index to ensure visibility in fullscreen */
+}
+
+/* Fullscreen video container styling - position at VERY bottom */
+:fullscreen .video-metadata-overlay,
+:-webkit-full-screen .video-metadata-overlay,
+:-moz-full-screen .video-metadata-overlay,
+:-ms-fullscreen .video-metadata-overlay {
+  position: fixed;
+  /* Position at VERY bottom of viewport */
+    bottom: env(safe-area-inset-bottom, 0px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  width: 100%;
+    /* Full width for better tap target */
+    border-radius: 0;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+/* PDF Modal Styles */
+.modal-content.modal-pdf {
+  width: calc(100vw - 4rem);
+  height: calc(100vh - 4rem);
+  height: calc(100dvh - 4rem);
+    /* iOS: Use dynamic viewport height */
+  max-width: none;
+  max-height: none;
+  background: transparent;
+    border-radius: 20px;
+    border: 2px solid rgba(0, 255, 65, 0.3);
+  box-shadow: 
+    0 30px 80px rgba(0, 0, 0, 0.5),
+      0 15px 40px rgba(0, 0, 0, 0.3),
+      0 0 40px rgba(0, 255, 65, 0.2),
+      0 0 80px rgba(0, 255, 65, 0.1);
+}
+
+.modal-content.modal-pdf iframe {
+  border-radius: 18px;
+  background: white;
+}
+
+/* PDF Fullscreen Modal - No tile background, fills entire screen */
+.modal-content.modal-pdf-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+    /* iOS: Use dynamic viewport height */
+  max-width: none;
+  max-height: none;
+  background: #1a1a1a;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+/* Video Modal Styles */
+.modal-content.modal-video {
+  width: calc(100vw - 4rem);
+  height: calc(100vh - 4rem);
+  height: calc(100dvh - 4rem);
+    /* iOS: Use dynamic viewport height */
+  max-width: none;
+  max-height: none;
+  background: transparent;
+    border-radius: 0;
+    border: none;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.5),
+      0 15px 40px rgba(0, 0, 0, 0.3);
+}
+
+.modal-content.modal-video video {
+  border-radius: 0;
+  background: black;
+  width: 100%;
+  height: 100%;
+}
+/* Text Modal Styles */
+.modal-content.modal-text {
+  width: calc(100vw - 4rem);
+  height: calc(100vh - 4rem);
+  height: calc(100dvh - 4rem);
+    /* iOS: Use dynamic viewport height */
+  max-width: 800px;
+  max-height: 600px;
+  background: rgba(0, 0, 0, 0.9);
+  border-radius: 20px;
+  border: 2px solid rgba(0, 255, 65, 0.3);
+  box-shadow: 
+    0 30px 80px rgba(0, 0, 0, 0.5),
+    0 15px 40px rgba(0, 0, 0, 0.3),
+      0 0 40px rgba(0, 255, 65, 0.2),
+      0 0 80px rgba(0, 255, 65, 0.1);
+      padding: 0;
+  overflow: visible; /* Allow close button to render outside */
+  position: relative;
+}
+
+.modal-content.modal-readme-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  /* Use dvh (dynamic viewport height) for iOS to account for browser UI */
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  background: transparent;
+  align-items: stretch;
+  justify-content: flex-start;
+  /* Allow vertical scrolling for README content */
+  touch-action: pan-y;
+  /* Prevent pull-to-refresh from breaking scroll */
+  overscroll-behavior: contain;
+}
+
+/* Override modal-overlay touch-action when README fullscreen is active */
+.modal-overlay:has(.modal-readme-fullscreen) {
+  touch-action: pan-y !important;
+  overscroll-behavior: contain !important;
+}
+
+.modal-content.modal-readme-fullscreen .readme-content {
+  width: 100%;
+  height: 100%;
+  /* Ensure smooth scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+  /* Prevent pull-to-refresh interference */
+  overscroll-behavior: contain;
+  /* Ensure content stays below browser UI */
+  position: relative;
+}
+
+.text-content {
+  color: #00ff41;
+  font-family: var(--mono-font-1);
+  font-size: 1rem;
+  line-height: 1.6;
+  text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+  height: 100%;
+  overflow-y: auto;
+  padding: 0.5rem;
+    /* Minimal padding for text content */
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+}
+
+.text-content p {
+  margin: 0 0 1.5rem 0;
+  text-align: left;
+}
+
+.text-content p:last-child {
+  margin-bottom: 0;
+}
+
+.text-content .first-line {
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: bold;
+  margin-bottom: 2rem;
+  text-shadow: 
+    0 0 15px rgba(0, 255, 65, 0.8),
+    0 0 30px rgba(0, 255, 65, 0.5);
+}
+
+/* .modal-close {
+  position: absolute;
+  top: -1.5rem;
+    right: -1.5rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 2rem;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  transition: all 0.3s ease;
+  z-index: 1002 !important;
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+  box-shadow: 
+    0 0 10px #00ff41,
+    0 0 20px #00ff41,
+    0 0 30px #00ff41,
+    0 0 40px #00ff41;
+  animation: modalGlow 2s ease-in-out infinite alternate;
+}
+
+@keyframes modalGlow {
+  from {
+    box-shadow: 
+      0 0 10px #00ff41,
+      0 0 20px #00ff41,
+      0 0 30px #00ff41,
+      0 0 40px #00ff41;
+  }
+  to {
+    box-shadow: 
+      0 0 15px #00ff41,
+      0 0 25px #00ff41,
+      0 0 35px #00ff41,
+      0 0 45px #00ff41,
+      0 0 55px #00ff41;
+  }
+}
+
+*/
+@keyframes shakeNo {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-8px); }
+  20%, 40%, 60%, 80% { transform: translateX(8px); }
+}
+
+.modal-content.shake {
+  animation: shakeNo 0.6s ease-in-out;
+}
+
+/* Responsive Design */
+/* Tablets (iPad, etc.) - 2 column layout */
+@media (max-width: 1024px) and (min-width: 601px) {
+  :root {
+    --header-height: 70px;
+  }
+  
+  .gallery-page {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+      /* Allow vertical scrolling on tiles */
+  }
+  
+  .gallery-header {
+    height: var(--header-height);
+    padding: 0 1rem;
+  }
+  
+  .back-button {
+    font-size: 2.8rem;
+    margin-right: 1rem;
+    min-width: 55px;
+    height: 55px;
+  }
+  
+  .gallery-d0m1 {
+    font-size: 1.8rem;
+  }
+  
+  .gallery-path {
+    font-size: 0.9rem;
+  }
+  
+  .gallery-path-display {
+    font-size: 1.8rem;
+  }
+  
+  .gallery-section {
+    padding: 0 1rem 1rem 1rem;  /* Zero top padding */
+  }
+  
+  .gallery-section.no-title {
+    padding-top: 1rem;
+  }
+  
+  .directory-title-bar {
+    margin-bottom: 1.5rem;
+    margin-left: -1rem;  /* Escape gallery-section padding on tablet */
+    margin-right: -1rem;  /* Escape gallery-section padding on tablet */
+    width: calc(100% + 2rem);  /* Full viewport width on tablet */
+    padding: 12px;  /* 12px all sides */
+  }
+  
+  .directory-title {
+    font-size: 1.5rem;
+  }
+  
+  .directory-subtitle {
+    font-size: 0.9rem;
+    margin-top: 0.6rem;
+  }
+  
+  .directory-links {
+    gap: 1rem;
+    margin-top: 0.8rem;
+  }
+  
+  .directory-link {
+    font-size: 0.85rem;
+    padding: 0.35rem 0.7rem;
+    max-width: none;  /* Remove constraint for single line layout */
+  }
+                /* 2 column layout for tablets */
+  .gallery-track {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    padding: 0;
+    justify-items: stretch;
+    }
+    
+    .gallery-item {
+    max-width: 450px;
+      width: 100%;
+  }
+}
+
+/* Landscape mode optimizations for tablets/mobile (e.g., rotated phones) */
+@media (max-width: 1024px) and (min-width: 601px) and (max-height: 600px) {
+  .gallery-section {
+    padding: 0 0.75rem 0.75rem 0.75rem;  /* Zero top padding */
+  }
+  
+  .gallery-section.no-title {
+    padding-top: 1rem;
+  }
+  
+        .gallery-track {
+          gap: 1rem;
+        }
+    
+        .directory-title-bar {
+          margin-bottom: 0.75rem;
+          margin-left: -0.75rem;  /* Escape gallery-section padding in landscape */
+          margin-right: -0.75rem;  /* Escape gallery-section padding in landscape */
+          width: calc(100% + 1.5rem);  /* Full viewport width in landscape */
+          padding: 8px;  /* 8px all sides */
+        }
+    
+        .directory-title {
+          font-size: 1.2rem;
+        }
+    
+        .directory-subtitle {
+          font-size: 0.75rem;
+          margin-top: 0.3rem;
+        }
+        }
+    
+        /* Extra compact for very short landscape screens */
+        @media (max-width: 1024px) and (min-width: 601px) and (max-height: 450px) {
+          .gallery-section {
+            padding: 0 0.5rem 0.5rem 0.5rem;  /* Zero top padding */
+          }
+          
+          .gallery-section.no-title {
+            padding-top: 1rem;
+          }
+    
+          .gallery-track {
+            gap: 0.75rem;
+          }
+    
+          .directory-title-bar {
+            margin-bottom: 0.5rem;
+            margin-left: -0.5rem;  /* Escape gallery-section padding in very short landscape */
+            margin-right: -0.5rem;  /* Escape gallery-section padding in very short landscape */
+            width: calc(100% + 1rem);  /* Full viewport width in very short landscape */
+            padding: 8px;  /* 8px all sides */
+          }
+    
+          .directory-title {
+            font-size: 1rem;
+          }
+    
+          .directory-subtitle {
+            font-size: 0.7rem;
+            margin-top: 0.2rem;
+          }
+        }
+    
+        /* Continuation of tablet styles (601-1024px) - applies to all orientations */
+        @media (max-width: 1024px) and (min-width: 601px) {
+  .file-icon {
+    font-size: 3rem;
+  }
+  
+  .file-name {
+    font-size: 1rem;
+  }
+  
+  .modal-content.modal-pdf {
+    width: calc(100vw - 2rem);
+    height: calc(100vh - 2rem);
+    height: calc(100dvh - 2rem);
+      /* iOS: Use dynamic viewport height */
+  }
+  
+  .text-content {
+    font-size: 0.9rem;
+  }
+  
+  /* CRITICAL: Image modals MUST be fullscreen on tablets */
+  .modal-overlay:has(.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img) {
+    padding: 0 !important;
+  }
+  
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    object-fit: contain !important;
+  }
+  
+  /* CRITICAL: Text/README modals MUST be fullscreen on tablets */
+  .modal-overlay:has(.modal-text) {
+    padding: 0 !important;
+  }
+  
+  .modal-content.modal-text {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.5rem !important;
+  }
+}
+
+/* Phones - 1 column layout */
+@media (max-width: 600px) {
+  :root {
+    --header-height: 70px;
+  }
+  
+  .gallery-page {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+      /* Allow vertical scrolling on tiles */
+  }
+  
+  .gallery-header {
+    height: var(--header-height);
+    padding: 0 0.5rem;
+  }
+  
+  .back-button {
+    font-size: 2.5rem;
+    margin-right: 1rem;
+    min-width: 50px;
+    height: 50px;
+  }
+  
+  .gallery-d0m1 {
+    font-size: 1.5rem;
+  }
+  
+  .gallery-path {
+    font-size: 0.75rem;
+  }
+  
+  .gallery-path-display {
+    font-size: 1.5rem;
+  }
+  
+  .gallery-section {
+    padding: 0 0.5rem 0.5rem 0.5rem;  /* Reduced bottom padding on mobile */
+  }
+  
+  .directory-title-bar {
+    margin-bottom: 1rem;
+    margin-left: -0.5rem;  /* Escape gallery-section padding on mobile */
+    margin-right: -0.5rem;  /* Escape gallery-section padding on mobile */
+    width: calc(100% + 1rem);  /* Full viewport width on mobile */
+    padding: 8px;  /* 8px all sides */
+  }
+  
+  .directory-title {
+    font-size: 1.3rem;
+  }
+  
+  .directory-subtitle {
+    font-size: 0.8rem;
+    margin-top: 0.5rem;
+  }
+  
+  .directory-links {
+    gap: 0.8rem;
+    margin-top: 0.6rem;
+    /* Keep single line layout on mobile */
+  }
+  
+  .directory-link {
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    /* No max-width constraint for single line layout */
+  }
+                /* 1 column layout for phones */
+  .gallery-track {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    padding: 0;
+    justify-items: stretch;
+    }
+    
+    .gallery-item {
+      max-width: none;
+  }
+  
+  .file-icon {
+    font-size: 2.5rem;
+  }
+  
+  .file-name {
+    font-size: 0.9rem;
+  }
+  
+  /* CRITICAL: Image modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img) {
+    padding: 0 !important;
+  }
+  
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    object-fit: contain !important;
+  }
+  
+  /* CRITICAL: Text/README modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-text) {
+    padding: 0 !important;
+  }
+  
+  .modal-content.modal-text {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.5rem !important;
+  }
+}
+
+/* Very small screens */
+@media (max-width: 380px) {
+  .gallery-page {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+      /* Allow vertical scrolling on tiles */
+  }
+  
+  .gallery-header {
+    padding: 0 0.3rem;
+  }
+  
+  .back-button {
+    font-size: 2.2rem;
+    margin-right: 0.5rem;
+    min-width: 45px;
+    height: 45px;
+  }
+  
+  .gallery-d0m1 {
+    font-size: 1.2rem;
+  }
+  
+  .gallery-path {
+    font-size: 0.6rem;
+  }
+  
+  .gallery-path-display {
+    font-size: 1.2rem;
+  }
+  
+  .gallery-title {
+    max-width: calc(100vw - 80px);
+  }
+  
+  .gallery-section {
+    padding: 0 0.5rem 0.5rem 0.5rem;  /* Reduced bottom padding on small mobile */
+  }
+  
+  .directory-title-bar {
+    margin-bottom: 0.8rem;
+    margin-left: -0.5rem;  /* Escape gallery-section padding */
+    margin-right: -0.5rem;  /* Escape gallery-section padding */
+    width: calc(100% + 1rem);  /* Full viewport width */
+    padding: 8px;  /* 8px all sides */
+  }
+  
+  .directory-title {
+    font-size: 1.1rem;
+  }
+  
+  .directory-subtitle {
+    font-size: 0.7rem;
+    margin-top: 0.4rem;
+  }
+  
+  .directory-links {
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+    /* Keep single line layout on narrow screens */
+  }
+  
+  .directory-link {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+    /* No max-width constraint for single line layout */
+  }
+  .gallery-track {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding: 0;
+      justify-items: stretch;
+    }
+    
+    .gallery-item {
+      max-width: none;
+  }
+  
+  /* CRITICAL: Image modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img) {
+    padding: 0 !important;
+  }
+  
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    object-fit: contain !important;
+  }
+  
+  /* CRITICAL: Text/README modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-text) {
+    padding: 0 !important;
+  }
+  
+  .modal-content.modal-text {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.5rem !important;
+  }
+}
+
+/* Extra small screens - even more aggressive */
+@media (max-width: 320px) {
+  .gallery-page {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+      /* Allow vertical scrolling on tiles */
+  }
+  
+  .gallery-header {
+    padding: 0 0.2rem;
+  }
+  
+  .back-button {
+    margin-right: 0.3rem;
+    min-width: 40px;
+    height: 40px;
+    font-size: 2rem;
+  }
+  
+  .gallery-d0m1 {
+    font-size: 1rem;
+  }
+  
+  .gallery-path {
+    font-size: 0.5rem;
+  }
+  
+  .gallery-path-display {
+    font-size: 1rem;
+  }
+  
+  .gallery-title {
+    max-width: calc(100vw - 60px);
+  }
+  
+  .gallery-section {
+    padding: 0 0.5rem 0.5rem 0.5rem;  /* Reduced bottom padding on extra small screens */
+  }
+  
+  .directory-title-bar {
+    margin-bottom: 0.6rem;
+    margin-left: -0.5rem;  /* Escape gallery-section padding */
+    margin-right: -0.5rem;  /* Escape gallery-section padding */
+    width: calc(100% + 1rem);  /* Full viewport width */
+    padding: 8px;  /* 8px all sides */
+  }
+  
+  .directory-title {
+    font-size: 1rem;
+  }
+  
+  .directory-subtitle {
+    font-size: 0.65rem;
+    margin-top: 0.3rem;
+  }
+  
+  .directory-links {
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+    /* Keep single line layout on very narrow screens */
+  }
+  
+  .directory-link {
+    font-size: 0.65rem;
+    padding: 0.2rem 0.4rem;
+    /* No max-width constraint for single line layout */
+  }
+  
+  /* CRITICAL: Image modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img) {
+    padding: 0 !important;
+  }
+  
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    object-fit: contain !important;
+  }
+  
+  /* CRITICAL: Text/README modals MUST be fullscreen on phones */
+  .modal-overlay:has(.modal-text) {
+    padding: 0 !important;
+  }
+  
+  .modal-content.modal-text {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.5rem !important;
+  }
+}
+
+/* ========================================
+   MOBILE/TOUCH DEVICE DETECTION
+   ======================================== */
+/* 
+ * Use proper mobile detection instead of arbitrary viewport widths
+ * Multiple detection methods for maximum compatibility:
+ * 1. (pointer: coarse) = primary input is touch-based
+ * 2. (hover: none) = device doesn't support hover
+ * 3. Any device with max-width typical of mobile devices combined with touch
+ * This ensures ALL mobile devices get fullscreen treatment
+ */
+@media (pointer: coarse), (hover: none), (max-width: 1024px) and (pointer: coarse) {
+  /* Image modals: Fullscreen with no padding/borders on ALL mobile devices */
+  .modal-overlay:has(.modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img) {
+    padding: 0 !important;
+  }
+  
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) {
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .modal-content:not(.modal-pdf):not(.modal-pdf-fullscreen):not(.modal-video):not(.modal-text) img {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    object-fit: contain !important;
+  }
+
+  /* Non-image modals (PDF, video) keep padding for better UX */
+  .modal-overlay:has(.modal-pdf),
+  .modal-overlay:has(.modal-video) {
+    padding: 1rem !important;
+  }
+  
+  /* Text/README modals: Fullscreen with no padding/borders on ALL mobile devices */
+  .modal-overlay:has(.modal-text) {
+    padding: 0 !important;
+  }
+  
+  .modal-content.modal-text {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+      /* iOS: Use dynamic viewport height */
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0.5rem !important;
+  }
+  
+  /* Adjust metadata overlay for mobile */
+  .image-metadata {
+    bottom: 1rem;
+    padding: 0.75rem 1rem;
+    max-width: calc(100vw - 2rem);
+  }
+
+  .metadata-item {
+    font-size: 0.8rem;
+  }
+
+  .image-metadata-overlay {
+    bottom: env(safe-area-inset-bottom, 0px);
+    padding: 6px 12px;
+    font-size: 0.7rem;
+    width: max-content;
+    max-width: calc(100vw - 1rem);
+  }
+
+  .image-metadata-overlay .date-time-line {
+    font-size: 0.65rem;
+  }
+
+  .image-metadata-overlay .location-text {
+    font-size: 0.6rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .image-metadata-overlay .apple-labels-line {
+    font-size: 0.58rem;
+  }
+}

@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 const show = (id, on) => { $(id).hidden = !on; };
 let state = null;
 let timer = 0;
+let restarting = false; // the app is restarting in its other mode: this page is done
 const dirty = new Set(); // inputs the user is editing: polling leaves them alone
 
 async function api(path, body) {
@@ -47,6 +48,10 @@ function render() {
   const g = s.github, l = s.login;
   const signing = !!(l && l.running);
   show("gh-off", !g.on && !signing);
+  show("gh-off-fleet", !g.on && !!g.fleet);
+  $("gh-off-fleet").textContent = g.on ? "" : g.fleet || "";
+  show("gh-off-fleet-error", !g.on && !!g.fleetError);
+  $("gh-off-fleet-error").textContent = g.on ? "" : g.fleetError || "";
   show("gh-login", signing || !!(l && l.error && !g.on));
   show("gh-on", g.on && !signing);
   const badge = $("gh-badge");
@@ -67,7 +72,7 @@ function render() {
   }
   if (g.on) {
     link($("gh-repo"), "https://github.com/" + g.repo, g.repo);
-    $("gh-user").textContent = g.login;
+    $("gh-who").textContent = g.adopted ? "signed in through your fleet (shared by " + g.login + ")" : "signed in as " + g.login;
     const pages = $("gh-pages");
     if (g.pagesUrl) {
       const a = document.createElement("a");
@@ -81,6 +86,12 @@ function render() {
     $("gh-last").textContent = ago(g.lastPublish) + " · every " + (every ? every.textContent : g.publishEveryMinutes + " minutes");
     show("gh-error", !!g.lastError);
     $("gh-error").textContent = g.lastError || "";
+    show("gh-fleet", !!g.fleet);
+    $("gh-fleet").textContent = g.fleet || "";
+    show("gh-fleet-error", !!g.fleetError);
+    $("gh-fleet-error").textContent = g.fleetError || "";
+    show("gh-share-row", !!g.canShare);
+    setInput("gh-share", !!g.shareWithFleet);
     setInput("gh-label", g.label);
     if (![...$("gh-every").options].some((o) => +o.value === g.publishEveryMinutes)) {
       $("gh-every").append(new Option(g.publishEveryMinutes + " minutes", g.publishEveryMinutes));
@@ -110,6 +121,11 @@ function render() {
   $("sv-connect").textContent = v.enrolled ? "Change server" : "Connect";
   show("sv-off", v.enrolled || !!v.url);
 
+  // This app: tray only, or with its window (a change restarts it).
+  const app = s.app || {};
+  show("app", !!app.canSwitch);
+  setInput("app-tray", !!app.trayOnly);
+
   schedule(signing || connecting ? 1000 : 10000);
 }
 
@@ -119,6 +135,7 @@ function schedule(ms) {
 }
 
 async function refresh() {
+  if (restarting) return;
   try {
     state = await api("state");
     render();
@@ -153,7 +170,7 @@ function alertIn(btn, msg) {
   setTimeout(() => p.remove(), 8000);
 }
 
-for (const id of ["gh-new-label", "gh-label", "gh-every", "gh-quota", "gh-country", "gh-history", "sv-input", "sv-join"]) {
+for (const id of ["gh-new-label", "gh-label", "gh-every", "gh-quota", "gh-country", "gh-history", "gh-share", "sv-input", "sv-join"]) {
   $(id).addEventListener("input", () => dirty.add(id));
   $(id).addEventListener("change", () => dirty.add(id));
 }
@@ -165,16 +182,22 @@ $("gh-signin").addEventListener("click", busy($("gh-signin"), async () => {
 $("gh-cancel").addEventListener("click", busy($("gh-cancel"), () => api("github/cancel", {})));
 $("gh-copy").addEventListener("click", () => navigator.clipboard?.writeText($("gh-code").textContent));
 $("gh-save").addEventListener("click", busy($("gh-save"), async () => {
-  await api("github/options", {
+  const opts = {
     label: $("gh-label").value, publishEveryMinutes: +$("gh-every").value,
     noQuota: !$("gh-quota").checked, showCountry: $("gh-country").checked,
     showAccountHistory: $("gh-history").checked,
-  });
-  ["gh-label", "gh-every", "gh-quota", "gh-country", "gh-history"].forEach((id) => dirty.delete(id));
+  };
+  if (state && state.github.canShare) opts.shareWithFleet = $("gh-share").checked;
+  await api("github/options", opts);
+  ["gh-label", "gh-every", "gh-quota", "gh-country", "gh-history", "gh-share"].forEach((id) => dirty.delete(id));
 }));
 $("gh-publish").addEventListener("click", busy($("gh-publish"), () => api("sync", {})));
 $("gh-signout").addEventListener("click", busy($("gh-signout"), async () => {
-  if (!confirm("Stop publishing this machine to GitHub? What it published stays in the repository.")) return;
+  const g = state ? state.github : {};
+  const msg = g.adopted
+    ? "Stop publishing this machine to GitHub? It no longer takes the sign-in your fleet shares (sign in here to publish again). What it published stays in the repository."
+    : "Stop publishing this machine to GitHub? What it published stays in the repository." + (g.canShare && g.shareWithFleet ? " The sign-in it shares with your other machines is withdrawn, so they stop publishing within the hour (to make the sign-in itself useless, revoke the App at github.com/settings/installations, which stops every machine)." : "");
+  if (!confirm(msg)) return;
   await api("github/logout", {});
 }));
 $("sv-connect").addEventListener("click", busy($("sv-connect"), async () => {
@@ -183,6 +206,26 @@ $("sv-connect").addEventListener("click", busy($("sv-connect"), async () => {
   $("sv-join").value = "";
 }));
 $("sv-cancel").addEventListener("click", busy($("sv-cancel"), () => api("server/cancel", {})));
+$("app-tray").addEventListener("change", async () => {
+  const box = $("app-tray");
+  box.disabled = true;
+  try {
+    const r = await api("app", { trayOnly: box.checked });
+    if (r.restart) {
+      restarting = true;
+      clearTimeout(timer);
+      show("app-restart", true);
+      return;
+    }
+  } catch (e) {
+    box.checked = !box.checked;
+    show("app-error", true);
+    $("app-error").textContent = e.message;
+    setTimeout(() => show("app-error", false), 8000);
+  }
+  box.disabled = false;
+  await refresh();
+});
 $("sv-off").addEventListener("click", busy($("sv-off"), async () => {
   if (!confirm("Stop uploading to the server? This machine stays enrolled; connect again to resume.")) return;
   await api("server", { server: "off" });

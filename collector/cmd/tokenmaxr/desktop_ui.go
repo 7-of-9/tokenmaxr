@@ -7,9 +7,14 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray/ui"
 )
 
-// desktopUI is the tray icon (Windows) or menu-bar item (macOS, cgo).
+// desktopUI is the tray icon (Windows) or menu-bar item (macOS, cgo) and,
+// unless config.json says trayOnly, the main window with its taskbar button
+// or Dock icon.
 func desktopUI() (func(*app.Desktop), string) {
 	return func(d *app.Desktop) {
-		ui.Run(ui.Handler{Ready: d.Ready, Click: d.Click, Opened: d.Refresh, Popup: d.PopupShown, Moved: d.Moved})
+		ui.Run(ui.Handler{
+			Ready: d.Ready, Click: d.Click, Opened: d.Refresh, Popup: d.PopupShown, Moved: d.Moved,
+			Window: d.WindowMode(), Minimized: d.StartMinimized(), Shown: d.WindowShown,
+		})
 	}, ""
 }

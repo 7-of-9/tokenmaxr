@@ -52,7 +52,11 @@ type Config struct {
 	// App runs the collector as the desktop app (tray icon / menu-bar
 	// item) at login; install --no-app turns it off for the headless
 	// every-minute tick.
-	App        bool `json:"app"`
+	App bool `json:"app"`
+	// TrayOnly runs the app in the notification area / menu bar alone: no
+	// main window, taskbar button or Dock icon (the settings page's "Run
+	// only in the system tray / menu bar"). Off by default.
+	TrayOnly   bool `json:"trayOnly,omitempty"`
 	AutoUpdate bool `json:"autoUpdate"`
 	// ExtraHomes are additional home directories to scan with every parser
 	// and account probe (SPEC "Scan roots"); DiscoverWSL adds the homes of
@@ -65,6 +69,10 @@ type Config struct {
 	// GitHub publishes daily aggregates to the user's own GitHub repository
 	// and Pages dashboard (absent: off). The token lives in secrets.json.
 	GitHub *GitHubConfig `json:"github,omitempty"`
+	// GitHubFleetOptOut: this machine never adopts the GitHub sign-in its
+	// fleet shares through the server (set when its owner stops publishing
+	// to GitHub here).
+	GitHubFleetOptOut bool `json:"githubFleetOptOut,omitempty"`
 }
 
 // GitHubConfig is the GitHub publisher's settings. Everything published is
@@ -87,6 +95,19 @@ type GitHubConfig struct {
 	// daily totals and this machine's tokens per UTC day. Off by default:
 	// next to the local-date rows, UTC days reveal the time zone's offset.
 	ShowAccountHistory bool `json:"showAccountHistory,omitempty"`
+	// ShareWithFleet shares this machine's own GitHub sign-in with the other
+	// machines of its fleet through the server, sealed with the fleet key
+	// (absent: on; see SharesWithFleet).
+	ShareWithFleet *bool `json:"shareWithFleet,omitempty"`
+	// Adopted: the sign-in is one another machine of the fleet shared through
+	// the server, not this machine's own; it is never shared again from here.
+	Adopted bool `json:"adopted,omitempty"`
+}
+
+// SharesWithFleet reports whether this machine's own sign-in is shared with
+// the fleet (the default), never an adopted one.
+func (g *GitHubConfig) SharesWithFleet() bool {
+	return !g.Adopted && (g.ShareWithFleet == nil || *g.ShareWithFleet)
 }
 
 // PublishEvery returns the effective publishing interval.
@@ -495,6 +516,32 @@ type GitHubState struct {
 	// stay where they are).
 	Rebuild        bool                             `json:"rebuild,omitempty"`
 	RebuildCursors map[string]map[string]FileCursor `json:"rebuildCursors,omitempty"`
+	// Fleet is the GitHub sign-in shared with the fleet through the server.
+	Fleet FleetShareState `json:"fleet,omitzero"`
+}
+
+// FleetShareState is what the fleet sign-in sharing remembers. It never holds
+// the token.
+type FleetShareState struct {
+	// Shared identifies what this machine last shared (fleetshare.Fingerprint)
+	// and SharedAt when, By under which server machine id (a re-enrolment
+	// shares again under the new one); set only on the machine that shares.
+	Shared   string    `json:"shared,omitempty"`
+	SharedAt time.Time `json:"sharedAt,omitzero"`
+	By       string    `json:"by,omitempty"`
+	// Escrowed: the server keeps the fleet key (a fleet linked from the
+	// browser), so whoever runs it could read the share.
+	Escrowed bool `json:"escrowed,omitempty"`
+	// Superseded: another machine shared its sign-in since, so this one's
+	// unchanged sign-in is not shared over it.
+	Superseded bool `json:"superseded,omitempty"`
+	// Seen is the sharedAt of the newest share this machine adopted: an
+	// older (or the same, withdrawn) share served again is refused.
+	Seen time.Time `json:"seen,omitzero"`
+	// Polled is when this machine last looked for a sign-in to adopt.
+	Polled time.Time `json:"polled,omitzero"`
+	// LastError is the last sharing or adopting failure ("" after a success).
+	LastError string `json:"lastError,omitempty"`
 }
 
 // StartRebuild re-reads all history into the GitHub rollup only.

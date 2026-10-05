@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,33 @@ func TestConfigDefaultsAndOverlay(t *testing.T) {
 	os.WriteFile(paths.Config(home), []byte(`{bad`), 0o600)
 	if _, err := LoadConfig(home); err == nil {
 		t.Fatal("malformed config accepted")
+	}
+}
+
+// The desktop app has its main window by default; trayOnly (the settings
+// page's checkbox) keeps it in the tray, and is only written when set.
+func TestConfigTrayOnly(t *testing.T) {
+	home := t.TempDir()
+	if c, err := LoadConfig(home); err != nil || c.TrayOnly || DefaultConfig().TrayOnly {
+		t.Fatalf("default trayOnly: %+v %v", c, err)
+	}
+	c := DefaultConfig()
+	if err := SaveConfig(home, c); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(paths.Config(home)); strings.Contains(string(b), "trayOnly") {
+		t.Fatalf("an unset trayOnly is written: %s", b)
+	}
+	c.TrayOnly = true
+	if err := SaveConfig(home, c); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := LoadConfig(home); err != nil || !c.TrayOnly {
+		t.Fatalf("trayOnly round trip: %+v %v", c, err)
+	}
+	os.WriteFile(paths.Config(home), []byte(`{"app":true}`), 0o600)
+	if c, _ := LoadConfig(home); c.TrayOnly {
+		t.Fatal("a config without trayOnly is tray-only")
 	}
 }
 

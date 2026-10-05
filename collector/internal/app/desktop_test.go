@@ -42,6 +42,8 @@ type recUI struct {
 	menu    []tray.Item
 	panel   tray.PanelState
 	popup   []tray.PanelLine
+	window  []tray.PanelLine
+	shows   int
 	draws   int
 	answer  bool
 	asked   []string
@@ -68,6 +70,12 @@ func (u *recUI) SetPopup(lines []tray.PanelLine) {
 	u.popup = slices.Clone(lines)
 	u.mu.Unlock()
 }
+func (u *recUI) SetWindow(lines []tray.PanelLine) {
+	u.mu.Lock()
+	u.window = slices.Clone(lines)
+	u.mu.Unlock()
+}
+func (u *recUI) ShowWindow()   { u.mu.Lock(); u.shows++; u.mu.Unlock() }
 func (u *recUI) Debug() string { return "" }
 func (u *recUI) popupRows() []tray.PanelLine {
 	u.mu.Lock()
@@ -355,13 +363,13 @@ func TestInstallAutostartModes(t *testing.T) {
 	if err := a.Install(ctx, InstallOptions{Join: "D0M1-auto", Endpoint: srv.URL, Label: "box", Yes: true}); err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
-	if v := run[a.RunValue]; !strings.HasSuffix(v, `" --home `+winArg(a.Home)+` app`) {
+	if v := run[a.RunValue]; !strings.HasSuffix(v, `" --home `+winArg(a.Home)+` app --minimized`) {
 		t.Fatalf("Run value %q", v)
 	}
 	if o := tasks.tasks[a.TaskName]; !o.App || !slices.Equal(o.TaskArgs(), []string{"--home", a.Home, "app", "--watchdog"}) {
 		t.Fatalf("watchdog %+v", o)
 	}
-	if len(spawned) != 1 || spawned[0][len(spawned[0])-1] != "app" || instance.Stopped(a.Home) {
+	if len(spawned) != 1 || !slices.Equal(spawned[0][len(spawned[0])-2:], []string{"app", "--minimized"}) || instance.Stopped(a.Home) {
 		t.Fatalf("app not started (or still marked stopped): %q", spawned)
 	}
 	if len(path.dirs) != 1 {

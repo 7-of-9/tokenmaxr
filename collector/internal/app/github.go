@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/scan"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
-	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
 // GitHubLoginUI shows the GitHub sign-in's steps: the CLI prints them, the
@@ -48,6 +48,10 @@ type GitHubLoginResult struct {
 	NewFleet bool
 	// Rehash: the machine adopted the fleet's key; its history is re-read.
 	Rehash bool
+	// Shared: the sign-in is shared with the fleet's other machines through
+	// the server; Escrowed: that server keeps the fleet key, so whoever runs
+	// it could read the sign-in.
+	Shared, Escrowed bool
 }
 
 // githubWait bounds each wait for the user on GitHub.
@@ -97,7 +101,7 @@ func sleepOrDone(ctx context.Context, d time.Duration) error {
 func (a *App) open(u string) {
 	open := a.OpenURL
 	if open == nil {
-		open = tray.Open
+		open = openBrowser
 	}
 	_ = open(u)
 }
@@ -129,7 +133,7 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	var g ghpub.Guide
 	opened := map[string]bool{}
 	for {
-		if g, err = ghpub.Discover(ctx, c, buildinfo.GitHubAppSlug, buildinfo.GitHubTemplateRepo); err != nil {
+		if g, err = ghpub.Discover(ctx, c, buildinfo.GitHubAppSlug, githubAppID(), buildinfo.GitHubTemplateRepo); err != nil {
 			return res, err
 		}
 		if g.Ready() {
@@ -191,7 +195,9 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	if cfg.GitHub != nil {
 		gh.Label, gh.PublishEveryMinutes, gh.NoQuota = cfg.GitHub.Label, cfg.GitHub.PublishEveryMinutes, cfg.GitHub.NoQuota
 		gh.ShowCountry, gh.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
+		gh.ShareWithFleet = cfg.GitHub.ShareWithFleet
 	}
+	cfg.GitHubFleetOptOut = false // its own sign-in now; a later sign-out opts out again
 	if label = strings.TrimSpace(label); label != "" {
 		gh.Label = label
 	}
@@ -232,6 +238,14 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	if u, err := c.PagesURL(ctx, res.Repo); err == nil {
 		res.PagesURL, st.GitHub.PagesURL = u, u
 	}
+	if serverOn(&cfg, sec) && gh.SharesWithFleet() {
+		// The fleet's other machines publish with this sign-in too.
+		a.shareGitHub(ctx, &cfg, sec, st, false)
+		res.Shared, res.Escrowed = st.GitHub.Fleet.LastError == "", st.GitHub.Fleet.Escrowed
+		if !res.Shared {
+			ui.Progress("Could not share the sign-in with your other machines yet (" + st.GitHub.Fleet.LastError + "); it is retried automatically")
+		}
+	}
 	if err := store.SaveState(a.Home, st); err != nil {
 		return res, err
 	}
@@ -241,6 +255,8 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 
 // GitHubLogout stops publishing to GitHub on this machine: the token and the
 // GitHub settings are removed (the repository and its data stay on GitHub).
+// The machine no longer adopts the fleet's shared sign-in, and a sign-in it
+// shared with the fleet is withdrawn from the server.
 func (a *App) GitHubLogout() error {
 	lk, err := lock.Acquire(paths.Lock(a.Home), githubLockWait)
 	if err != nil {
@@ -259,8 +275,20 @@ func (a *App) GitHubLogout() error {
 	if err != nil {
 		return err
 	}
-	cfg.GitHub = nil
-	return store.SaveConfig(a.Home, cfg)
+	cfg.GitHub, cfg.GitHubFleetOptOut = nil, true
+	if err := store.SaveConfig(a.Home, cfg); err != nil {
+		return err
+	}
+	st, err := store.LoadState(a.Home)
+	if err != nil {
+		return err
+	}
+	if st.GitHub.Fleet.Shared == "" || !fleetReach(&cfg, sec) {
+		return nil // nothing shared (uploads switched off still reach the server)
+	}
+	// A failure keeps it recorded: the tick withdraws it later.
+	a.unshareGitHub(context.Background(), &cfg, sec, st)
+	return store.SaveState(a.Home, st)
 }
 
 // githubEnabled reports whether this machine publishes to GitHub.
@@ -318,7 +346,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	refreshMeta := st.GitHub.LastPublish.IsZero() || now.Sub(st.GitHub.LastPublish) >= 24*time.Hour
 	changed, err := ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
 	if err != nil {
-		st.GitHub.LastError = githubErrorText(err)
+		st.GitHub.LastError = publishErrorText(cfg, sec, err)
 		a.Log.Printf("github: publish: %s", st.GitHub.LastError)
 		return
 	}
@@ -342,7 +370,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 			st.GitHub.PagesURL = u
 		}
 	}
-	a.publishSite(parent, c, cfg, st, now, force)
+	a.publishSite(parent, c, cfg, sec, st, now, force)
 }
 
 // siteBuild is the dashboard this collector carries (replaced in tests).
@@ -357,7 +385,7 @@ const siteCheckEvery = 24 * time.Hour
 // follows tokenmaxr releases instead of keeping the dashboard its template
 // had. Data and every other path are left alone; a failure is recorded and
 // retried with the next publish.
-func (a *App) publishSite(ctx context.Context, c *ghapi.Client, cfg *store.Config, st *store.State, now time.Time, force bool) {
+func (a *App) publishSite(ctx context.Context, c *ghapi.Client, cfg *store.Config, sec store.Secrets, st *store.State, now time.Time, force bool) {
 	v, files, err := siteBuild()
 	if err != nil {
 		a.Log.Printf("github: dashboard: %v", err)
@@ -370,7 +398,7 @@ func (a *App) publishSite(ctx context.Context, c *ghapi.Client, cfg *store.Confi
 	defer cancel()
 	updated, err := ghpub.PublishSite(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), v, files)
 	if err != nil {
-		st.GitHub.LastError = "dashboard update: " + githubErrorText(err)
+		st.GitHub.LastError = "dashboard update: " + publishErrorText(cfg, sec, err)
 		a.Log.Printf("github: %s", st.GitHub.LastError)
 		return
 	}
@@ -426,9 +454,25 @@ func githubErrorText(err error) string {
 	case http.StatusUnauthorized:
 		return "GitHub sign-in is no longer valid: sign in again"
 	case http.StatusForbidden, http.StatusNotFound:
-		return "the tokenmaxor App cannot write to the repository: check it is installed with access to it"
+		return "the " + buildinfo.GitHubAppSlug + " App cannot write to the repository: check it is installed with access to it"
 	}
 	return fmt.Sprint(err)
+}
+
+// githubAppID is buildinfo.GitHubAppID as a number (0 when unset: match by slug).
+func githubAppID() int64 {
+	id, _ := strconv.ParseInt(buildinfo.GitHubAppID, 10, 64)
+	return id
+}
+
+// publishErrorText is githubErrorText for a publish: a sign-in adopted from
+// the fleet that GitHub refuses is renewed from the server with the next
+// poll, once the machine that shared it signs in again.
+func publishErrorText(cfg *store.Config, sec store.Secrets, err error) string {
+	if cfg.GitHub.Adopted && githubAuthFailed(err) {
+		return "GitHub refused the sign-in shared by " + sec.GitHub.Login + ": sign in again on that machine (this one takes the new sign-in within the hour)"
+	}
+	return githubErrorText(err)
 }
 
 // serverOn reports whether this machine uploads to a server: enrolled, and

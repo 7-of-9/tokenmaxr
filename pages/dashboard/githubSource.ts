@@ -10,13 +10,18 @@
 //
 // Account history (account-usage.json: provider account totals per UTC day, and each machine's local tokens per
 // UTC day) is reconciled exactly as the API reconciles it (accountUsage.ts, a port of api/src/lib/account-usage.js).
+//
+// The owner's plan limits (the Agents page) come from each machine's owner.json, encrypted for the owner and
+// decrypted in the owner's browser (owner.ts); a page that is not unlocked reads none of them.
 import {
   ACCOUNT_LEDGER_VERSION, datesBetween, reconcileAccountUsage, surroundingDates,
   type AccountSnapshot, type LedgerDay, type LedgerEntry,
 } from './accountUsage.ts'
+import { LimitsDenied, type LimitRow } from '../../src/components/agents/limits.ts'
 import type { UsageSource } from '../../src/components/agents/source.ts'
 import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse } from '../../src/components/agents/types.ts'
 import type { UsageTransfer } from '../../src/components/agents/usageResponse.ts'
+import { decryptOwnerFile, mergeLimitRows, OWNER_FILE } from './owner.ts'
 
 const PROVIDERS: Provider[] = ['anthropic', 'openai', 'xai', 'cursor', 'google']
 /** Column order of schema 1 files, which some early collectors wrote without "cols". */
@@ -376,21 +381,6 @@ export function buildUsage(published: Published, now: Date, options: BuildOption
 
 // ---- Loading ----
 
-/** A published quota meter (quota.json), with the machine that read it. */
-export interface PublishedMeter {
-  machine: string
-  provider: string
-  source: string
-  acct?: string
-  window: string
-  scope?: string
-  plan?: string
-  usedPercent?: number
-  resetsAt?: string
-  observedAt: string
-  status?: string
-}
-
 type Fetch = typeof fetch
 
 /** The machines listed in the index, each with its listed files. */
@@ -405,18 +395,20 @@ export interface GithubSourceOptions {
   base?: string
   fetch?: Fetch
   now?: () => Date
+  /** The owner key while the page is unlocked (owner.ts), else null. It only ever decrypts: no request carries it. */
+  ownerKey?: () => CryptoKey | null | Promise<CryptoKey | null>
 }
 
 export type GithubSource = UsageSource & {
   fetchIndex(signal?: AbortSignal): Promise<IndexFile>
-  fetchMeters(signal?: AbortSignal): Promise<PublishedMeter[]>
+  fetchLimits(signal: AbortSignal): Promise<LimitRow[]>
 }
 
-export function githubSource({ base = '', fetch: get = (...args) => fetch(...args), now = () => new Date() }: GithubSourceOptions = {}): GithubSource {
+export function githubSource({ base = '', fetch: get = (...args) => fetch(...args), now = () => new Date(), ownerKey = () => null }: GithubSourceOptions = {}): GithubSource {
   // The files behind each response, so one machine can be rebuilt exactly from its own rows.
   const behind = new WeakMap<UsageResponse, { published: Published; at: Date }>()
 
-  // Files that may be missing (null): account-usage.json behind an index that cannot list it.
+  // Files that may be missing (null): account-usage.json and owner.json behind an index too old to list them.
   const optional = new Set<string>()
   const read = async (path: string, signal?: AbortSignal, onBytes?: (n: number) => void): Promise<unknown> => {
     const response = await get(base + path, { cache: 'no-cache', signal, headers: { Accept: 'application/json' } })
@@ -495,17 +487,25 @@ export function githubSource({ base = '', fetch: get = (...args) => fetch(...arg
       return buildUsage(source.published, source.at, { machine })
     },
 
-    async fetchMeters(signal) {
-      const meters: PublishedMeter[] = []
-      await Promise.all(listed(await fetchIndex(signal)).filter(m => m.files.includes('quota.json')).map(async ({ id }) => {
-        const quota = await read(`data/machines/${id}/quota.json`, signal)
-        for (const m of isRecord(quota) && Array.isArray(quota.meters) ? quota.meters : []) {
-          if (isRecord(m) && typeof m.provider === 'string' && typeof m.window === 'string' && validTime(m.observedAt)) {
-            meters.push({ ...(m as unknown as PublishedMeter), machine: id })
-          }
-        }
+    // Locked: nothing is read (401, the page's "unlock" gate). Unlocked: every machine's owner file, merged as the
+    // API merges its rows. Files that are there but none of which open for this key: the wrong key (403).
+    async fetchLimits(signal) {
+      const key = await ownerKey()
+      if (!key) throw new LimitsDenied(401)
+      const index = await fetchIndex(signal)
+      // Only a schema 3 index (build-index.mjs since owner files) lists owner.json; under an older one, look.
+      const listsOwner = (index.schema ?? 1) >= 3
+      const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id }) => {
+        const path = `data/machines/${id}/${OWNER_FILE}`
+        if (!listsOwner) optional.add(path)
+        const file = await read(path, signal)
+        return file === null ? null : { id, file }
       }))
-      return meters
+      const present = files.filter(f => f !== null)
+      const rows = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
+      const opened = rows.filter(r => r !== null)
+      if (present.length > 0 && opened.length === 0) throw new LimitsDenied(403)
+      return mergeLimitRows(opened)
     },
   }
 }

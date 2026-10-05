@@ -25,3 +25,7 @@ func AppPriority() { LowPriority() }
 func reexec(exe string, args []string) error {
 	return syscall.Exec(exe, append([]string{exe}, args...), os.Environ())
 }
+
+// allowForeground is a Windows concern: on macOS the Dock brings the app's
+// window to the front.
+func allowForeground() {}

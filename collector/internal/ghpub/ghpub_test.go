@@ -30,7 +30,7 @@ func TestDiscoverGuidesUntilReady(t *testing.T) {
 	ctx := context.Background()
 
 	f.NoInstall = true
-	g, err := Discover(ctx, c, "tokenmaxor", "7-of-9/tokenmaxr-pages")
+	g, err := Discover(ctx, c, "tokenmaxor", 0, "7-of-9/tokenmaxr-pages")
 	if err != nil || g.Ready() || g.Installation != nil || g.User.Login != "octo" {
 		t.Fatalf("not installed: %+v %v", g, err)
 	}
@@ -44,18 +44,25 @@ func TestDiscoverGuidesUntilReady(t *testing.T) {
 	}
 
 	f.NoInstall = false // installed, but the repository is not a tokenmaxr one yet
-	g, _ = Discover(ctx, c, "tokenmaxor", "7-of-9/tokenmaxr-pages")
+	g, _ = Discover(ctx, c, "tokenmaxor", 0, "7-of-9/tokenmaxr-pages")
 	if g.Ready() || g.Installation == nil || !strings.HasPrefix(g.InstallURL, "https://github.com/settings/installations/") {
 		t.Fatalf("installed, unmarked: %+v", g)
 	}
 
 	f.Files[MarkerFile] = `{"tokenmaxr":1}`
-	g, _ = Discover(ctx, c, "tokenmaxor", "7-of-9/tokenmaxr-pages")
+	g, _ = Discover(ctx, c, "tokenmaxor", 0, "7-of-9/tokenmaxr-pages")
 	if !g.Ready() || g.Repo.FullName != "octo/agent-usage" {
 		t.Fatalf("marked repo not found: %+v", g)
 	}
-	if g, _ = Discover(ctx, c, "another-app", "x/y"); g.Installation != nil {
+	if g, _ = Discover(ctx, c, "another-app", 0, "x/y"); g.Installation != nil {
 		t.Fatal("an installation of a different App must not count")
+	}
+	// A renamed App (new slug) is still found by its id.
+	if g, _ = Discover(ctx, c, "tokenmaxr-app", 99, "7-of-9/tokenmaxr-pages"); !g.Ready() {
+		t.Fatalf("renamed App not found by id: %+v", g)
+	}
+	if g, _ = Discover(ctx, c, "tokenmaxr-app", 100, "x/y"); g.Installation != nil {
+		t.Fatal("another App's id must not count")
 	}
 }
 

@@ -1,0 +1,96 @@
+.route-stage {
+  position: relative;
+  width: 100%;
+  min-height: 100%;
+}
+
+.route-stage[data-enter='forward'] {
+  animation: route-in-forward 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.route-stage[data-enter='back'] {
+  animation: route-in-back 0.52s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.route-stage[data-enter='zoom-in'] {
+  animation: route-zoom-in 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.route-stage[data-enter='zoom-out'] {
+  animation: route-zoom-out 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes route-in-forward {
+  from {
+    transform: translate3d(100%, 0, 0);
+    opacity: 0.35;
+    box-shadow: -28px 0 60px -18px rgba(0, 255, 65, 0.28);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(0, 255, 65, 0);
+  }
+}
+
+@keyframes route-in-back {
+  from {
+    transform: translate3d(-100%, 0, 0);
+    opacity: 0.35;
+    box-shadow: 28px 0 60px -18px rgba(0, 255, 65, 0.28);
+  }
+
+  to {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(0, 255, 65, 0);
+  }
+}
+
+@keyframes route-zoom-in {
+  from {
+    transform: scale(0.42);
+    opacity: 0.2;
+    filter: blur(12px);
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes route-zoom-out {
+  from {
+    transform: scale(1.38);
+    opacity: 0.22;
+    filter: blur(10px);
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-stage[data-enter='forward'],
+  .route-stage[data-enter='back'],
+  .route-stage[data-enter='zoom-in'],
+  .route-stage[data-enter='zoom-out'] {
+    animation: route-in-fade 0.2s ease both;
+  }
+}
+
+@keyframes route-in-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

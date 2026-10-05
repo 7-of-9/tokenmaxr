@@ -9,6 +9,12 @@
 // sheet: on Windows menu_windows.go and popup_windows.go, on macOS
 // menu_darwin.go and popup_darwin.go. Both paint with the one sheet their
 // platform already uses for the pinned panel.
+//
+// In window mode (the default) the app also has a main window with the
+// popup's rows and actions, so it is easy to find: a normal window with a
+// taskbar button on Windows (window_windows.go), a Dock icon and window on
+// macOS (window_darwin.go). Tray-only mode (config.json "trayOnly") has
+// neither, as before.
 package ui
 
 import (
@@ -37,13 +43,21 @@ type Handler struct {
 	// corner in the platform's screen coordinates), on its own goroutine.
 	// Its × is Click(tray.ActUnpin).
 	Moved func(x, y int)
+	// Window gives the app its main window: a taskbar button on Windows, a
+	// Dock icon on macOS (false: tray only). Minimized starts it minimized
+	// on the taskbar (macOS: hidden, with its Dock icon).
+	Window    bool
+	Minimized bool
+	// Shown runs when the main window comes on screen (true) or is
+	// minimized or hidden, on its own goroutine.
+	Shown func(visible bool)
 }
 
 // Run shows the icon until Quit. Call it from the main goroutine: systray
 // keeps the main thread for the OS event loop.
 func Run(h Handler) {
 	r := &renderer{h: h, icons: map[tray.Color][]byte{}}
-	setAccessory()
+	setActivation(h.Window)
 	setupClicks(r)
 	systray.Run(func() {
 		if h.Opened != nil {
@@ -52,6 +66,9 @@ func Run(h Handler) {
 					h.Opened()
 				}
 			}()
+		}
+		if h.Window {
+			startWindow(h)
 		}
 		go h.Ready(r)
 	}, nil)
@@ -84,6 +101,9 @@ func (r *renderer) SetIcon(c tray.Color) {
 	}
 	systray.SetIcon(b)
 	r.icon, r.drawn = c, true
+	if r.h.Window {
+		setWindowIcon(c)
+	}
 }
 
 func (r *renderer) SetTooltip(tip string) {
@@ -114,6 +134,21 @@ func (r *renderer) SetMenu(items []tray.Item) {
 // SetPopup is the click popup's rows.
 func (r *renderer) SetPopup(lines []tray.PanelLine) { setPopupLines(lines, r.h) }
 
+// SetWindow is the main window's rows (window_*.go); tray-only mode has no
+// window.
+func (r *renderer) SetWindow(lines []tray.PanelLine) {
+	if r.h.Window {
+		setWindowLines(lines, r.h)
+	}
+}
+
+// ShowWindow restores the main window and brings it to the front.
+func (r *renderer) ShowWindow() {
+	if r.h.Window {
+		showMainWindow()
+	}
+}
+
 func (r *renderer) Confirm(question string) bool { return confirm(question) }
 
 // Debug is the windows' state for app.dump.
@@ -121,5 +156,10 @@ func (r *renderer) Debug() string {
 	var b strings.Builder
 	b.WriteString("click opens: " + clickOpens + "\n")
 	b.WriteString(debugWindows())
+	if r.h.Window {
+		b.WriteString(windowDebug())
+	} else {
+		b.WriteString("main window: none (tray only)\n")
+	}
 	return b.String()
 }

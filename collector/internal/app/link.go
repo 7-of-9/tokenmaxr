@@ -17,6 +17,10 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
+// openBrowser opens a URL in the default browser (tests replace it, so no
+// test ever opens a real browser tab).
+var openBrowser = tray.Open
+
 // linkWait is how long a first install waits for the owner's browser.
 var linkWait = 15 * time.Minute
 
@@ -77,7 +81,7 @@ func (a *App) linkJoin(ctx context.Context, endpoint string) (string, error) {
 	a.printf("Opening your browser to add this machine (sign in as the owner if asked):\n  %s\n", u)
 	open := a.OpenURL
 	if open == nil {
-		open = tray.Open
+		open = openBrowser
 	}
 	if err := open(u); err != nil {
 		a.printf("could not open a browser (%v): open the link above\n", err)

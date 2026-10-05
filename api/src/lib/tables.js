@@ -11,10 +11,13 @@
 //
 // AGENTS_TABLE_PREFIX (letters/digits) isolates tests: tables become
 // <prefix><name> and the blob container <prefix>prompts, both created lazily.
+// Tables in CREATED_ON_USE are created lazily without a prefix too, so a
+// table added after production was provisioned needs no manual step.
 import { TableClient, TableServiceClient, odata } from '@azure/data-tables'
 import { BlobServiceClient } from '@azure/storage-blob'
 
-export const TABLES = ['events', 'eventindex', 'rollups', 'dirtydays', 'machines', 'invites', 'accounts', 'prompts']
+export const TABLES = ['events', 'eventindex', 'rollups', 'dirtydays', 'machines', 'invites', 'accounts', 'prompts', 'fleetsecrets']
+export const CREATED_ON_USE = new Set(['fleetsecrets'])
 export const PROMPTS_CONTAINER = 'prompts'
 
 export function statusOf(err) {
@@ -72,8 +75,11 @@ export function azureStore({ connectionString, prefix } = {}) {
     let entry = clients.get(full)
     if (!entry) {
       const client = TableClient.fromConnectionString(connectionString, full)
-      const ready = lazyCreate ? client.createTable().catch((err) => {
-        if (!isStatus(err, 409)) throw err
+      const ready = lazyCreate || CREATED_ON_USE.has(name) ? client.createTable().catch((err) => {
+        if (isStatus(err, 409)) return
+        // Not cached: the next call tries to create it again.
+        clients.delete(full)
+        throw err
       }) : Promise.resolve()
       entry = { client, ready }
       clients.set(full, entry)

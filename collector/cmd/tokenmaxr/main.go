@@ -40,10 +40,13 @@ var buildTime = ""
 const usage = `usage: tokenmaxr [--home DIR] [<command> [flags]]
 
 commands:
-  app                 the desktop app: tray icon / menu-bar item and the
-                      collection loop in one process (the default with no
-                      command on a desktop); a second start shows the first.
-                      On a machine that is not set up it installs first.
+  app [--minimized]   the desktop app: its window (taskbar / Dock), the tray
+                      icon / menu-bar item and the collection loop in one
+                      process (the default with no command on a desktop); a
+                      second start shows the first. --minimized starts the
+                      window minimized (login does). Settings has "Run only in
+                      the system tray / menu bar". On a machine that is not
+                      set up it installs first.
   install [--endpoint URL|off] [--join CODE] [--label NAME] [--yes]
           [--no-fix-config] [--no-autostart] [--no-prompts] [--no-app]
                       copy the binaries, start the app and keep it running at
@@ -114,6 +117,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		noPrompts   = fs.Bool("no-prompts", false, "do not capture prompt text")
 		noApp       = fs.Bool("no-app", false, "headless: no desktop app, a scheduled tick every minute")
 		watchdog    = fs.Bool("watchdog", false, "started by the Windows watchdog task (app)")
+		minimized   = fs.Bool("minimized", false, "start the window minimized (app; what login runs)")
 		since       = fs.String("since", "", "only events at or after DATE (YYYY-MM-DD, local) or RFC 3339 TS")
 		until       = fs.String("until", "", "only events at or before DATE or TS")
 		dryRun      = fs.Bool("dry-run", false, "required for scan")
@@ -121,7 +125,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		purge       = fs.Bool("purge", false, "also delete the state directory")
 	)
 	allowed := map[string][]string{
-		"app":       {"watchdog"},
+		"app":       {"watchdog", "minimized"},
 		"install":   {"join", "endpoint", "label", "yes", "no-fix-config", "no-autostart", "no-prompts", "no-app"},
 		"run":       {},
 		"sync-now":  {"since"},
@@ -214,7 +218,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if note != "" {
 			fmt.Fprintln(stderr, note)
 		}
-		err = a.Desktop(ctx, app.DesktopOptions{Watchdog: *watchdog, UI: ui})
+		err = a.Desktop(ctx, app.DesktopOptions{Watchdog: *watchdog, Minimized: *minimized, UI: ui})
 	case "install":
 		if err = a.OpenLog(nil); err == nil {
 			err = a.Install(ctx, app.InstallOptions{

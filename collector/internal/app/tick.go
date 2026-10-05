@@ -308,6 +308,11 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 
 	}
 
+	// The fleet's GitHub sign-in, through the server: shared from the machine
+	// that signed in, adopted (or renewed, or dropped) by the others. A newly
+	// adopted sign-in publishes from the next tick, after its rollup rebuild.
+	a.fleetGitHub(ctx, &cfg, &sec, st)
+
 	// The GitHub publisher: daily aggregates and quota meters, when due.
 	if ru != nil {
 		progress("publishing", upload.Progress{})

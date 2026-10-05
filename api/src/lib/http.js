@@ -21,16 +21,21 @@ export function lowerHeaders(entries) {
 
 // readBody: async () => string | null, called only after the length check.
 export async function runHandler(handler, { method, headers, query, params, readBody }, ctx) {
+  // The answers made here carry the handler's responseHeaders (optional) too.
+  const fail = (status, message) => {
+    const r = error(status, message)
+    return { ...r, headers: { ...r.headers, ...handler.responseHeaders } }
+  }
   const len = Number(headers['content-length'] || 0)
-  if (len > MAX_BODY_BYTES) return error(413, 'body too large')
+  if (len > MAX_BODY_BYTES) return fail(413, 'body too large')
   const rawBody = method === 'GET' || method === 'HEAD' ? null : await readBody()
   let body = null
   if (rawBody != null && rawBody !== '') {
-    if (Buffer.byteLength(rawBody, 'utf8') > MAX_BODY_BYTES) return error(413, 'body too large')
+    if (Buffer.byteLength(rawBody, 'utf8') > MAX_BODY_BYTES) return fail(413, 'body too large')
     try {
       body = JSON.parse(rawBody)
     } catch {
-      return error(400, 'invalid JSON')
+      return fail(400, 'invalid JSON')
     }
   }
   try {
@@ -38,6 +43,6 @@ export async function runHandler(handler, { method, headers, query, params, read
   } catch (err) {
     // Never log request bodies: they can hold prompt text.
     console.error(`[agents-api] ${method} failed: ${err?.name || 'Error'} ${err?.statusCode || ''} ${err?.message || ''}`)
-    return error(503, 'temporarily unavailable')
+    return fail(503, 'temporarily unavailable')
   }
 }

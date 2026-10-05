@@ -18,6 +18,9 @@ const (
 	ActQuitNow
 	// ActSettings opens the settings page (destinations, label).
 	ActSettings
+	// ActGitHubDashboard opens the GitHub Pages dashboard of a machine that
+	// also sends to a server (ActDashboard opens the server's).
+	ActGitHubDashboard
 )
 
 // Item is one menu entry. Stable keys identify providers as recency changes their order.
@@ -69,6 +72,7 @@ func Menu(v View) []Item {
 	return append(items,
 		Item{Key: "sep-actions", Separator: true},
 		Item{Key: "dashboard", Title: "Open dashboard", Action: ActDashboard, Hidden: v.Dashboard == ""},
+		Item{Key: "github-dashboard", Title: "Open GitHub dashboard", Action: ActGitHubDashboard, Hidden: v.GitHubDashboard == ""},
 		pin,
 		sync,
 		Item{Key: "settings", Title: "Settings…", Action: ActSettings},
@@ -88,6 +92,12 @@ type UI interface {
 	SetPanel(p PanelState)
 	// SetPopup is the click popup's rows (Popup); an open popup redraws.
 	SetPopup(lines []PanelLine)
+	// SetWindow is the main window's rows (Window); the window redraws.
+	// Tray-only mode has no window and ignores it.
+	SetWindow(lines []PanelLine)
+	// ShowWindow restores the main window and brings it to the front (a
+	// second launch, the Start-menu entry). Tray-only mode has none.
+	ShowWindow()
 	// Debug describes the UI's own state for app.dump (the popup's window
 	// and rows); display text only.
 	Debug() string

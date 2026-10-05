@@ -30,10 +30,12 @@ func (*nativeMenu) set(*renderer, []tray.Item) {}
 
 func setPopupLines(lines []tray.PanelLine, h Handler) { setPopup(lines, h) }
 
-// closeWindows closes the panel and the popup (the app quits).
+// closeWindows closes the panel, the popup and the main window (the app
+// quits).
 func closeWindows() {
 	closePopup()
 	closePanel()
+	closeMainWindow()
 }
 
 func debugWindows() string { return popupDebug() }

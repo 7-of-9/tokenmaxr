@@ -69,6 +69,9 @@ type App struct {
 		Add(dir string) (hint string, err error)
 		Remove(dir string) error
 	}
+	// StartMenu makes the Windows Start-menu entry (tests pass fakes); nil
+	// uses the shell's, for the default home only.
+	StartMenu StartMenu
 	// InApp is set while this process is the desktop app.
 	InApp bool
 	// OpenURL opens the browser for a first install's link (tests); nil is

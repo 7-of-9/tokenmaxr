@@ -66,11 +66,23 @@ func NewClient(endpoint, token, version string) *Client {
 }
 
 func (c *Client) post(ctx context.Context, path string, body []byte, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+path, bytes.NewReader(body))
+	return c.do(ctx, http.MethodPost, path, body, out)
+}
+
+// do sends one request (a JSON body unless body is nil) and decodes a 2xx
+// response into out (nil: ignored).
+func (c *Client) do(ctx context.Context, method, path string, body []byte, out any) error {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.Endpoint+path, rd)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("User-Agent", buildinfo.Product+"/"+c.Version)
 	if c.Token != "" {
 		req.Header.Set(TokenHeader, c.Token)
@@ -220,4 +232,63 @@ func (c *Client) Invite(ctx context.Context) (model.InviteResponse, error) {
 		err = errors.New("invite response is missing the invite")
 	}
 	return out, err
+}
+
+// FleetGitHub is the fleet's shared GitHub sign-in as the server keeps it
+// (SPEC "GET /api/fleet/github"): Blob is opaque to the server, sealed by
+// the collectors with the fleet key (internal/fleetshare); By is the
+// server machine id that shared it.
+type FleetGitHub struct {
+	Blob      string    `json:"blob"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	By        string    `json:"by"`
+}
+
+const fleetGitHubPath = "/api/fleet/github"
+
+// GetFleetGitHub returns the fleet's shared GitHub sign-in, or nil when
+// there is none (404).
+func (c *Client) GetFleetGitHub(ctx context.Context) (*FleetGitHub, error) {
+	var out FleetGitHub
+	err := c.do(ctx, http.MethodGet, fleetGitHubPath, nil, &out)
+	if Code(err) == http.StatusNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if out.Blob == "" {
+		return nil, errors.New("fleet sign-in response has no blob")
+	}
+	return &out, nil
+}
+
+// FleetGitHubPut is the server's answer to a share.
+type FleetGitHubPut struct {
+	UpdatedAt time.Time `json:"updatedAt"`
+	// Escrowed: the server keeps the fleet key (SPEC "Linking a machine"),
+	// so whoever runs it could open the share.
+	Escrowed bool `json:"escrowed"`
+}
+
+// PutFleetGitHub shares this machine's sealed GitHub sign-in with the fleet,
+// replacing any other.
+func (c *Client) PutFleetGitHub(ctx context.Context, blob string) (FleetGitHubPut, error) {
+	var out FleetGitHubPut
+	body, err := json.Marshal(map[string]string{"blob": blob})
+	if err != nil {
+		return out, err
+	}
+	err = c.do(ctx, http.MethodPut, fleetGitHubPath, body, &out)
+	return out, err
+}
+
+// DeleteFleetGitHub withdraws the fleet's shared GitHub sign-in (deleting
+// one that is gone is not an error).
+func (c *Client) DeleteFleetGitHub(ctx context.Context) error {
+	err := c.do(ctx, http.MethodDelete, fleetGitHubPath, nil, nil)
+	if Code(err) == http.StatusNotFound {
+		return nil
+	}
+	return err
 }

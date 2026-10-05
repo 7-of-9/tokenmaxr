@@ -25,6 +25,7 @@ func TestDefaultsMatchReleaseJSON(t *testing.T) {
 		"downloadBase":       DownloadBase,
 		"releasePublicKey":   ReleasePublicKey,
 		"githubAppSlug":      GitHubAppSlug,
+		"githubAppId":        GitHubAppID,
 		"githubClientId":     GitHubClientID,
 		"githubTemplateRepo": GitHubTemplateRepo,
 	}

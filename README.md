@@ -16,7 +16,10 @@ into a dashboard, the same one [d0m1.com/tokens](https://d0m1.com/tokens) runs:
   records;
 - a detail view: providers, total/effective/output tokens, API-equivalent cost
   per model, tokens over time, per machine;
-- per-machine views, and your plans' weekly quota meters.
+- per-machine views.
+
+Visitors see exactly what d0m1.com/tokens shows a signed-out visitor: the
+Overview and Detail tabs, nothing else.
 
 Supported tools: **Claude Code**, **OpenAI Codex CLI**, **Grok CLI**, **Cursor**
 and **Gemini CLI**.
@@ -54,9 +57,11 @@ Prefer a terminal? `tokenmaxr github login` does the same three steps.
 
 ## More machines
 
-Install tokenmaxr on each machine and sign in with the same GitHub account. Every
-machine publishes into its own folder of the same repository, and the
-dashboard adds them up. Machines share a *fleet key* (kept in the repository's
+Install tokenmaxr on each machine and sign in with the same GitHub account
+(or, if your machines also send to your own server, sign in on one of them:
+the others take that sign-in over by themselves, see below). Every machine
+publishes into its own folder of the same repository, and the dashboard adds
+them up in your browser; the machines never talk to each other. Machines share a *fleet key* (kept in the repository's
 Actions variable `TOKENMAXR_FLEET_KEY`, which only collaborators can read), so
 the same AI account gets the same anonymous id on every machine.
 
@@ -92,9 +97,14 @@ so your history is not deleted before it is counted (with a backup;
 
 ## The app
 
-Click the icon for today's numbers per provider (latest event, last 24 hours,
-last 30 days), sync status, the GitHub account and repository you publish to,
-and *Settings…*:
+tokenmaxr has a normal window (a taskbar button on Windows, a Dock icon on
+macOS) and a tray icon / menu-bar item; both show today's numbers per provider
+(latest event, last 24 hours, last 30 days), sync status, the GitHub account
+and repository you publish to, *Open dashboard* and *Settings…*. Closing the
+window keeps tokenmaxr running; *Quit* stops it. Prefer it out of sight?
+Tick *Run only in the system tray / menu bar* in Settings.
+
+Settings:
 
 - **GitHub**: sign in or out, rename this machine on the dashboard, publish
   every 10 minutes to once a day (default 30 minutes), turn quota meters off,
@@ -128,11 +138,17 @@ On Linux there is no tray: add the cron line the installer prints, which runs
 ## Your own server (optional)
 
 tokenmaxr can also send every individual event (and, encrypted, your prompts)
-to a server you run, for a private, finer-grained dashboard. `api/` is that
+to a server you run, for a private, finer-grained dashboard. A machine can do
+both: publish daily totals to GitHub *and* send events to your server (the
+app then offers both dashboards). `api/` is that
 server: Azure Functions with Azure Table Storage, deployable as the managed API
 of an Azure Static Web App, with GitHub sign-in for the owner. Connect a machine
 with `tokenmaxr install --endpoint https://your-server.example` or from the
-settings page; GitHub publishing keeps working alongside it. The server's
+settings page; GitHub publishing keeps working alongside it. Machines of one
+server fleet share a GitHub sign-in: sign in on one and the others adopt it
+(encrypted with the fleet key on its way through your server; note that a
+fleet enrolled through the server's link flow lets the server operator, i.e.
+you, recover that key). The server's
 protocol is in [docs/SPEC.md](docs/SPEC.md). This mode is for people
 comfortable running Azure; the GitHub mode needs none of it.
 

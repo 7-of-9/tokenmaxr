@@ -28,11 +28,13 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/upload"
 )
 
-// fakeAPI is a minimal in-memory /api/enroll + /api/ingest + /api/invite.
+// fakeAPI is a minimal in-memory /api/enroll + /api/ingest + /api/invite +
+// /api/fleet/github.
 type fakeAPI struct {
 	mu          sync.Mutex
 	fingerprint string
-	token       string
+	token       string            // the last enrolled machine's
+	tokens      map[string]string // every enrolled machine's token -> machine id
 	usage       map[string]model.UsageEvent
 	activity    map[string]model.ActivityEvent
 	prompts     map[string]model.PromptRecord
@@ -40,10 +42,45 @@ type fakeAPI struct {
 	ingests     int // ingest requests carrying events
 	lastHB      *model.Heartbeat
 	lastHomes   []string // "homes" of the last heartbeat, read off the raw body
+	// fleetGitHub is the fleet's shared GitHub sign-in (nil: none), stored
+	// as the server does: an opaque blob it never decrypts.
+	fleetGitHub                        *fakeFleetGitHub
+	fleetGets, fleetPuts, fleetDeletes int
+	// fleetEscrowed: the server keeps the fleet key (a fleet linked from
+	// the browser), as PUT reports.
+	fleetEscrowed bool
+}
+
+type fakeFleetGitHub struct {
+	Blob      string    `json:"blob"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	By        string    `json:"by"`
+}
+
+// machine is the enrolled machine whose token r carries ("" for none).
+func (f *fakeAPI) machine(r *http.Request) string {
+	if r.Header.Get("Authorization") != "" {
+		return ""
+	}
+	return f.tokens[r.Header.Get(upload.TokenHeader)]
+}
+
+// revoke rejects every machine token from now on.
+func (f *fakeAPI) revoke() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.token, f.tokens = "revoked", map[string]string{}
+}
+
+// fleetBlobOK is the server's format check (SPEC "PUT /api/fleet/github"):
+// base64 of at most 4096 bytes starting "tmx1". It never decrypts.
+func fleetBlobOK(blob string) bool {
+	b, err := base64.StdEncoding.DecodeString(blob)
+	return err == nil && len(b) <= 4096 && bytes.HasPrefix(b, []byte("tmx1"))
 }
 
 func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
-	f := &fakeAPI{usage: map[string]model.UsageEvent{}, activity: map[string]model.ActivityEvent{}, prompts: map[string]model.PromptRecord{}}
+	f := &fakeAPI{tokens: map[string]string{}, usage: map[string]model.UsageEvent{}, activity: map[string]model.ActivityEvent{}, prompts: map[string]model.PromptRecord{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -58,15 +95,49 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *httptest.Server) {
 			}
 			f.fingerprint = req.KFingerprint
 			f.token = "tok-" + req.Invite
+			f.tokens[f.token] = "m_" + req.Invite
 			json.NewEncoder(w).Encode(model.EnrollResponse{MachineID: "m_" + req.Invite, Token: f.token})
 		case "/api/invite":
-			if r.Header.Get(upload.TokenHeader) != f.token {
+			if f.machine(r) == "" {
 				w.WriteHeader(401)
 				return
 			}
 			json.NewEncoder(w).Encode(model.InviteResponse{Invite: "second", ExpiresAt: time.Now().Add(15 * time.Minute)})
+		case "/api/fleet/github":
+			by := f.machine(r)
+			if by == "" {
+				w.WriteHeader(401)
+				return
+			}
+			w.Header().Set("Cache-Control", "private, no-store")
+			switch r.Method {
+			case http.MethodGet:
+				f.fleetGets++
+				if f.fleetGitHub == nil {
+					w.WriteHeader(404)
+					w.Write([]byte(`{"error":"no fleet GitHub sign-in"}`))
+					return
+				}
+				json.NewEncoder(w).Encode(f.fleetGitHub)
+			case http.MethodPut:
+				var in struct{ Blob string }
+				if json.NewDecoder(r.Body).Decode(&in) != nil || !fleetBlobOK(in.Blob) {
+					w.WriteHeader(400)
+					w.Write([]byte(`{"error":"blob must be base64 of a tmx1 blob up to 4096 bytes"}`))
+					return
+				}
+				f.fleetPuts++
+				f.fleetGitHub = &fakeFleetGitHub{Blob: in.Blob, UpdatedAt: time.Now().UTC(), By: by}
+				json.NewEncoder(w).Encode(map[string]any{"updatedAt": f.fleetGitHub.UpdatedAt, "escrowed": f.fleetEscrowed})
+			case http.MethodDelete:
+				f.fleetDeletes++
+				f.fleetGitHub = nil
+				w.WriteHeader(204)
+			default:
+				w.WriteHeader(405)
+			}
 		case "/api/ingest":
-			if r.Header.Get(upload.TokenHeader) != f.token || r.Header.Get("Authorization") != "" {
+			if f.machine(r) == "" {
 				w.WriteHeader(401)
 				return
 			}
@@ -337,9 +408,7 @@ func TestUnauthorizedPausesUploads(t *testing.T) {
 	if err := a.Install(ctx, InstallOptions{Join: "D0M1-x", Endpoint: srv.URL, Yes: true, NoAutostart: true, NoPrompts: true}); err != nil {
 		t.Fatal(err)
 	}
-	api.mu.Lock()
-	api.token = "revoked"
-	api.mu.Unlock()
+	api.revoke()
 	rep, _ := a.Tick(ctx, TickOptions{})
 	if !rep.Upload.Unauthorized {
 		t.Fatalf("tick: %+v", rep.Upload)

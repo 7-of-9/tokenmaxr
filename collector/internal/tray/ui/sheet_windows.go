@@ -2,8 +2,8 @@
 
 package ui
 
-// The sheet: the dark pane both Windows windows draw, the pinned panel and
-// the click popup, in pure Go (no cgo) with double-buffered GDI in Consolas
+// The sheet: the dark pane every Windows window draws, the pinned panel,
+// the click popup and the main window, in pure Go (no cgo) with double-buffered GDI in Consolas
 // so the model's columns line up. One renderer, so the two look the same:
 // the grey-and-green double border, the status line in green or red, the
 // muted lines, the provider rows with their +value in the accent green,
@@ -64,6 +64,18 @@ var (
 	pGetAsyncKeyState             = user32.NewProc("GetAsyncKeyState")
 	pFindWindowExW                = user32.NewProc("FindWindowExW")
 	pGetWindowThreadProcessId     = user32.NewProc("GetWindowThreadProcessId")
+	pIsIconic                     = user32.NewProc("IsIconic")
+	pIsWindowVisible              = user32.NewProc("IsWindowVisible")
+	pGetWindowPlacement           = user32.NewProc("GetWindowPlacement")
+	pSetWindowPlacement           = user32.NewProc("SetWindowPlacement")
+	pAdjustWindowRectEx           = user32.NewProc("AdjustWindowRectEx")
+	pAdjustWindowRectExForDpi     = user32.NewProc("AdjustWindowRectExForDpi")
+	pCreateIconFromResourceEx     = user32.NewProc("CreateIconFromResourceEx")
+	pDestroyIcon                  = user32.NewProc("DestroyIcon")
+	pSendMessageW                 = user32.NewProc("SendMessageW")
+	pGetSystemMetrics             = user32.NewProc("GetSystemMetrics")
+	pGetSystemMetricsForDpi       = user32.NewProc("GetSystemMetricsForDpi")
+	pGetWindowTextW               = user32.NewProc("GetWindowTextW")
 	pCreateFontW                  = gdi32.NewProc("CreateFontW")
 	pSelectObject                 = gdi32.NewProc("SelectObject")
 	pDeleteObject                 = gdi32.NewProc("DeleteObject")
@@ -84,8 +96,12 @@ var (
 
 const (
 	wsPopup         = 0x80000000
+	wsCaption       = 0x00C00000
+	wsSysMenu       = 0x00080000
+	wsMinimizeBox   = 0x00020000
 	wsExTopmost     = 0x00000008
 	wsExToolWindow  = 0x00000080
+	wsExAppWindow   = 0x00040000
 	wsExLayered     = 0x00080000
 	wsExNoActivate  = 0x08000000
 	csDropShadow    = 0x00020000
@@ -211,10 +227,16 @@ type monitorInfo struct {
 // registerClass registers a window class once (a second call, or a class
 // left by an earlier window thread, is fine).
 func registerClass(name string, proc uintptr) error {
+	return registerClassStyle(name, proc, csDropShadow)
+}
+
+// registerClassStyle registers a window class with its class style (the
+// main window has none: the drop shadow is for the borderless sheets).
+func registerClassStyle(name string, proc uintptr, style uint32) error {
 	inst, _, _ := pGetModuleHandleW.Call(0)
 	class, _ := windows.UTF16PtrFromString(name)
 	arrow, _, _ := pLoadCursorW.Call(0, idcArrow)
-	wc := wndClassEx{Style: csDropShadow, WndProc: proc, Instance: inst, Cursor: arrow, ClassName: class}
+	wc := wndClassEx{Style: style, WndProc: proc, Instance: inst, Cursor: arrow, ClassName: class}
 	wc.Size = uint32(unsafe.Sizeof(wc))
 	if r, _, err := pRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 && err != windows.Errno(errClassExists) {
 		return err
@@ -253,7 +275,9 @@ func dpiAwareThread() uintptr {
 }
 
 // sheet is one window's drawing state. It belongs to the window's thread.
+// noClose leaves out the × (the main window closes from its title bar).
 type sheet struct {
+	noClose   bool
 	dpi       uint32
 	font      uintptr
 	fontLight uintptr // quieter weight for an event older than an hour
@@ -356,7 +380,7 @@ func (s *sheet) measure(hwnd uintptr, lines, wider []tray.PanelLine) bool {
 			continue
 		}
 		w := textExtent(hdc, l.Text).CX
-		if i == 0 {
+		if i == 0 && !s.noClose {
 			w += s.scale(10) + s.closeSize // the × beside the status line
 		}
 		textW = max(textW, w)
@@ -461,9 +485,11 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 		}
 		y += rowH
 	}
-	c := s.closeRect()
-	xs := textExtent(mem, "×")
-	textOut(mem, c.Left+(c.Right-c.Left-xs.CX)/2, c.Top+(c.Bottom-c.Top-xs.CY)/2, "×", colMuted)
+	if !s.noClose {
+		c := s.closeRect()
+		xs := textExtent(mem, "×")
+		textOut(mem, c.Left+(c.Right-c.Left-xs.CX)/2, c.Top+(c.Bottom-c.Top-xs.CY)/2, "×", colMuted)
+	}
 
 	pBitBlt.Call(hdc, 0, 0, uintptr(w), uintptr(h), mem, 0, 0, srcCopy)
 	pSelectObject.Call(mem, oldFont)
@@ -497,6 +523,9 @@ func windowFlags(hwnd uintptr) string {
 		}
 	}
 	add(st&wsPopup != 0, "popup")
+	add(st&wsCaption == wsCaption, "caption")
+	add(st&wsMinimizeBox != 0, "minimize box")
+	add(ex&wsExAppWindow != 0, "app window")
 	add(ex&wsExTopmost != 0, "topmost")
 	add(ex&wsExToolWindow != 0, "tool window")
 	add(ex&wsExLayered != 0, "layered")

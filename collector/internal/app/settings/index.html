@@ -23,6 +23,8 @@
           <input id="gh-new-label" maxlength="64" autocomplete="off" placeholder="e.g. laptop (blank: a random name, never the hostname)">
         </label>
         <button class="primary" id="gh-signin">Sign in with GitHub</button>
+        <p class="hint" id="gh-off-fleet" hidden></p>
+        <p class="error" id="gh-off-fleet-error" hidden></p>
       </div>
 
       <div id="gh-login" hidden>
@@ -43,11 +45,13 @@
 
       <div id="gh-on" hidden>
         <dl>
-          <dt>Repository</dt><dd><a id="gh-repo" target="_blank" rel="noopener"></a> (signed in as <span id="gh-user"></span>)</dd>
+          <dt>Repository</dt><dd><a id="gh-repo" target="_blank" rel="noopener"></a> (<span id="gh-who"></span>)</dd>
           <dt>Dashboard</dt><dd id="gh-pages"></dd>
           <dt>Last published</dt><dd id="gh-last"></dd>
         </dl>
         <p class="error" id="gh-error" hidden></p>
+        <p class="hint" id="gh-fleet" hidden></p>
+        <p class="error" id="gh-fleet-error" hidden></p>
         <label class="field">Name on the dashboard (public)
           <input id="gh-label" maxlength="64" autocomplete="off">
         </label>
@@ -64,6 +68,7 @@
         <label class="check"><input type="checkbox" id="gh-quota"> Publish quota meters (how much of each plan's weekly limit is used)</label>
         <label class="check"><input type="checkbox" id="gh-country"> Show this machine's country (flag) on the public dashboard</label>
         <label class="check"><input type="checkbox" id="gh-history"> Publish Codex account history (its daily account totals and this machine's tokens per UTC day, which reveal your time zone's offset)</label>
+        <label class="check" id="gh-share-row" hidden><input type="checkbox" id="gh-share" checked> Share this sign-in with my other machines (through your server, encrypted with the fleet key)</label>
         <div class="row">
           <button class="primary" id="gh-save">Save</button>
           <button id="gh-publish">Publish now</button>
@@ -95,6 +100,14 @@
         <button class="primary" id="sv-connect">Connect</button>
         <button class="danger" id="sv-off">Turn the server off</button>
       </div>
+    </section>
+
+    <section class="card" id="app" hidden>
+      <div class="head"><h2>This app</h2></div>
+      <label class="check"><input type="checkbox" id="app-tray"> Run only in the system tray / menu bar</label>
+      <p class="hint" id="app-hint">Off, tokenmaxr also has a window with a taskbar button (Windows) or a Dock icon (macOS). Changing this restarts the app.</p>
+      <p class="error" id="app-error" hidden></p>
+      <p class="step" id="app-restart" hidden>Restarting tokenmaxr… This page stops with it: open Settings… from the app again.</p>
     </section>
 
     <p class="foot" id="foot"></p>

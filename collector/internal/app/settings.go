@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,9 @@ type Settings struct {
 	a *App
 	// changed runs after a change that should publish or upload soon.
 	changed func()
+	// restart, when set (the desktop app with a UI), restarts the app into
+	// the display mode config.json now says (a trayOnly change).
+	restart func()
 
 	mu      sync.Mutex
 	srv     *http.Server
@@ -173,9 +177,10 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			NoQuota             bool
 			ShowCountry         bool
 			ShowAccountHistory  bool
+			ShareWithFleet      *bool // absent: unchanged
 		}
 		if s.decode(w, r, &in) {
-			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.NoQuota, in.ShowCountry, in.ShowAccountHistory))
+			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.NoQuota, in.ShowCountry, in.ShowAccountHistory, in.ShareWithFleet))
 		}
 	case "api/server":
 		var in struct{ Server, Join string }
@@ -189,6 +194,16 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 		s.reply(w, nil, nil)
+	case "api/app":
+		var in struct{ TrayOnly bool }
+		if s.decode(w, r, &in) {
+			restart, err := s.saveAppOptions(in.TrayOnly)
+			s.reply(w, map[string]bool{"ok": err == nil, "restart": restart}, err)
+			if restart {
+				// After the reply: the page learns why it goes quiet.
+				time.AfterFunc(restartDelay, s.restart)
+			}
+		}
 	case "api/sync":
 		if s.changed != nil {
 			s.changed()
@@ -254,6 +269,14 @@ type settingsState struct {
 		LastError           string `json:"lastError,omitempty"`
 		PagesURL            string `json:"pagesUrl,omitempty"`
 		App                 string `json:"app"`
+		// Adopted: signed in through the fleet (the sign-in Login shared).
+		Adopted bool `json:"adopted"`
+		// CanShare: the sign-in is this machine's own and a server carries
+		// it to the fleet; ShareWithFleet is the choice.
+		CanShare       bool   `json:"canShare"`
+		ShareWithFleet bool   `json:"shareWithFleet"`
+		Fleet          string `json:"fleet,omitempty"`
+		FleetError     string `json:"fleetError,omitempty"`
 	} `json:"github"`
 	Server struct {
 		URL        string `json:"url,omitempty"`
@@ -263,6 +286,16 @@ type settingsState struct {
 		LastUpload string `json:"lastUpload,omitempty"`
 		LastError  string `json:"lastError,omitempty"`
 	} `json:"server"`
+	// App is how the desktop app shows itself.
+	App struct {
+		// TrayOnly: no main window, taskbar button or Dock icon.
+		TrayOnly bool `json:"trayOnly"`
+		// CanSwitch: this is the desktop app with a UI, which restarts in
+		// the other mode (headless runs have no UI to switch).
+		CanSwitch bool `json:"canSwitch"`
+		// Tray names the tray: "system tray" or "menu bar".
+		Tray string `json:"tray"`
+	} `json:"app"`
 	Login   *webLogin `json:"login,omitempty"`
 	Connect *webTask  `json:"connect,omitempty"`
 }
@@ -309,6 +342,7 @@ func (s *Settings) state() (settingsState, error) {
 	}
 	st, _ := retryRead(store.LoadState, a.Home)
 	v.Version, v.BuildTime, v.Machine, v.SetUp = a.Version, a.BuildTime, cfg.MachineLabel, sec.HasFleet()
+	v.App.TrayOnly, v.App.CanSwitch, v.App.Tray = cfg.TrayOnly, s.restart != nil, trayName()
 	if k := sec.Key(); k != nil {
 		v.Fleet = fleetShort(k)
 	}
@@ -319,9 +353,23 @@ func (s *Settings) state() (settingsState, error) {
 		g.On, g.Repo, g.Login, g.Label = true, cfg.GitHub.Repo, sec.GitHub.Login, cfg.GitHub.Label
 		g.PublishEveryMinutes, g.NoQuota = int(cfg.GitHub.PublishEvery()/time.Minute), cfg.GitHub.NoQuota
 		g.ShowCountry, g.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
+		g.Adopted = cfg.GitHub.Adopted
+		g.CanShare, g.ShareWithFleet = !g.Adopted && serverOn(&cfg, sec), cfg.GitHub.SharesWithFleet()
+	}
+	g.Fleet = fleetLine(&cfg, sec, st)
+	if g.Adopted {
+		g.Fleet += ". Stop publishing opts this machine out of it."
+	}
+	switch {
+	case g.On || !serverOn(&cfg, sec):
+	case cfg.GitHubFleetOptOut:
+		g.Fleet = "This machine does not take the sign-in your other machines share; signing in here publishes it again."
+	default:
+		g.Fleet = "Or sign in on any of your machines: the others on your server publish with that sign-in too."
 	}
 	if st != nil {
 		g.LastPublish, g.LastError, g.PagesURL = rfc(st.GitHub.LastPublish), st.GitHub.LastError, st.GitHub.PagesURL
+		g.FleetError = st.GitHub.Fleet.LastError
 	}
 	sv := &v.Server
 	sv.URL, sv.Default = cfg.Server(), store.DefaultEndpoint
@@ -417,10 +465,12 @@ func (s *Settings) cancelLogin() {
 	}
 }
 
-// saveGitHubOptions changes the GitHub label, cadence, quota opt-out and
-// the country and account-history opt-ins. A new label or choice is
-// published with the next publish, which is made due now.
-func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCountry, showAccountHistory bool) error {
+// saveGitHubOptions changes the GitHub label, cadence, quota opt-out, the
+// country and account-history opt-ins and (nil: unchanged) whether this
+// machine's own sign-in is shared with the fleet. A new label or choice is
+// published with the next publish, which is made due now; a sharing change
+// reaches the server with the next tick.
+func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCountry, showAccountHistory bool, share *bool) error {
 	a := s.a
 	label = strings.TrimSpace(label)
 	if label != "" {
@@ -455,6 +505,11 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 	cfg.GitHub.ShowCountry = showCountry
 	readHistory := showAccountHistory && !cfg.GitHub.ShowAccountHistory
 	cfg.GitHub.ShowAccountHistory = showAccountHistory
+	reshare := share != nil && *share != cfg.GitHub.SharesWithFleet() && !cfg.GitHub.Adopted
+	if reshare {
+		on := *share
+		cfg.GitHub.ShareWithFleet = &on
+	}
 	if err := store.SaveConfig(a.Home, cfg); err != nil {
 		return err
 	}
@@ -470,6 +525,9 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 	if readHistory {
 		st.AccountHistory.LastAttempt = time.Time{} // read the totals with that publish
 	}
+	if reshare {
+		st.GitHub.Fleet.LastError = "" // share or withdraw with the next tick
+	}
 	if err := store.SaveState(a.Home, st); err != nil {
 		return err
 	}
@@ -478,6 +536,41 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 		s.changed()
 	}
 	return nil
+}
+
+// restartDelay lets the page read the reply before the app restarts.
+var restartDelay = 300 * time.Millisecond
+
+// saveAppOptions saves the display mode: trayOnly runs the app in the
+// tray / menu bar alone. A change restarts the app into it (restart).
+func (s *Settings) saveAppOptions(trayOnly bool) (restart bool, err error) {
+	a := s.a
+	lk, err := lock.Acquire(paths.Lock(a.Home), settingsLockWait)
+	if err != nil {
+		return false, fmt.Errorf("the collector is busy; try again in a minute (%w)", err)
+	}
+	defer lk.Release()
+	cfg, err := store.LoadConfig(a.Home)
+	if err != nil {
+		return false, err
+	}
+	if cfg.TrayOnly == trayOnly {
+		return false, nil
+	}
+	cfg.TrayOnly = trayOnly
+	if err := store.SaveConfig(a.Home, cfg); err != nil {
+		return false, err
+	}
+	a.Log.Printf("settings: tray only %v", trayOnly)
+	return s.restart != nil, nil
+}
+
+// trayName is what the settings page calls the tray.
+func trayName() string {
+	if runtime.GOOS == "darwin" {
+		return "menu bar"
+	}
+	return "system tray"
 }
 
 // settingsLockWait bounds a settings change's wait for a running tick.

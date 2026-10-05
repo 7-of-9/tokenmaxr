@@ -38,8 +38,10 @@ type Fake struct {
 	Deletes int
 	// NoInstall: the user has not installed the App yet.
 	NoInstall bool
-	seq       int
-	AuthSeen  []string
+	// Revoked tokens are refused with 401, like a revoked sign-in.
+	Revoked  map[string]bool
+	seq      int
+	AuthSeen []string
 }
 
 func New() *Fake {
@@ -70,6 +72,10 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.AuthSeen = append(f.AuthSeen, r.Header.Get("Authorization"))
 	body, _ := io.ReadAll(r.Body)
 	js := func(code int, v any) { w.WriteHeader(code); json.NewEncoder(w).Encode(v) }
+	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && f.Revoked[tok] {
+		js(401, map[string]string{"message": "Bad credentials"})
+		return
+	}
 	switch {
 	case r.URL.Path == "/login/device/code":
 		form, _ := url.ParseQuery(string(body))

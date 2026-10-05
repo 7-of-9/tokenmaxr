@@ -8,12 +8,79 @@ package ui
 #include <stdlib.h>
 #include <math.h>
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 #include <stdio.h>
 
-// No Dock icon and no app menu: a menu-bar accessory.
+// Tray only: no Dock icon and no app menu, a menu-bar accessory.
 static void d0m1SetAccessory(void) {
 	[NSApplication sharedApplication];
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
+extern void d0m1WindowReopen(void);
+extern void d0m1WindowQuit(void);
+
+// The app menu's Quit (Cmd-Q) quits as the Quit row does.
+@interface D0m1AppActions : NSObject
+- (void)quitApp:(id)sender;
+@end
+@implementation D0m1AppActions
+- (void)quitApp:(id)sender { d0m1WindowQuit(); }
+@end
+static D0m1AppActions *d0m1Actions;
+
+// A click on the Dock icon (the app "reopened") shows the main window.
+static BOOL d0m1ShouldReopen(id self, SEL _cmd, NSApplication *app, BOOL visible) {
+	d0m1WindowReopen();
+	return NO;
+}
+
+// Window mode: a regular app with a Dock icon (applicationIconImage, set by
+// d0m1SetDockIcon) and an app menu (Hide, Quit with Cmd-Q; Minimize, Close
+// with Cmd-M, Cmd-W). It runs on the main thread before systray starts.
+static void d0m1SetRegular(const char *name) {
+	[NSApplication sharedApplication];
+	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+	NSString *title = [NSString stringWithUTF8String:name ? name : ""];
+	d0m1Actions = [[D0m1AppActions alloc] init];
+	NSMenu *bar = [[NSMenu alloc] init];
+	NSMenuItem *appItem = [[NSMenuItem alloc] init];
+	[bar addItem:appItem];
+	NSMenu *appMenu = [[NSMenu alloc] initWithTitle:title];
+	[appMenu addItemWithTitle:[@"Hide " stringByAppendingString:title] action:@selector(hide:) keyEquivalent:@"h"];
+	[appMenu addItem:[NSMenuItem separatorItem]];
+	NSMenuItem *quit = [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:title] action:@selector(quitApp:) keyEquivalent:@"q"];
+	quit.target = d0m1Actions;
+	appItem.submenu = appMenu;
+	NSMenuItem *winItem = [[NSMenuItem alloc] init];
+	[bar addItem:winItem];
+	NSMenu *winMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+	[winMenu addItemWithTitle:@"Minimize" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+	[winMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
+	winItem.submenu = winMenu;
+	NSApp.mainMenu = bar;
+	NSApp.windowsMenu = winMenu;
+	// fyne.io/systray (v1.12) makes its SystrayAppDelegate the app's
+	// delegate; the Dock's reopen is answered by adding the delegate method
+	// to that class before systray sets it.
+	Class c = objc_lookUpClass("SystrayAppDelegate");
+	if (c) {
+		char types[16];
+		snprintf(types, sizeof types, "%s@:@%s", @encode(BOOL), @encode(BOOL));
+		class_addMethod(c, @selector(applicationShouldHandleReopen:hasVisibleWindows:), (IMP)d0m1ShouldReopen, types);
+	}
+}
+
+// The Dock icon: the status dot (PNG bytes, copied before returning).
+static void d0m1SetDockIcon(const void *png, int n) {
+	if (!png || n <= 0) return;
+	NSData *d = [NSData dataWithBytes:png length:(NSUInteger)n];
+	void (^set)(void) = ^{
+		NSImage *img = [[NSImage alloc] initWithData:d];
+		if (img) NSApp.applicationIconImage = img;
+	};
+	if ([NSThread isMainThread]) set();
+	else dispatch_async(dispatch_get_main_queue(), set);
 }
 
 // A modal Quit / Cancel alert on the main thread; 1 means Quit.
@@ -55,6 +122,11 @@ extern void d0m1PopupKey(int key);
 extern void d0m1PopupResign(void);
 extern void d0m1PopupClosed(void);
 extern void d0m1PopupOutside(void);
+extern int d0m1WindowHover(int y);
+extern void d0m1WindowClick(int y);
+extern void d0m1WindowKey(int key);
+extern void d0m1WindowVisible(int on);
+extern void d0m1WindowResign(void);
 
 int d0m1Pad = 12;
 int d0m1LineH = 0;
@@ -141,11 +213,17 @@ static BOOL d0m1Dragging;
 @property (copy) NSString *spans;
 @property int pad, lineH, ruleH, actionH;
 @property BOOL interactive;
+// owner: 0 the panel or the popup, 1 the main window (its rows call the
+// window's callbacks). flat: square and edgeless (the window frames it).
+@property int owner;
+@property BOOL flat;
 @property NSTrackingArea *track;
 @end
 
 @implementation D0m1SheetView
 - (BOOL)acceptsFirstResponder { return self.interactive; }
+// The main window's rows act on the click that also activates it.
+- (BOOL)acceptsFirstMouse:(NSEvent *)e { return self.owner == 1; }
 - (int)rowH:(int)kind {
 	if (kind == 4) return self.ruleH;
 	if (kind >= 5 && kind <= 7) return self.actionH;
@@ -169,11 +247,16 @@ static BOOL d0m1Dragging;
 }
 - (void)mouseMoved:(NSEvent *)e {
 	if (!self.interactive) return;
-	if (d0m1PopupHover([self yOf:e])) [[NSCursor pointingHandCursor] set];
+	int y = [self yOf:e];
+	int hand = self.owner == 1 ? d0m1WindowHover(y) : d0m1PopupHover(y);
+	if (hand) [[NSCursor pointingHandCursor] set];
 	else [[NSCursor arrowCursor] set];
 }
 - (void)mouseExited:(NSEvent *)e {
-	if (self.interactive) d0m1PopupHover(-1);
+	if (self.interactive) {
+		if (self.owner == 1) d0m1WindowHover(-1);
+		else d0m1PopupHover(-1);
+	}
 	[[NSCursor arrowCursor] set];
 }
 - (void)mouseDown:(NSEvent *)e {
@@ -196,24 +279,30 @@ static BOOL d0m1Dragging;
 	d0m1Dragging = NO;
 }
 - (void)mouseUp:(NSEvent *)e {
-	if (self.interactive) d0m1PopupClick([self yOf:e]);
+	if (!self.interactive) return;
+	if (self.owner == 1) d0m1WindowClick([self yOf:e]);
+	else d0m1PopupClick([self yOf:e]);
 }
 - (void)keyDown:(NSEvent *)e {
 	if (!self.interactive) { [super keyDown:e]; return; }
+	int key = 0;
 	switch (e.keyCode) {
-	case 126: d0m1PopupKey(1); break;          // up
-	case 125: case 48: d0m1PopupKey(2); break; // down, tab
-	case 36: case 76: case 49: d0m1PopupKey(3); break; // return, keypad enter, space
-	case 53: d0m1PopupKey(4); break;          // esc
+	case 126: key = 1; break;                  // up
+	case 125: case 48: key = 2; break;         // down, tab
+	case 36: case 76: case 49: key = 3; break; // return, keypad enter, space
+	case 53: key = 4; break;                   // esc
 	default: break;
 	}
+	if (key == 0) return;
+	if (self.owner == 1) d0m1WindowKey(key);
+	else d0m1PopupKey(key);
 }
 - (void)drawRect:(NSRect)dirty {
 	NSRect b = self.bounds;
-	NSBezierPath *round = [NSBezierPath bezierPathWithRoundedRect:b xRadius:8 yRadius:8];
+	NSBezierPath *round = self.flat ? [NSBezierPath bezierPathWithRect:b] : [NSBezierPath bezierPathWithRoundedRect:b xRadius:8 yRadius:8];
 	[NSGraphicsContext.currentContext saveGraphicsState];
 	[round addClip];
-	[[d0m1RGB(0x0d1410) colorWithAlphaComponent:0.96] setFill];
+	[(self.flat ? d0m1RGB(0x0d1410) : [d0m1RGB(0x0d1410) colorWithAlphaComponent:0.96]) setFill];
 	NSRectFill(b);
 	NSString *text = self.text ?: @"";
 	NSString *kinds = self.kinds ?: @"";
@@ -248,6 +337,7 @@ static BOOL d0m1Dragging;
 		}
 	}
 	[NSGraphicsContext.currentContext restoreGraphicsState];
+	if (self.flat) return;
 	[d0m1RGB(0x196c2e) setStroke];
 	NSBezierPath *edge = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:8 yRadius:8];
 	edge.lineWidth = 1;
@@ -460,6 +550,91 @@ static void d0m1PopupHide(void) {
 	});
 }
 
+// The main window (window mode): a normal titled window with the same sheet
+// view, interactive like the popup's. Closing it hides it (the app keeps
+// collecting; the Dock icon shows it again); Cmd-Q or the Quit row quits.
+@interface D0m1MainDelegate : NSObject <NSWindowDelegate>
+@end
+static NSWindow *d0m1Main;
+static D0m1SheetView *d0m1MainView;
+static D0m1MainDelegate *d0m1MainDel;
+
+@implementation D0m1MainDelegate
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+	[sender orderOut:nil];
+	d0m1WindowVisible(0);
+	return NO;
+}
+- (void)windowDidMiniaturize:(NSNotification *)n { d0m1WindowVisible(0); }
+- (void)windowDidDeminiaturize:(NSNotification *)n { d0m1WindowVisible(1); }
+- (void)windowDidResignKey:(NSNotification *)n { d0m1WindowResign(); }
+@end
+
+// d0m1MainUpdate creates the window (hidden) on first use, draws the rows
+// and fits the window to them, keeping its top edge. front shows it,
+// deminiaturized, as the key window of the active app.
+static void d0m1MainUpdate(const char *title, const char *text, const char *kinds, const char *spans,
+	int pad, int lineH, int ruleH, int actionH, int w, int h, int front) {
+	NSString *ti = [NSString stringWithUTF8String:title ? title : ""];
+	NSString *t = [NSString stringWithUTF8String:text ? text : ""];
+	NSString *k = [NSString stringWithUTF8String:kinds ? kinds : ""];
+	NSString *sp = [NSString stringWithUTF8String:spans ? spans : ""];
+	d0m1OnMain(^{
+		if (!d0m1Main) {
+			d0m1Main = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, w, h)
+				styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable
+				backing:NSBackingStoreBuffered defer:NO];
+			d0m1Main.title = ti;
+			d0m1Main.releasedWhenClosed = NO;
+			d0m1Main.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+			d0m1Main.backgroundColor = d0m1RGB(0x0d1410);
+			d0m1Main.titlebarAppearsTransparent = YES;
+			d0m1Main.acceptsMouseMovedEvents = YES;
+			d0m1MainView = [[D0m1SheetView alloc] initWithFrame:NSMakeRect(0, 0, w, h)];
+			d0m1MainView.interactive = YES;
+			d0m1MainView.owner = 1;
+			d0m1MainView.flat = YES;
+			d0m1MainView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+			d0m1Main.contentView = d0m1MainView;
+			d0m1MainDel = [[D0m1MainDelegate alloc] init];
+			d0m1Main.delegate = d0m1MainDel;
+			[d0m1Main center];
+		}
+		d0m1Fill(d0m1MainView, nil, t, k, sp, pad, lineH, ruleH, actionH, w, h);
+		NSRect content = [d0m1Main contentRectForFrameRect:d0m1Main.frame];
+		if ((int)llround(content.size.width) != w || (int)llround(content.size.height) != h) {
+			NSRect c = NSMakeRect(content.origin.x, NSMaxY(content) - h, w, h);
+			[d0m1Main setFrame:[d0m1Main frameRectForContentRect:c] display:YES];
+		}
+		if (front) {
+			if (d0m1Main.miniaturized) [d0m1Main deminiaturize:nil];
+			[NSApp activateIgnoringOtherApps:YES];
+			[d0m1Main makeKeyAndOrderFront:nil];
+			[d0m1Main makeFirstResponder:d0m1MainView];
+		}
+	});
+}
+
+static void d0m1MainHide(void) {
+	d0m1OnMain(^{
+		[d0m1Main orderOut:nil];
+	});
+}
+
+// The main window's state for app.dump: 1 exists, 2 visible, 4 miniaturized,
+// 8 key.
+static int d0m1MainState(void) {
+	__block int s = 0;
+	d0m1OnMain(^{
+		if (!d0m1Main) return;
+		s = 1;
+		if (d0m1Main.visible) s |= 2;
+		if (d0m1Main.miniaturized) s |= 4;
+		if (d0m1Main.keyWindow) s |= 8;
+	});
+	return s;
+}
+
 // The menu-bar item's frame in y-up points, or the cursor when it has none.
 static void d0m1StatusAnchor(int *x, int *y, int *w, int *h, int *mouse) {
 	__block NSRect f = NSZeroRect;
@@ -534,8 +709,50 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
-// setAccessory runs on the main thread (systray locks it at init).
-func setAccessory() { C.d0m1SetAccessory() }
+// setActivation runs on the main thread (systray locks it at init). Window
+// mode is a regular app: a Dock icon (the status dot), an app menu with
+// Quit (Cmd-Q), and a click on the Dock icon shows the main window. Tray
+// only, it is a menu-bar accessory, as before.
+func setActivation(window bool) {
+	if !window {
+		C.d0m1SetAccessory()
+		return
+	}
+	name := C.CString(tray.WindowTitle)
+	defer C.free(unsafe.Pointer(name))
+	C.d0m1SetRegular(name)
+	setDockIcon(tray.Green)
+}
+
+// setDockIcon draws the Dock icon in c.
+func setDockIcon(c tray.Color) {
+	b := tray.IconPNG(c, 256, dockInset)
+	C.d0m1SetDockIcon(unsafe.Pointer(&b[0]), C.int(len(b)))
+}
+
+// showMainNative draws the main window's rows (creating it, hidden, the
+// first time); front brings it to the front.
+func showMainNative(text, kinds, spans string, m tray.Metrics, w, h int, front bool) {
+	ti, ct, ck, cs := cstr(tray.WindowTitle), cstr(text), cstr(kinds), cstr(spans)
+	defer C.free(unsafe.Pointer(ti))
+	defer C.free(unsafe.Pointer(ct))
+	defer C.free(unsafe.Pointer(ck))
+	defer C.free(unsafe.Pointer(cs))
+	f := 0
+	if front {
+		f = 1
+	}
+	C.d0m1MainUpdate(ti, ct, ck, cs, C.int(m.Pad), C.int(m.LineH), C.int(m.RuleH), C.int(m.ActionH),
+		C.int(w), C.int(h), C.int(f))
+}
+
+func hideMainNative() { C.d0m1MainHide() }
+
+// mainNativeState is the main window as AppKit has it.
+func mainNativeState() (exists, visible, miniaturized, key bool) {
+	s := int(C.d0m1MainState())
+	return s&1 != 0, s&2 != 0, s&4 != 0, s&8 != 0
+}
 
 // confirm is a native NSAlert (called from a click goroutine; the alert
 // itself runs on the main thread).
@@ -580,8 +797,9 @@ func encodeLines(lines []tray.PanelLine) (text, kinds, spans string) {
 }
 
 // sheetBox is the sheet's size. wider only stretches the width (the popup's
-// "copied" and armed-Quit lines), so showing them does not resize it.
-func sheetBox(lines, wider []tray.PanelLine) (text, kinds, spans string, m tray.Metrics, w, h int) {
+// "copied" and armed-Quit lines), so showing them does not resize it. close
+// leaves room for the × beside the first line (not in the main window).
+func sheetBox(lines, wider []tray.PanelLine, close bool) (text, kinds, spans string, m tray.Metrics, w, h int) {
 	m = sheetMetrics()
 	text, kinds, spans = encodeLines(lines)
 	maxW := 0
@@ -591,7 +809,7 @@ func sheetBox(lines, wider []tray.PanelLine) (text, kinds, spans string, m tray.
 				continue
 			}
 			tw := textWidth(l.Text)
-			if i == 0 {
+			if i == 0 && close {
 				tw += 10 + m.LineH // the × beside the status line
 			}
 			if tw > maxW {
@@ -635,7 +853,7 @@ func setPanel(s tray.PanelState, h Handler) {
 	panelShown, panelLast = true, lines
 	panelMu.Unlock()
 
-	text, kinds, spans, m, w, ht := sheetBox(lines, lines)
+	text, kinds, spans, m, w, ht := sheetBox(lines, lines, true)
 	ct, ck, cs := cstr(text), cstr(kinds), cstr(spans)
 	defer C.free(unsafe.Pointer(ct))
 	defer C.free(unsafe.Pointer(ck))

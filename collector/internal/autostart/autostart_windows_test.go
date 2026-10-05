@@ -161,7 +161,7 @@ func realApp(t *testing.T, exe string) {
 		t.Fatalf("mode %s", m)
 	}
 	v, ok, err := hkcuRun{}.Get(o.RunValue)
-	if err != nil || !ok || v != CommandLine(exe, o.AppArgs()) {
+	if err != nil || !ok || v != CommandLine(exe, o.LoginArgs()) {
 		t.Fatalf("Run value %q %v %v", v, ok, err)
 	}
 	xml := queryXML(t, o.Name)

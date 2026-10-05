@@ -41,3 +41,15 @@ func reexec(exe string, args []string) error {
 	}
 	return cmd.Process.Release()
 }
+
+var pAllowSetForegroundWindow = windows.NewLazySystemDLL("user32.dll").NewProc("AllowSetForegroundWindow")
+
+// allowForeground lets the running app bring its window to the front: this
+// process was started by the user (the Start-menu entry, a second launch)
+// and may pass its right to take the foreground on (ASFW_ANY).
+func allowForeground() {
+	if pAllowSetForegroundWindow.Find() == nil {
+		const asfwAny = ^uintptr(0) // (DWORD)-1
+		pAllowSetForegroundWindow.Call(asfwAny)
+	}
+}

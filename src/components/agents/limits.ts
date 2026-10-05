@@ -26,6 +26,17 @@ export interface LimitRow {
   status?: string
 }
 
+/** A source refused the owner's limits: 401 not signed in (or locked), 403 not the owner (or the wrong key). */
+export class LimitsDenied extends Error {
+  readonly status: 401 | 403
+
+  constructor(status: 401 | 403) {
+    super(status === 401 ? 'Sign-in required.' : 'Not the owner.')
+    this.name = 'LimitsDenied'
+    this.status = status
+  }
+}
+
 export const TOOL_LABEL: Record<string, string> = {
   'claude-code': 'Claude',
   codex: 'Codex',
