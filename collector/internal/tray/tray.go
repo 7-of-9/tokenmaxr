@@ -88,6 +88,8 @@ type Input struct {
 	// Version and BuildTime (RFC 3339 UTC) identify the running binary.
 	Version   string
 	BuildTime string
+	// Settings is the Settings section's state.
+	Settings SettingsState
 }
 
 // View is what the app shows for an Input.
@@ -102,15 +104,16 @@ type View struct {
 	Providers []ProviderLine
 	// Identity is "Machine STUDIO · fleet a1b2c3d4"; Fleet is what clicking
 	// it copies ("" when there is none).
-	Identity  string
-	Fleet     string
+	Identity string
+	Fleet    string
+	// Dashboard is the GitHub Pages dashboard ("" when this machine does
+	// not publish to GitHub). The app links no other dashboard: a server's
+	// is the server owner's own site, out of the generic app's scope (owner
+	// direction 2026-10-05); the app shows how pushes to it go instead.
 	Dashboard string
-	// GitHubDashboard is the GitHub Pages dashboard when Dashboard is the
-	// server's ("" otherwise).
-	GitHubDashboard string
-	CanSync         bool
-	Syncing         bool
-	SyncLabel       string
+	CanSync   bool
+	Syncing   bool
+	SyncLabel string
 	// Pinned: the live panel is on screen.
 	Pinned bool
 	// Build is the recessive footer naming the running version and its
@@ -119,6 +122,11 @@ type View struct {
 	// Account says where this machine publishes: the signed-in GitHub
 	// account and repository, and the server.
 	Account string
+	// Publishing: this machine publishes to GitHub (the Settings section
+	// offers Stop publishing; otherwise Connect GitHub…).
+	Publishing bool
+	// Settings is the Settings section (SettingsRows).
+	Settings SettingsState
 }
 
 // recentEvent is how new a provider's latest event must be for its age and
@@ -180,17 +188,18 @@ func Name(provider string) string {
 func Evaluate(in Input) View {
 	in.SetUp = in.SetUp || in.Enrolled // a server enrolment holds the fleet key
 	v := View{
-		Machine:         machineName(in.Machine),
-		Providers:       providerLines(in.Providers, in.Now),
-		Identity:        identity(in),
-		Dashboard:       dashboard(in),
-		GitHubDashboard: githubDashboard(in),
-		CanSync:         in.SetUp && in.ConfigErr == "",
-		Syncing:         in.Ticking,
-		SyncLabel:       "Sync in progress…",
-		Pinned:          in.Pinned,
-		Build:           BuildLabel(in.Version, in.BuildTime),
-		Account:         account(in),
+		Machine:    machineName(in.Machine),
+		Providers:  providerLines(in.Providers, in.Now),
+		Identity:   identity(in),
+		Dashboard:  dashboard(in),
+		CanSync:    in.SetUp && in.ConfigErr == "",
+		Syncing:    in.Ticking,
+		SyncLabel:  "Sync in progress…",
+		Pinned:     in.Pinned,
+		Build:      BuildLabel(in.Version, in.BuildTime),
+		Account:    account(in),
+		Publishing: in.GitHub != "",
+		Settings:   in.Settings,
 	}
 	if in.SetUp {
 		v.Fleet = in.Fleet
@@ -328,8 +337,9 @@ func identity(in Input) string {
 	return m + " · fleet " + in.Fleet[:min(8, len(in.Fleet))]
 }
 
-// account is "GitHub 7-of-9 → tokenmaxr-usage · server d0m1.com", or says
-// that GitHub is not signed in.
+// account is "GitHub 7-of-9 → tokenmaxr-usage · API d0m1.com: sent 2 min
+// ago", or says that GitHub is not signed in; the API part, only when this
+// machine pushes to a server, is how its pushes go (apiState).
 func account(in Input) string {
 	gh := "GitHub: not signed in · Settings…"
 	if in.GitHub != "" {
@@ -343,38 +353,35 @@ func account(in Input) string {
 		}
 	}
 	if in.Enrolled {
-		gh += " · server " + EndpointHost(in.Endpoint)
+		gh += " · API " + EndpointHost(in.Endpoint) + ": " + apiState(in)
 	}
 	return gh
 }
 
-// dashboard is the server's dashboard, else the GitHub Pages one ("" when
-// this machine publishes nowhere).
-func dashboard(in Input) string {
-	if in.Enrolled {
-		return DashboardURL(in.Endpoint)
+// apiState is how pushes to the server go, in a few words: "sent 2 min
+// ago", "sending 1,204", "error: <few words>", "token rejected", "paused",
+// "nothing sent yet".
+func apiState(in Input) string {
+	switch {
+	case in.Unauthorized:
+		return "token rejected"
+	case in.LastUploadErr != "":
+		return "error: " + ShortError(in.LastUploadErr)
+	case in.Now.Before(in.BackoffUntil):
+		return "paused"
+	case in.Outbox > 0:
+		return "sending " + Count(in.Outbox)
+	case !in.LastUploadOK.IsZero():
+		return "sent " + Ago(in.LastUploadOK, in.Now)
 	}
+	return "nothing sent yet"
+}
+
+// dashboard is the GitHub Pages dashboard ("" when this machine does not
+// publish to GitHub).
+func dashboard(in Input) string {
 	if in.GitHub != "" {
 		return in.PagesURL
-	}
-	return ""
-}
-
-// githubDashboard is the GitHub Pages dashboard of a machine that publishes to
-// GitHub and a server (dashboard is then the server's).
-func githubDashboard(in Input) string {
-	if in.Enrolled && in.GitHub != "" && in.PagesURL != dashboard(in) {
-		return in.PagesURL
-	}
-	return ""
-}
-
-// DashboardURL is /tokens on the site behind the API endpoint (scheme and
-// host only). Anything that is not a plain http(s) URL falls back to the
-// production site.
-func DashboardURL(endpoint string) string {
-	if o := SiteOrigin(endpoint); o != "" {
-		return o + "/tokens"
 	}
 	return ""
 }

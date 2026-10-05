@@ -16,11 +16,22 @@ const (
 	// ActQuitNow quits without asking: the popup's Quit row was clicked
 	// twice, which is its confirmation.
 	ActQuitNow
-	// ActSettings opens the settings page (destinations, label).
+	// ActSettings opens the Settings section (SettingsRows) and shows the
+	// window (tray only: the popup); ActSettingsToggle is the section's
+	// heading, which opens or closes it.
 	ActSettings
-	// ActGitHubDashboard opens the GitHub Pages dashboard of a machine that
-	// also sends to a server (ActDashboard opens the server's).
-	ActGitHubDashboard
+	ActSettingsToggle
+	// ActTrayOnly flips the "Run only in the menu bar" box (the app
+	// restarts in that mode).
+	ActTrayOnly
+	// ActStopPublishing arms the Stop publishing row; ActStopPublishingNow
+	// (its second click) stops publishing to GitHub.
+	ActStopPublishing
+	ActStopPublishingNow
+	// ActConnectGitHub opens the settings page at its GitHub sign-in,
+	// ActAdvanced at Advanced (the browser).
+	ActConnectGitHub
+	ActAdvanced
 )
 
 // Item is one menu entry. Stable keys identify providers as recency changes their order.
@@ -67,8 +78,7 @@ func Menu(v View) []Item {
 	// No Sync or Pin item: as in the popup (Popup).
 	return append(items,
 		Item{Key: "sep-actions", Separator: true},
-		Item{Key: "dashboard", Title: "Open dashboard", Action: ActDashboard, Hidden: v.Dashboard == ""},
-		Item{Key: "github-dashboard", Title: "Open GitHub dashboard", Action: ActGitHubDashboard, Hidden: v.GitHubDashboard == ""},
+		Item{Key: "dashboard", Title: DashboardText, Action: ActDashboard, Hidden: v.Dashboard == ""},
 		Item{Key: "settings", Title: "Settings…", Action: ActSettings},
 		Item{Key: "log", Title: "Open log", Action: ActOpenLog},
 		Item{Key: "quit", Title: "Quit", Action: ActQuit},

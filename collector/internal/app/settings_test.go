@@ -16,7 +16,6 @@ import (
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/ghpub"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
-	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
 // settingsPage starts the page for a and returns its base URL.
@@ -106,10 +105,10 @@ func TestSettingsGuards(t *testing.T) {
 	}
 	page, _ := io.ReadAll(res.Body)
 	res.Body.Close()
-	if res.StatusCode != 200 || !strings.Contains(string(page), "Collector settings") || !strings.Contains(res.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
+	if res.StatusCode != 200 || !strings.Contains(string(page), "tokenmaxr settings") || !strings.Contains(res.Header.Get("Content-Security-Policy"), "frame-ancestors 'none'") {
 		t.Fatalf("page %d %q", res.StatusCode, res.Header)
 	}
-	for _, f := range []string{"settings.js", "settings.css"} {
+	for _, f := range []string{"settings.js", "settings.css", "icon.png"} {
 		if r, _ := http.Get(base + f); r.StatusCode != 200 {
 			t.Fatalf("%s: %d", f, r.StatusCode)
 		}
@@ -135,6 +134,12 @@ func TestSettingsGuards(t *testing.T) {
 		req.Header.Set("Content-Type", hdr[1])
 		if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusForbidden {
 			t.Errorf("%s: %d", name, r.StatusCode)
+		}
+	}
+	// A plain GET of a state-changing call (a leaked URL) is refused.
+	for _, p := range []string{"api/sync", "api/github/logout", "api/github/cancel", "api/server/cancel"} {
+		if r, _ := http.Get(base + p); r.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("GET %s: %d", p, r.StatusCode)
 		}
 	}
 	if kicked.Load() != 0 {
@@ -203,11 +208,11 @@ func TestSettingsGitHubSignIn(t *testing.T) {
 	stt, _ := store.LoadState(a.Home)
 	stt.GitHub.LastAttempt, stt.GitHub.LastPublish = time.Now(), time.Now()
 	store.SaveState(a.Home, stt)
-	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "noQuota": true}); code != 200 {
+	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60}); code != 200 {
 		t.Fatalf("options: %d %v", code, out)
 	}
 	cfg, _ := store.LoadConfig(a.Home)
-	if cfg.GitHub.Label != "desk" || cfg.GitHub.PublishEveryMinutes != 60 || !cfg.GitHub.NoQuota {
+	if cfg.GitHub.Label != "desk" || cfg.GitHub.PublishEveryMinutes != 60 {
 		t.Fatalf("config %+v", cfg.GitHub)
 	}
 	if stt, _ = store.LoadState(a.Home); !stt.GitHub.LastAttempt.IsZero() || !stt.GitHub.LastPublish.IsZero() {
@@ -219,7 +224,7 @@ func TestSettingsGitHubSignIn(t *testing.T) {
 	}
 	stt.GitHub.LastAttempt, stt.GitHub.LastPublish = time.Now(), time.Now()
 	store.SaveState(a.Home, stt)
-	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "noQuota": true, "showCountry": true}); code != 200 {
+	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "showCountry": true}); code != 200 {
 		t.Fatalf("country option: %d %v", code, out)
 	}
 	if cfg, _ = store.LoadConfig(a.Home); !cfg.GitHub.ShowCountry {
@@ -235,28 +240,9 @@ func TestSettingsGitHubSignIn(t *testing.T) {
 	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-country">`) {
 		t.Fatal("the country checkbox must exist and be unchecked by default")
 	}
-	// Account history too is off until switched on; switching it on reads
-	// the totals with the publish it makes due.
-	if st, _ = getState(t, base); st.GitHub.ShowAccountHistory || cfg.GitHub.ShowAccountHistory {
-		t.Fatal("account history must be off by default")
-	}
-	stt, _ = store.LoadState(a.Home)
-	stt.GitHub.LastAttempt, stt.AccountHistory.LastAttempt = time.Now(), time.Now()
-	store.SaveState(a.Home, stt)
-	if code, out := postJSON(t, base, "api/github/options", map[string]any{"label": "desk", "publishEveryMinutes": 60, "noQuota": true, "showCountry": true, "showAccountHistory": true}); code != 200 {
-		t.Fatalf("account history option: %d %v", code, out)
-	}
-	if cfg, _ = store.LoadConfig(a.Home); !cfg.GitHub.ShowAccountHistory || !cfg.GitHub.ShowCountry {
-		t.Fatalf("account history option not saved: %+v", cfg.GitHub)
-	}
-	if stt, _ = store.LoadState(a.Home); !stt.GitHub.LastAttempt.IsZero() || !stt.AccountHistory.LastAttempt.IsZero() {
-		t.Fatal("opting in must publish now, with a fresh read")
-	}
-	if st, _ = getState(t, base); !st.GitHub.ShowAccountHistory {
-		t.Fatal("the page must show the account-history choice")
-	}
-	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-history">`) {
-		t.Fatal("the account-history checkbox must exist and be unchecked by default")
+	// No quota-meter or account-history toggles: both are always published.
+	if html := embeddedSettingsPage(t); strings.Contains(html, "gh-quota") || strings.Contains(html, "gh-history") {
+		t.Fatal("the quota and account-history options are gone")
 	}
 
 	// Signing out keeps the fleet key; the page offers sign-in again.
@@ -371,7 +357,7 @@ func TestDesktopOpensSettings(t *testing.T) {
 	d := a.newDesktop(context.Background())
 	var got string
 	d.open = func(u string) error { got = u; return nil }
-	d.Click(tray.ActSettings)
+	d.showSettings() // headless: the page
 	if !strings.HasPrefix(got, "http://127.0.0.1:") || !strings.Contains(got, "/s/") {
 		t.Fatalf("opened %q", got)
 	}

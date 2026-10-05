@@ -421,6 +421,20 @@ func TestUnauthorizedPausesUploads(t *testing.T) {
 	if rep.UploadSkipped == "" || rep.Upload.Requests != 0 {
 		t.Fatalf("uploads not paused: %+v", rep)
 	}
+	// A network change's retry keeps the 401 hold-off, but not a backoff.
+	rep, _ = a.Tick(ctx, TickOptions{Retry: true})
+	if rep.UploadSkipped == "" || rep.Upload.Requests != 0 {
+		t.Fatalf("a retry ignored the 401 hold-off: %+v", rep)
+	}
+	st, _ = store.LoadState(a.Home)
+	st.Unauthorized, st.Backoff.Until = false, a.Now().Add(time.Hour)
+	store.SaveState(a.Home, st)
+	if rep, _ = a.Tick(ctx, TickOptions{}); !strings.HasPrefix(rep.UploadSkipped, "backing off") {
+		t.Fatalf("plain tick during a backoff: %+v", rep)
+	}
+	if rep, _ = a.Tick(ctx, TickOptions{Retry: true}); rep.UploadSkipped != "" || rep.Upload.Requests == 0 {
+		t.Fatalf("a retry kept the backoff: %+v", rep)
+	}
 	if _, events := outbox.New(paths.Outbox(a.Home)).Count(); events != 5 {
 		t.Fatalf("collection must continue: %d events queued", events)
 	}

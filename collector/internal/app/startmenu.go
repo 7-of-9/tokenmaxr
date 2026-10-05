@@ -1,6 +1,8 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -83,8 +85,27 @@ func (a *App) startMenuShortcut(programs string) Shortcut {
 		Target:      o.Exe,
 		Args:        autostart.ArgLine(o.AppArgs()),
 		Dir:         paths.Bin(a.Home),
-		Icon:        filepath.Join(paths.Bin(a.Home), buildinfo.Product+".ico"),
+		Icon:        filepath.Join(paths.Bin(a.Home), startMenuIconName()),
 		Description: buildinfo.Product + ": AI token usage collector",
+	}
+}
+
+// startMenuIconName is the entry's icon file in <home>\bin, named from its
+// contents (tokenmaxr-<8 hex of its SHA-256>.ico): the shell caches icons
+// by path and index, so a new icon needs a new path, never a rewrite.
+func startMenuIconName() string {
+	sum := sha256.Sum256(tray.IconICO(tray.Green))
+	return buildinfo.Product + "-" + hex.EncodeToString(sum[:4]) + ".ico"
+}
+
+// removeOldStartMenuIcons deletes the icons earlier versions wrote next to
+// keep (tokenmaxr.ico, tokenmaxr-<hash>.ico).
+func removeOldStartMenuIcons(keep string) {
+	old, _ := filepath.Glob(filepath.Join(filepath.Dir(keep), buildinfo.Product+"*.ico"))
+	for _, p := range old {
+		if p != keep {
+			_ = os.Remove(p)
+		}
 	}
 }
 
@@ -118,6 +139,7 @@ func (a *App) addStartMenu() (string, error) {
 	if err := sm.Create(s); err != nil {
 		return "", err
 	}
+	removeOldStartMenuIcons(s.Icon) // the link no longer points at them
 	markStartMenu(a.Home)
 	return s.Path, nil
 }
@@ -143,10 +165,9 @@ func (a *App) removeStartMenu() (bool, error) {
 // upgradeDesktopEntries brings an install made by an earlier version up to
 // this one's desktop entries when the app starts (self-update replaces the
 // binary, not the entries): the login item starts the app minimized, the
-// macOS Applications entry exists and runs this binary, and in window mode
-// the Start-menu entry is made, once (startMenuMark: one the user deleted
-// stays deleted). Each is touched only when this install
-// registered autostart for the app.
+// macOS Applications entry exists and runs this binary, and the Start-menu
+// entry is brought up to date (upgradeStartMenu). Each is touched only when
+// this install registered autostart for the app.
 func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	if !cfg.Autostart || !cfg.App {
 		return
@@ -163,14 +184,18 @@ func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	} else if changed {
 		a.Log.Printf("app: applications entry written: %s", p)
 	}
-	if cfg.TrayOnly || runtime.GOOS != "windows" {
-		return
-	}
+	a.upgradeStartMenu(cfg)
+}
+
+// upgradeStartMenu brings the Windows Start-menu entry up to date: an
+// existing one, in either mode, gets this version's icon (a link pointing
+// at another icon file is saved again, pointing at this one's; the shell
+// is told, so it drops the icon it cached); in window mode a missing one
+// is made, once (startMenuMark: one the user deleted stays deleted). Tray
+// only, none is ever made here.
+func (a *App) upgradeStartMenu(cfg *store.Config) {
 	sm := a.startMenu()
 	if sm == nil {
-		return
-	}
-	if fileExists(startMenuMark(a.Home)) {
 		return
 	}
 	programs, err := sm.Programs()
@@ -179,6 +204,16 @@ func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	}
 	if fileExists(StartMenuShortcutPath(programs)) {
 		markStartMenu(a.Home) // made by an earlier version's install
+		if !fileExists(a.startMenuShortcut(programs).Icon) {
+			if _, err := a.addStartMenu(); err != nil {
+				a.Log.Printf("app: start menu icon: %v", err)
+			} else {
+				a.Log.Printf("app: start menu icon updated")
+			}
+		}
+		return
+	}
+	if cfg.TrayOnly || fileExists(startMenuMark(a.Home)) {
 		return
 	}
 	if p, err := a.addStartMenu(); err != nil {

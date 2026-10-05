@@ -58,6 +58,11 @@ type TickOptions struct {
 	Since *scan.Bound
 	// Force uploads despite backoff or an earlier 401 (sync-now).
 	Force bool
+	// Retry retries now what failed (the desktop app's network watch): the
+	// upload despite a backoff, and a GitHub publish whose last attempt
+	// failed. Unlike Force it keeps the 401 hold-off and, when the last
+	// publish succeeded, GitHub's publish cadence.
+	Retry bool
 }
 
 type TickReport struct {
@@ -262,9 +267,9 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	// Account totals supplement file history. Read after local scanning so the
 	// desktop's provider summary is available before any provider network wait.
 	// Its own bounded deadline always reserves the normal upload budget. It
-	// runs for a server (the outbox) and for the GitHub publisher (the rollup)
-	// when the owner opted in to publishing account history.
-	if ob != nil || ru != nil && cfg.GitHub.ShowAccountHistory {
+	// runs for a server (the outbox) and for the GitHub publisher (the
+	// rollup), which always publishes the account history.
+	if ob != nil || ru != nil {
 		n, err := a.collectAccountUsage(ctx, &cfg, sec.Key(), st, ob, ru, deadline.Add(-uploadReserve), func() { progress("account-history", upload.Progress{}) })
 		rep.Queued += n
 		if err != nil {
@@ -286,7 +291,7 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 		switch {
 		case st.Unauthorized && !o.Force && start.Sub(st.UnauthorizedAt) < unauthorizedRetry:
 			rep.UploadSkipped = "token rejected (401); re-run install with a new join code"
-		case start.Before(st.Backoff.Until) && !o.Force:
+		case start.Before(st.Backoff.Until) && !o.Force && !o.Retry:
 			rep.UploadSkipped = "backing off until " + st.Backoff.Until.Format(time.RFC3339)
 		default:
 			up := &upload.Uploader{
@@ -316,7 +321,9 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	// The GitHub publisher: daily aggregates and quota meters, when due.
 	if ru != nil {
 		progress("publishing", upload.Progress{})
-		a.publishGitHub(ctx, &cfg, sec, st, ru, hr.Homes, o.Force)
+		// A retry publishes now only when the last attempt failed (offline,
+		// unreachable); a recent good publish keeps its cadence.
+		a.publishGitHub(ctx, &cfg, sec, st, ru, hr.Homes, o.Force || o.Retry && st.GitHub.LastError != "")
 	}
 
 	progress("finishing", upload.Progress{})

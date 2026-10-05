@@ -272,7 +272,9 @@ const LimitsPage = () => {
   const forbidden = load.status === 'forbidden' && owner.status !== 'visitor'
   if (owner.status === 'visitor' || load.status === 'unauthorized' || load.status === 'forbidden') return (
     <TokensShell crumbs={crumbs}>
-      <AuthGate title={forbidden ? gate.forbiddenTitle : gate.title} description={gate.description} forbidden={forbidden} hint={gate.hint} />
+      <AuthGate title={forbidden ? gate.forbiddenTitle : gate.title} description={gate.description} forbidden={forbidden} hint={gate.hint}>
+        {gate.SignIn && !forbidden ? <gate.SignIn /> : undefined}
+      </AuthGate>
     </TokensShell>
   )
 

@@ -180,7 +180,7 @@ func (p *macPopup) redraw(place bool) {
 		return
 	}
 	lines := tray.PopupView(p.base, p.st)
-	wider := tray.PopupView(p.base, tray.PopupState{Copied: true, QuitArmed: true})
+	wider := tray.PopupView(p.base, tray.PopupState{Copied: true, QuitArmed: true, StopArmed: true})
 	anchor := p.anchor
 	p.lines = lines
 	p.mu.Unlock()

@@ -19,6 +19,7 @@ import { handlePromptCounts } from '../src/lib/prompt-counts.js'
 import { handleLimits } from '../src/lib/limits.js'
 import { handleLink } from '../src/lib/link.js'
 import { handleFleetGitHub } from '../src/lib/fleet-github.js'
+import { handleGithubDevice } from '../src/lib/github-device.js'
 import { resolveConnectionString } from '../scripts/storage-env.js'
 
 const ROUTES = [
@@ -32,6 +33,7 @@ const ROUTES = [
   ['GET', /^\/api\/prompts$/, handlePrompts],
   ['GET', /^\/api\/prompts\/([^/]+)$/, handlePrompts, 'id'],
   ['GET,PUT,DELETE', /^\/api\/fleet\/github$/, handleFleetGitHub],
+  ['POST,OPTIONS', /^\/api\/github\/device\/(code|token)$/, handleGithubDevice, 'step'],
 ]
 
 function readBody(req) {

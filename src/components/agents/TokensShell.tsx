@@ -36,11 +36,13 @@ const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => 
   const headerCrumbs = tokenRoute && showPrivatePages ? [{ label: 'tokens', to: home }] : crumbs
   const parent = crumbs.length > 1 ? (crumbs[crumbs.length - 2].to ?? site.root.to) : site.root.to
 
-  // As on /projects, "<" is the browser's back; a page opened directly goes up one level instead (on the Pages
-  // dashboard's first page there is no level above, so it stays put).
-  const back = () => {
+  // As on /projects, "<" is the browser's back; a page opened directly goes up one level instead. Above the Pages
+  // dashboard's first page is the GitHub profile (site.root.href): "<" goes there, as it goes home on d0m1.com.
+  // Esc (leave false) never leaves the site.
+  const back = (leave = true) => {
     if (location.key !== 'default') navigate(-1)
     else if (parent !== location.pathname) navigate(parent)
+    else if (leave && site.root.href) window.location.assign(site.root.href)
   }
 
   // Esc does what "<" does, as on /projects. It yields to text fields, to an open tooltip
@@ -54,7 +56,7 @@ const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => 
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select'))) return
       if (document.querySelector('.agents-tooltip, dialog[open], [role="dialog"]')) return
       event.preventDefault()
-      backRef.current()
+      backRef.current(false)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -63,13 +65,19 @@ const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => 
   return (
     <div className="gallery-page tokens-shell">
       <div className={`gallery-header header-visible${owner.controls ? ' tokens-header--auth' : ''}`}>
-        <button type="button" className="back-button" onClick={back} aria-label="Back">
+        <button type="button" className="back-button" onClick={() => back()} aria-label="Back">
           &lt;
         </button>
         <nav className="gallery-title" aria-label="Breadcrumb">
-          <Link className="gallery-d0m1" to={site.root.to}>
-            {site.root.label}
-          </Link>
+          {site.root.href ? (
+            <a className="gallery-d0m1" href={site.root.href}>
+              {site.root.label}
+            </a>
+          ) : (
+            <Link className="gallery-d0m1" to={site.root.to}>
+              {site.root.label}
+            </Link>
+          )}
           <span className="gallery-path-display">
             <span className="path-component root">/</span>
             {headerCrumbs.map((crumb, index) => {

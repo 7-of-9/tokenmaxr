@@ -78,7 +78,7 @@ type Desktop struct {
 	a      *App
 	ctx    context.Context
 	cancel context.CancelFunc
-	kick   chan bool // a tick request; true forces the upload (Sync now)
+	kick   chan struct{} // a tick request: wakes collect, which takes pending
 	redraw chan struct{}
 
 	// Side effects, replaceable in tests.
@@ -86,7 +86,10 @@ type Desktop struct {
 	openText func(path string) error
 	copy     func(text string) error
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// pending is the strongest tick requested since collect last took it:
+	// a stronger request upgrades a weaker one already queued.
+	pending tickKind
 	ui      tray.UI
 	loaded  bool
 	in      tray.Input
@@ -108,8 +111,8 @@ type Desktop struct {
 	// window (a change restarts the app). minimized starts the window
 	// minimized; window is set while it is on screen (not minimized).
 	trayOnly bool
-	// showOnStart: a restart the user asked for (relaunch); tray only, the
-	// popup opens once the icon exists (the window shows by itself).
+	// showOnStart: a restart the user asked for (app.showonstart); once the
+	// icon exists the popup opens (tray only) or the window comes forward.
 	showOnStart bool
 	minimized   bool
 	window      bool
@@ -125,8 +128,12 @@ type Desktop struct {
 	bg     sync.WaitGroup
 	saveMu sync.Mutex
 
-	// settings is the local settings page, started on first use.
-	settings *Settings
+	// settings is the local settings page, started on first use;
+	// settingsOpen: the Settings section is expanded (the popup's and the
+	// window's); settingsErr is its last action's failure.
+	settings     *Settings
+	settingsOpen bool
+	settingsErr  string
 	// uploadPeak is the largest queue since it was last empty (the size of
 	// the upload in progress).
 	uploadPeak int
@@ -173,8 +180,9 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	a.Log.Printf("app: started (%s)", a.Version)
 
 	d := a.newDesktop(ctx)
-	// A restart through launchd (relaunch) starts minimized; this marker
-	// says the user is waiting to see the app.
+	// A restart the user asked for (reexecApp) leaves this marker: the user
+	// is waiting to see the app (a relaunch through launchd starts
+	// minimized).
 	if err := os.Remove(paths.AppShowOnStart(a.Home)); err == nil {
 		o.Minimized, o.Watchdog, d.showOnStart = false, false, true
 	}
@@ -192,10 +200,11 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	wg.Add(2)
 	go func() { defer wg.Done(); d.collect() }()
 	go func() { defer wg.Done(); d.watch() }()
+	go d.netWatch(defaultNetWatcher())
 	if !o.Watchdog && a.needsFirstRunSettings() {
-		// Publishing nowhere yet: show the choices once.
+		// Publishing nowhere yet: show the GitHub sign-in once.
 		a.markFirstRunSettings()
-		go d.openSettings()
+		go d.openSettingsAt("github")
 	}
 	if o.UI != nil {
 		o.UI(d)
@@ -229,7 +238,7 @@ func (a *App) newDesktop(parent context.Context) *Desktop {
 	ctx, cancel := context.WithCancel(parent)
 	return &Desktop{
 		a: a, ctx: ctx, cancel: cancel,
-		kick: make(chan bool, 1), redraw: make(chan struct{}, 1),
+		kick: make(chan struct{}, 1), redraw: make(chan struct{}, 1),
 		open: openBrowser, openText: tray.OpenText, copy: tray.Copy,
 		ui: nopUI{}, every: tickInterval,
 	}
@@ -240,9 +249,10 @@ func (d *Desktop) Ready(u tray.UI) {
 	d.mu.Lock()
 	d.ui, d.ready = u, true
 	stopping := d.stopping
-	// Tray only, a restart the user asked for opens the popup: there is no
-	// window to show where the app went.
-	show := d.showOnStart && d.trayOnly
+	// A restart the user asked for shows the app: tray only, the popup opens
+	// (there is no window to show where the app went); in window mode the
+	// window, already up, comes to the front.
+	show := d.showOnStart
 	d.showOnStart = false
 	d.mu.Unlock()
 	if stopping {
@@ -263,18 +273,57 @@ func (d *Desktop) Refresh() {
 	}
 }
 
-// Sync asks for a tick now, uploading despite a backoff; a request while
-// one runs starts another right after it.
-func (d *Desktop) Sync() {
+// tickKind is what a tick request asks for, weakest first.
+type tickKind int
+
+const (
+	tickPlain tickKind = iota // a tick (pinning)
+	tickRetry                 // retry what failed (a network change: TickOptions.Retry)
+	tickForce                 // Sync now (TickOptions.Force)
+)
+
+// requestTick asks for a tick now; a request while one runs starts another
+// right after it. A stronger request upgrades one already queued, so a
+// Sync is never lost behind a pin's plain tick.
+func (d *Desktop) requestTick(k tickKind) {
+	d.mu.Lock()
+	if k > d.pending {
+		d.pending = k
+	}
+	d.mu.Unlock()
 	select {
-	case d.kick <- true:
+	case d.kick <- struct{}{}:
 	default:
 	}
+}
+
+// takePending is the queued request's kind, cleared.
+func (d *Desktop) takePending() tickKind {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	k := d.pending
+	d.pending = tickPlain
+	return k
+}
+
+// Sync asks for a tick now, uploading despite a backoff (Force).
+func (d *Desktop) Sync() {
+	d.requestTick(tickForce)
+	d.Refresh()
+}
+
+// Retry asks for a tick now that retries what failed (TickOptions.Retry):
+// the network came back or changed.
+func (d *Desktop) Retry() {
+	d.requestTick(tickRetry)
 	d.Refresh()
 }
 
 // Click runs a menu action (ui.Handler.Click).
 func (d *Desktop) Click(act tray.Action) {
+	if d.settingsAct(act) {
+		return
+	}
 	d.mu.Lock()
 	v, u := d.view, d.ui
 	d.mu.Unlock()
@@ -285,17 +334,13 @@ func (d *Desktop) Click(act tray.Action) {
 			err = d.copy(v.Fleet)
 		}
 	case tray.ActDashboard:
-		err = d.open(v.Dashboard)
-	case tray.ActGitHubDashboard:
-		if v.GitHubDashboard != "" {
-			err = d.open(v.GitHubDashboard)
+		if v.Dashboard != "" {
+			err = d.open(v.Dashboard)
 		}
 	case tray.ActSyncNow:
 		d.Sync()
 	case tray.ActOpenLog:
 		err = d.openText(paths.Log(d.a.Home))
-	case tray.ActSettings:
-		err = d.openSettings()
 	case tray.ActPin:
 		d.SetPinned(true)
 	case tray.ActUnpin:
@@ -413,12 +458,7 @@ func (d *Desktop) SetPinned(on bool) {
 	// (a tick that finds it held only re-reads the status).
 	var after func()
 	if on {
-		after = func() {
-			select {
-			case d.kick <- false:
-			default:
-			}
-		}
+		after = func() { d.requestTick(tickPlain) }
 	}
 	d.savePanel(after)
 	d.Refresh()
@@ -501,20 +541,32 @@ func (d *Desktop) restartFor(why string) {
 	d.stop()
 }
 
-// openSettings opens the settings page in the browser.
-func (d *Desktop) openSettings() error {
+// settingsPage is the local settings page, made on first use (its server
+// starts with its first URL).
+func (d *Desktop) settingsPage() *Settings {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.settings == nil {
 		d.settings = NewSettings(d.a, d.Sync)
 		if d.hasUI {
 			d.settings.restart = func() { d.restartFor("display mode changed in settings") }
 		}
 	}
-	set := d.settings
-	d.mu.Unlock()
-	u, err := set.URL()
+	return d.settings
+}
+
+// openSettings opens the settings page in the browser.
+func (d *Desktop) openSettings() error { return d.openSettingsAt("") }
+
+// openSettingsAt opens the settings page at a section: "github" (its
+// sign-in) or "advanced" (everything but the defaults), "" the top.
+func (d *Desktop) openSettingsAt(section string) error {
+	u, err := d.settingsPage().URL()
 	if err != nil {
 		return err
+	}
+	if section != "" {
+		u += "#" + section
 	}
 	// Seen once: a later start (a restart from the settings page included)
 	// never opens it by itself.
@@ -528,9 +580,9 @@ func (d *Desktop) openSettings() error {
 func (d *Desktop) collect() {
 	d.load(nil)
 	d.Refresh()
-	force := false
+	kind := tickPlain
 	for {
-		d.tick(force)
+		d.tick(kind)
 		d.mu.Lock()
 		wait := d.every(d.panel.Pinned)
 		d.next = d.a.Now().Add(wait)
@@ -542,16 +594,22 @@ func (d *Desktop) collect() {
 			next.Stop()
 			return
 		case <-next.C:
-			force = false
-		case force = <-d.kick:
+			// A request that came with the timer is served by this tick.
+			select {
+			case <-d.kick:
+			default:
+			}
+			kind = d.takePending()
+		case <-d.kick:
 			next.Stop()
+			kind = d.takePending()
 		}
 	}
 }
 
 // tick runs one tick under collector.lock; if another process holds it (a
 // `sync-now` in a terminal), this round only re-reads the status.
-func (d *Desktop) tick(force bool) {
+func (d *Desktop) tick(kind tickKind) {
 	lk, err := lock.TryAcquire(paths.Lock(d.a.Home))
 	if err != nil {
 		if !errors.Is(err, lock.ErrHeld) {
@@ -567,7 +625,7 @@ func (d *Desktop) tick(force bool) {
 	d.mu.Unlock()
 	d.Refresh()
 
-	rep, err := d.a.Tick(d.ctx, TickOptions{Force: force, Progress: func(p TickProgress) {
+	rep, err := d.a.Tick(d.ctx, TickOptions{Force: kind == tickForce, Retry: kind == tickRetry, Progress: func(p TickProgress) {
 		d.mu.Lock()
 		d.in.Phase, d.in.Uploading = p.Phase, p.Upload.InFlight
 		if p.Recent != nil {
@@ -622,6 +680,7 @@ func (d *Desktop) load(st *store.State) {
 		Unauthorized: st.Unauthorized, BackoffUntil: st.Backoff.Until,
 		InitialScan: st.LastScan.IsZero(),
 		Version:     d.a.Version, BuildTime: d.a.BuildTime,
+		Settings: d.settingsState(&cfg, sec),
 	}
 	if cfgErr != nil {
 		in.ConfigErr = cfgErr.Error()
@@ -714,9 +773,7 @@ func (d *Desktop) requests() {
 		case instance.Unpin:
 			d.SetPinned(false)
 		case instance.Settings:
-			if err := d.openSettings(); err != nil {
-				d.a.Log.Printf("app: settings: %v", err)
-			}
+			d.showSettings()
 		case instance.Dump:
 			d.draw()
 			if err := d.dump(); err != nil {
@@ -744,6 +801,7 @@ func (d *Desktop) draw() {
 	in.Providers = d.win.Summaries(in.Now)
 	in.Pinned = d.panel.Pinned
 	in.TickEvery, in.NextTick = d.every(in.Pinned), d.next
+	in.Settings.Open, in.Settings.Error = d.settingsOpen, d.settingsErr
 	panel := d.panel
 	u := d.ui
 	d.mu.Unlock()
@@ -846,25 +904,36 @@ func (a *App) appBinary() (string, error) {
 // came back hidden past a full menu bar.
 var ErrRelaunch = errors.New("relaunch through launchd")
 
+// startAgain starts the new app process (reexec; tests replace it).
+var startAgain = reexec
+
 // reexecApp starts the app again on the current binary, with the same
 // arguments (minimized, or not, as asked): on macOS through launchd when it
-// runs the app (ErrRelaunch; app.showonstart asks for the app to be shown),
-// else in place (same pid); on Windows as a detached new process once this
-// one has let go of app.lock.
+// runs the app (ErrRelaunch), else in place (same pid); on Windows as a
+// detached new process once this one has let go of app.lock. A restart the
+// user asked for (not minimized) leaves app.showonstart on every path, so
+// the next start shows the app: its window, or, tray only, the popup (which
+// nothing else would open). On Windows this process, which the user just
+// clicked, also passes on its right to take the foreground.
 func (a *App) reexecApp(minimized bool) error {
-	if runtime.GOOS == "darwin" && os.Getenv("XPC_SERVICE_NAME") == autostart.AgentLabel {
-		if !minimized {
-			if err := os.WriteFile(paths.AppShowOnStart(a.Home), nil, 0o600); err != nil {
-				a.Log.Printf("app: relaunch: %v", err)
-			}
+	marker := paths.AppShowOnStart(a.Home)
+	if !minimized {
+		if err := os.WriteFile(marker, nil, 0o600); err != nil {
+			a.Log.Printf("app: restart: %v", err)
 		}
+		allowForeground()
+	}
+	if runtime.GOOS == "darwin" && os.Getenv("XPC_SERVICE_NAME") == autostart.AgentLabel {
 		return ErrRelaunch
 	}
 	exe, err := a.appBinary()
-	if err != nil {
-		return err
+	if err == nil {
+		err = startAgain(exe, restartArgs(os.Args[1:], minimized))
 	}
-	return reexec(exe, restartArgs(os.Args[1:], minimized))
+	if err != nil && !minimized {
+		os.Remove(marker) // no restart: a later start must not take it
+	}
+	return err
 }
 
 // restartArgs is the app's command line for a restart: its own arguments,

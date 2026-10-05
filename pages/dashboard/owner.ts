@@ -1,6 +1,7 @@
-// The owner's plan limits on a public dashboard. GitHub Pages has no sign-in, so what only the owner may read on
-// d0m1.com/tokens/agents (account emails, organisation names, plans) is published encrypted, one file per
-// machine, and decrypted here, in the owner's browser, with a key only the owner's link carries.
+// The owner's plan limits on a public dashboard. GitHub Pages has no server to sign in to, so what only the owner may
+// read on d0m1.com/tokens/agents (account emails, organisation names, plans) is published encrypted, one file per
+// machine, and decrypted here, in the owner's browser, with the owner key: derived from the fleet key, which only
+// the repository's collaborators can read (signin.ts signs in with GitHub to read it).
 //
 // Contract (the collector writes exactly this; testdata/owner-vector.mjs builds a test vector with node:crypto):
 // - data/machines/<id>/owner.json = {"schema":1,"machine":"<id>","alg":"A256GCM","nonce":"<base64, 12 bytes>",
@@ -11,11 +12,12 @@
 // - AAD = UTF-8 "tokenmaxr dashboard owner v1|" + machine id, so a file only opens as its own machine's.
 // - Plaintext = {"v":1,"items":[...]}: exactly the rows GET /api/limits returns on d0m1.com for this machine.
 //
-// Unlocking, two ways (see "Unlocking" below): the collector's settings page opens <dashboard>#unlock and hands the
-// key over with postMessage, so it is never in a URL; or a copied link, <dashboard>#unlock=<base64url(owner key)>,
+// Signing in, three ways: with GitHub (signin.ts, the device flow, on any device); the collector's settings page
+// ("Open dashboard") opens <dashboard>#unlock and hands the key over with postMessage, so it is never in a URL (see
+// "The collector's handoff" below; the fragment and message names are the collector's); or a copied link, <dashboard>#unlock=<base64url(owner key)>,
 // whose key the page takes out of the address bar at once (history.replaceState; the browser's own history still
 // records the link). Either way the page keeps it as a non-extractable CryptoKey in IndexedDB for this dashboard's
-// path (see "Keeping the key"), and from then on decrypts every owner.json with WebCrypto. Lock forgets it. The key
+// path (see "Keeping the key"), and from then on decrypts every owner.json with WebCrypto. lock() forgets it. The key
 // never goes into a request, a URL the page loads, or a log. Pure apart from the vault, storage and history passed in, so owner.test.ts runs it in Node.
 import type { LimitRow } from '../../src/components/agents/limits.ts'
 
@@ -426,11 +428,11 @@ export function createOwnerStore({ name, vault, storage = null, channel = null, 
   }
 }
 
-// ---- Unlocking ----
+// ---- The collector's handoff, and a copied link ----
 //
-// Two ways in: the handoff from tokenmaxr's settings page, or a copied link. Both land on the Agents page (#/agents):
-// the key exists to show the owner's accounts, and that is where they are (without a key, its gate says how to
-// unlock).
+// Two ways in besides the GitHub sign-in: the handoff from tokenmaxr's settings page, or a copied link. Both land on
+// the Agents page (#/agents): the key exists to show the owner's accounts, and that is where they are (without a
+// key, its gate offers the GitHub sign-in).
 
 export const UNLOCK_LANDING = '#/agents'
 

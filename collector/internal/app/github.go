@@ -193,8 +193,8 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	}
 	gh := &store.GitHubConfig{Repo: res.Repo, Branch: g.Repo.DefaultBranch}
 	if cfg.GitHub != nil {
-		gh.Label, gh.PublishEveryMinutes, gh.NoQuota = cfg.GitHub.Label, cfg.GitHub.PublishEveryMinutes, cfg.GitHub.NoQuota
-		gh.ShowCountry, gh.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
+		gh.Label, gh.PublishEveryMinutes = cfg.GitHub.Label, cfg.GitHub.PublishEveryMinutes
+		gh.ShowCountry = cfg.GitHub.ShowCountry
 		gh.ShareWithFleet = cfg.GitHub.ShareWithFleet
 	}
 	cfg.GitHubFleetOptOut = false // its own sign-in now; a later sign-out opts out again
@@ -318,7 +318,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		st.GitHub.MachineID = ghpub.NewMachineID()
 	}
 	var meters []model.LimitSnapshot
-	if k := sec.Key(); !cfg.GitHub.NoQuota && k != nil {
+	if k := sec.Key(); k != nil {
 		ix := evidence.Build(st.Evidence, accounts.Spans(st.Accounts))
 		for _, h := range hs {
 			meters = append(meters, limits.Collect(a.envFor(k, cfg, st, h, ix))...)
@@ -330,15 +330,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		// The country alone, never the zone, its Windows id or the offset.
 		m.CC = machineCountry()
 	}
-	var history ghpub.AccountHistory
-	if cfg.GitHub.ShowAccountHistory {
-		history = accountHistory(ru, st)
-	}
-	files := ghpub.Files(m, ru.Rows(), history, now)
-	if p := ghpub.AccountUsagePath(m.ID); !cfg.GitHub.ShowAccountHistory && st.GitHub.Published[p] != "" {
-		// Opted out: the account history this machine published goes too.
-		files = append(files, ghapi.File{Path: p, Delete: true})
-	}
+	files := ghpub.Files(m, ru.Rows(), accountHistory(ru, st), now)
 	refreshMeta := st.GitHub.LastPublish.IsZero() || now.Sub(st.GitHub.LastPublish) >= 24*time.Hour
 	owner, ownerSays, err := ownerFile(cfg, sec, st, m.ID, meters, files, refreshMeta, now)
 	if err != nil {
@@ -387,6 +379,44 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 		}
 	}
 	a.publishSite(parent, c, cfg, sec, st, now, force)
+	a.linkDashboard(parent, c, cfg, st, now)
+}
+
+// linkRetryEvery is how long a machine waits to try the repository's website
+// again after the installation could not set it (no Administration: write).
+const linkRetryEvery = 24 * time.Hour
+
+// linkDashboard points the usage repository at its Pages dashboard once per
+// repository (ghpub.LinkDashboard: its website and a README line, each only
+// where none is, recorded in the repository's tokenmaxr.json so no machine
+// of the fleet does either twice). state.json's github.linked caches that the
+// repository records both, so later publishes read nothing. A failure is
+// logged and tried again with the next publish; a website this installation
+// may not set is tried again a day later.
+func (a *App) linkDashboard(ctx context.Context, c *ghapi.Client, cfg *store.Config, st *store.State, now time.Time) {
+	done := cfg.GitHub.Repo + "@" + cfg.GitHub.BranchOrDefault()
+	if st.GitHub.PagesURL == "" || st.GitHub.Linked == done || now.Before(st.GitHub.LinkRetryAt) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := ghpub.LinkDashboard(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), st.GitHub.PagesURL)
+	if err != nil {
+		a.Log.Printf("github: dashboard link: %v", err)
+		return
+	}
+	if res.Website {
+		a.Log.Printf("github: %s's website is now its dashboard", cfg.GitHub.Repo)
+	}
+	if res.Readme {
+		a.Log.Printf("github: %s's README links its dashboard", cfg.GitHub.Repo)
+	}
+	if res.Pending {
+		st.GitHub.LinkRetryAt = now.Add(linkRetryEvery)
+		a.Log.Printf("github: %s's website is not set (the installation cannot change the repository's settings); trying again in a day", cfg.GitHub.Repo)
+		return
+	}
+	st.GitHub.Linked, st.GitHub.LinkRetryAt = done, time.Time{}
 }
 
 // sweepQuota deletes, once per repository, the quota.json files collectors

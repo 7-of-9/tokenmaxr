@@ -1,0 +1,102 @@
+/* The Agents page's GitHub sign-in (SignInPanel.tsx), inside the gate's panel (.agents-auth-gate). */
+.gh-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.gh-signin__step {
+  margin: 0;
+  color: var(--ag-ink-2);
+  font-size: 0.95rem;
+}
+
+.gh-signin__code {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  border: 1px solid rgba(0, 255, 65, 0.45);
+  border-radius: 12px;
+  background: rgba(0, 255, 65, 0.06);
+  color: var(--ag-accent);
+  font-family: var(--gh-mono);
+  font-size: clamp(2rem, 9vw, 2.75rem);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.2;
+  user-select: all;
+  white-space: nowrap;
+}
+
+.gh-signin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.agents-page .gh-signin__actions .agents-btn {
+  justify-content: center;
+  min-height: 2.6rem;
+  padding: 0.55rem 1.1rem;
+  cursor: pointer;
+}
+
+.gh-signin__status .agents-muted,
+.gh-signin__meta {
+  font-size: 0.85rem;
+}
+
+.gh-signin__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ag-ink-2);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.gh-signin__link:hover {
+  color: var(--ag-ink);
+}
+
+.gh-signin__error {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  border-radius: 8px;
+  background: rgba(248, 81, 73, 0.08);
+  color: #ffa198;
+  font-size: 0.95rem;
+}
+
+.gh-signin__done {
+  margin: 0;
+  color: var(--ag-accent);
+}
+
+.gh-signin__alt {
+  margin-top: 0.4rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--ag-line);
+  font-size: 0.8rem;
+}
+
+.gh-signin a {
+  color: var(--gh-green-fg);
+}
+
+.gh-signin .agents-btn--primary {
+  color: var(--ag-accent);
+}
+
+@media (max-width: 640px) {
+  .gh-signin__code {
+    align-self: stretch;
+    text-align: center;
+  }
+
+  .gh-signin__actions .agents-btn {
+    flex: 1 1 10rem;
+  }
+}

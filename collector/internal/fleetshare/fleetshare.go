@@ -67,9 +67,12 @@ type Share struct {
 // takes each one it has not chosen itself.
 type Prefs struct {
 	// From is the sharer's public label (shown as "from <label>").
-	From               string `json:"from"`
-	ShowCountry        bool   `json:"showCountry"`
-	ShowAccountHistory bool   `json:"showAccountHistory"`
+	From        string `json:"from"`
+	ShowCountry bool   `json:"showCountry"`
+	// ShowAccountHistory is always true from collector 0.4.7, which always
+	// publishes the account history; collectors 0.4.2 to 0.4.6 that adopt
+	// the sign-in follow it, so they publish it too.
+	ShowAccountHistory bool `json:"showAccountHistory"`
 }
 
 // key derives the share's AES-256 key from the fleet key.

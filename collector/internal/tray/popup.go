@@ -4,6 +4,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
 )
 
 // The click popup: the pinned panel's sheet, then a separator and the
@@ -19,7 +22,12 @@ const QuitArmedText = "Click again to quit (stops until next login)"
 // CopiedText follows the identity row briefly after it copied the fleet id.
 const CopiedText = "  copied"
 
-// Popup is the machine heading and providers, then a rule and actions.
+// DashboardText is the action row that opens the GitHub dashboard.
+const DashboardText = "Open GitHub dashboard"
+
+// Popup is the machine heading and providers, then a rule and actions:
+// the GitHub dashboard, the Settings section (SettingsRows), Open log and
+// Quit, which stays last.
 // There is no Sync row (showing the UI syncs) and no Pin row (the main
 // window replaced the pinned panel; owner direction 2026-10-05: "remove the
 // "sync now" from ui menu - not needed; remove pin to screen").
@@ -27,13 +35,10 @@ func Popup(v View) []PanelLine {
 	out := Panel(v)
 	out = append(out, PanelLine{Kind: LineRule})
 	if v.Dashboard != "" {
-		out = append(out, PanelLine{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard})
+		out = append(out, PanelLine{Text: DashboardText, Kind: LineAction, Action: ActDashboard})
 	}
-	if v.GitHubDashboard != "" {
-		out = append(out, PanelLine{Text: "Open GitHub dashboard", Kind: LineAction, Action: ActGitHubDashboard})
-	}
+	out = append(out, SettingsRows(v)...)
 	out = append(out,
-		PanelLine{Text: "Settings…", Kind: LineAction, Action: ActSettings},
 		PanelLine{Text: "Open log", Kind: LineAction, Action: ActOpenLog},
 		PanelLine{Text: "Quit", Kind: LineAction, Action: ActQuit},
 	)
@@ -70,11 +75,13 @@ func (l PanelLine) Clickable() bool {
 
 // PopupState is what the open popup remembers between redraws: the row
 // under the mouse or keyboard (by its action, so a refresh that adds a
-// provider row keeps it), and the two feedback states.
+// provider row keeps it), and the feedback states: copied, and the Quit
+// and Stop publishing rows waiting for their second click.
 type PopupState struct {
 	Sel       Action
 	Copied    bool
 	QuitArmed bool
+	StopArmed bool
 }
 
 // PopupView is the rows as drawn for a state: the selected row marked,
@@ -91,10 +98,28 @@ func PopupView(lines []PanelLine, s PopupState) []PanelLine {
 			l.Hi, l.HiEnd = n+2, n+len([]rune(CopiedText))
 		case l.Action == ActQuit && s.QuitArmed:
 			l.Text, l.Kind = QuitArmedText, LineArmed
+		case l.Action == ActStopPublishing && s.StopArmed:
+			// Armed, the row runs the stop (it keeps its indent).
+			indent := l.Text[:len(l.Text)-len(strings.TrimLeft(l.Text, " "))]
+			armed := l.Armed
+			if armed == "" {
+				armed = StopArmedText
+			}
+			l.Text, l.Kind, l.Action = indent+armed, LineArmed, ActStopPublishingNow
+			l.Selected = s.Sel == ActStopPublishing || s.Sel == ActStopPublishingNow
+			continue
 		}
-		l.Selected = s.Sel != ActNone && l.Action == s.Sel && l.Hoverable()
+		l.Selected = s.Sel != ActNone && sameRow(l.Action, s.Sel) && l.Hoverable()
 	}
 	return out
+}
+
+// sameRow reports whether two actions are one row's: Stop publishing's row
+// runs ActStopPublishing, and ActStopPublishingNow while armed, so the
+// selection and the keyboard follow it across the arming and the disarm.
+func sameRow(a, b Action) bool {
+	stop := func(x Action) bool { return x == ActStopPublishing || x == ActStopPublishingNow }
+	return a == b || stop(a) && stop(b)
 }
 
 // PopupNav moves the selection among the hoverable rows: dir > 0 down, < 0
@@ -105,7 +130,7 @@ func PopupNav(lines []PanelLine, sel Action, dir int) Action {
 	cur := -1
 	for _, l := range lines {
 		if l.Hoverable() {
-			if l.Action == sel {
+			if sameRow(l.Action, sel) {
 				cur = len(rows)
 			}
 			rows = append(rows, l.Action)
@@ -137,8 +162,52 @@ type Metrics struct {
 	CharW float64
 }
 
+// Brand is the sheet's header (owner direction 2026-10-05: "BRAND the
+// context menu nicer, make it prettier, use the main icon in colour"): the
+// colour icon (BrandIcon, its dot the status), about two text lines and a
+// half high, left of the header's lines (PanelLine.Header: the heading, the
+// status and account lines), which are taller than other lines and start
+// Indent after Pad. The icon's dot replaces the heading's "● ": renderers
+// draw HeadingText.
+type Brand struct {
+	Rows   int // rows the icon spans; 0: no heading
+	Size   int // the icon's side
+	Indent int
+}
+
+// Brand is the header of lines: its leading Header lines.
+func (m Metrics) Brand(lines []PanelLine) Brand {
+	rows, h := 0, 0
+	for rows < len(lines) && lines[rows].Header {
+		h += m.RowH(lines[rows])
+		rows++
+	}
+	if rows == 0 {
+		return Brand{}
+	}
+	size := h - max(4, m.LineH/3)
+	return Brand{Rows: rows, Size: size, Indent: size + m.Pad}
+}
+
+// HeaderH is the extra height of a header line.
+func (m Metrics) HeaderH() int { return m.LineH * 2 / 5 }
+
+// HeadingText is the heading as the header draws it, without the dot
+// ("tokenmaxr · AC MBP 2"), and the rune length of its product name, which
+// is set strong.
+func HeadingText(l PanelLine) (text string, name int) {
+	text = strings.TrimPrefix(l.Text, "● ")
+	if strings.HasPrefix(text, buildinfo.Product) {
+		name = utf8.RuneCountInString(buildinfo.Product)
+	}
+	return text, name
+}
+
 // RowH is the height of a row.
 func (m Metrics) RowH(l PanelLine) int {
+	if l.Header && l.Kind != LineRule {
+		return m.LineH + m.HeaderH()
+	}
 	switch l.Kind {
 	case LineRule:
 		return m.RuleH
@@ -194,7 +263,14 @@ func (m Metrics) LinkAt(lines []PanelLine, x, y int) Action {
 	if i < 0 || m.CharW <= 0 || x < m.Pad {
 		return ActNone
 	}
-	col := int(float64(x-m.Pad) / m.CharW)
+	x -= m.Pad
+	if i < m.Brand(lines).Rows {
+		x -= m.Brand(lines).Indent
+	}
+	col := int(float64(x) / m.CharW)
+	if x < 0 {
+		return ActNone
+	}
 	for _, l := range lines[i].Links {
 		if l.Action != ActNone && col >= l.From && col < l.To {
 			return l.Action
@@ -283,15 +359,41 @@ func PopupPos(anchor, monitor, work Rect, w, h, gap int) (x, y int) {
 	return x, y
 }
 
+// RowOf is the index of the row that runs act (Stop publishing armed or
+// not), or -1.
+func RowOf(lines []PanelLine, act Action) int {
+	if act == ActNone {
+		return -1
+	}
+	for i, l := range lines {
+		if sameRow(l.Action, act) {
+			return i
+		}
+	}
+	return -1
+}
+
+// KeepRowY is the top of an open h-pixel-high popup whose clicked row
+// stays where it was on screen (at rowY) now that the rows above it put
+// its top rowTop below the popup's: a popup anchored to a bottom taskbar
+// would otherwise grow upward and slide another row under the pointer.
+// It stays gap inside the work area.
+func KeepRowY(rowY, rowTop, h int, work Rect, gap int) int {
+	return max(work.Top+gap, min(rowY-rowTop, work.Bottom-gap-h))
+}
+
 // HoverPopup moves the highlight to sel (ActNone: none). Leaving the Quit
 // row disarms it. changed is false when the highlight was already sel.
 func HoverPopup(st *PopupState, sel Action) (changed bool) {
-	if st.Sel == sel {
-		return false
+	if sameRow(st.Sel, sel) {
+		return false // the same row (Stop publishing, armed or not)
 	}
 	st.Sel = sel
 	if sel != ActQuit {
 		st.QuitArmed = false
+	}
+	if sel != ActStopPublishing && sel != ActStopPublishingNow {
+		st.StopArmed = false
 	}
 	return true
 }
@@ -312,11 +414,23 @@ type PopupClick struct {
 
 // ClickPopup applies a row click. The identity row copies and says so.
 // The first Quit click arms the row; the second returns ActQuitNow and
-// closes. Any other action closes, then runs.
+// closes. Stop publishing arms the same way (the armed row runs
+// ActStopPublishingNow), and the popup stays open. The Settings section's
+// other rows run with the popup open (Action.Stays); any other action
+// closes, then runs.
 func ClickPopup(st *PopupState, act Action) PopupClick {
 	switch act {
 	case ActNone:
 		return PopupClick{}
+	case ActStopPublishing, ActStopPublishingNow:
+		// The armed row's action is ActStopPublishingNow; the keyboard's
+		// selection stays ActStopPublishing, so Return arms, then runs.
+		if !st.StopArmed {
+			st.StopArmed, st.Sel = true, ActStopPublishing
+			return PopupClick{ArmQuit: true, Redraw: true}
+		}
+		st.StopArmed = false
+		return PopupClick{Run: ActStopPublishingNow, Redraw: true}
 	case ActCopyFleet:
 		st.Copied = true
 		return PopupClick{Run: ActCopyFleet, ArmCopied: true, Redraw: true}
@@ -327,7 +441,7 @@ func ClickPopup(st *PopupState, act Action) PopupClick {
 		}
 		return PopupClick{Run: ActQuitNow, Close: true}
 	default:
-		return PopupClick{Run: act, Close: true}
+		return PopupClick{Run: act, Close: !act.Stays()}
 	}
 }
 
@@ -339,10 +453,11 @@ func ClearCopied(st *PopupState) (changed bool) {
 	return changed
 }
 
-// DisarmQuit drops the armed Quit row. The highlight stays where it is.
+// DisarmQuit drops the armed Quit (and Stop publishing) row. The highlight
+// stays where it is.
 func DisarmQuit(st *PopupState) (changed bool) {
-	changed = st.QuitArmed
-	st.QuitArmed = false
+	changed = st.QuitArmed || st.StopArmed
+	st.QuitArmed, st.StopArmed = false, false
 	return changed
 }
 
@@ -365,7 +480,9 @@ func (a Action) String() string {
 	names := map[Action]string{
 		ActNone: "none", ActCopyFleet: "copy-fleet", ActDashboard: "dashboard", ActSyncNow: "sync",
 		ActOpenLog: "log", ActQuit: "quit", ActPin: "pin", ActUnpin: "unpin", ActQuitNow: "quit-now",
-		ActSettings: "settings", ActGitHubDashboard: "github-dashboard",
+		ActSettings: "settings", ActSettingsToggle: "settings-toggle", ActTrayOnly: "tray-only",
+		ActStopPublishing: "stop-publishing", ActStopPublishingNow: "stop-publishing-now",
+		ActConnectGitHub: "connect-github", ActAdvanced: "advanced",
 	}
 	if n, ok := names[a]; ok {
 		return n

@@ -28,7 +28,12 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
+	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
+
+// settingsIcon is the page's header icon: the app sheet's header icon (the
+// heatmap tile with its green dot), made once.
+var settingsIcon = sync.OnceValue(func() []byte { return tray.BrandPNG(tray.Green, 128) })
 
 //go:embed settings
 var settingsFiles embed.FS
@@ -151,6 +156,12 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	} else if strings.HasPrefix(rest, "api/") && rest != "api/state" {
+		// Every API call but the state read changes something: POST only,
+		// so the Origin and Content-Type checks above apply (a plain GET of
+		// a leaked URL must not stop publishing).
+		http.Error(w, "use POST", http.StatusMethodNotAllowed)
+		return
 	}
 	switch rest {
 	case "", "index.html":
@@ -159,6 +170,10 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.file(w, "settings/settings.js", "text/javascript; charset=utf-8")
 	case "settings.css":
 		s.file(w, "settings/settings.css", "text/css; charset=utf-8")
+	case "icon.png":
+		// The app's colour icon for the page's header (tray.BrandIcon).
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(settingsIcon())
 	case "api/state":
 		v, err := s.state()
 		s.reply(w, v, err)
@@ -174,7 +189,8 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.reply(w, nil, s.a.GitHubLogout())
 	case "api/github/unlock":
 		// The dashboard's owner key, for the page to hand to the dashboard
-		// it opened (or to copy as an unlock link). Never logged.
+		// it opened (Open dashboard signs it in), or to copy as a sign-in
+		// link. Never logged.
 		var in struct{}
 		if s.decode(w, r, &in) {
 			key, err := s.unlockKey()
@@ -184,13 +200,11 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Label               string
 			PublishEveryMinutes int
-			NoQuota             bool
 			ShowCountry         bool
-			ShowAccountHistory  bool
 			ShareWithFleet      *bool // absent: unchanged
 		}
 		if s.decode(w, r, &in) {
-			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.NoQuota, in.ShowCountry, in.ShowAccountHistory, in.ShareWithFleet))
+			s.reply(w, nil, s.saveGitHubOptions(in.Label, in.PublishEveryMinutes, in.ShowCountry, in.ShareWithFleet))
 		}
 	case "api/server":
 		var in struct{ Server, Join string }
@@ -272,18 +286,15 @@ type settingsState struct {
 		Login               string `json:"login,omitempty"`
 		Label               string `json:"label,omitempty"`
 		PublishEveryMinutes int    `json:"publishEveryMinutes"`
-		NoQuota             bool   `json:"noQuota"`
 		ShowCountry         bool   `json:"showCountry"`
-		ShowAccountHistory  bool   `json:"showAccountHistory"`
-		// ShowCountryFrom, ShowAccountHistoryFrom: the label of the machine
-		// whose choice the option follows ("" when chosen here).
-		ShowCountryFrom        string `json:"showCountryFrom,omitempty"`
-		ShowAccountHistoryFrom string `json:"showAccountHistoryFrom,omitempty"`
-		LastPublish            string `json:"lastPublish,omitempty"`
-		LastError              string `json:"lastError,omitempty"`
-		PagesURL               string `json:"pagesUrl,omitempty"`
-		// CanUnlock: the dashboard and the fleet key are there, so the page
-		// offers to open it unlocked (api/github/unlock).
+		// ShowCountryFrom: the label of the machine whose choice the option
+		// follows ("" when chosen here).
+		ShowCountryFrom string `json:"showCountryFrom,omitempty"`
+		LastPublish     string `json:"lastPublish,omitempty"`
+		LastError       string `json:"lastError,omitempty"`
+		PagesURL        string `json:"pagesUrl,omitempty"`
+		// CanUnlock: the dashboard and the fleet key are there, so Open
+		// dashboard signs it in (api/github/unlock).
 		CanUnlock bool   `json:"canUnlock"`
 		App       string `json:"app"`
 		// Adopted: signed in through the fleet (the sign-in Login shared).
@@ -368,23 +379,23 @@ func (s *Settings) state() (settingsState, error) {
 	g.PublishEveryMinutes = int((&store.GitHubConfig{}).PublishEvery() / time.Minute)
 	if githubEnabled(&cfg, sec) {
 		g.On, g.Repo, g.Login, g.Label = true, cfg.GitHub.Repo, sec.GitHub.Login, cfg.GitHub.Label
-		g.PublishEveryMinutes, g.NoQuota = int(cfg.GitHub.PublishEvery()/time.Minute), cfg.GitHub.NoQuota
-		g.ShowCountry, g.ShowAccountHistory = cfg.GitHub.ShowCountry, cfg.GitHub.ShowAccountHistory
+		g.PublishEveryMinutes = int(cfg.GitHub.PublishEvery() / time.Minute)
+		g.ShowCountry = cfg.GitHub.ShowCountry
 		g.ShowCountryFrom = cfg.GitHub.PrefFrom(store.PrefShowCountry)
-		g.ShowAccountHistoryFrom = cfg.GitHub.PrefFrom(store.PrefShowAccountHistory)
 		g.Adopted = cfg.GitHub.Adopted
 		g.CanShare, g.ShareWithFleet = !g.Adopted && serverOn(&cfg, sec), cfg.GitHub.SharesWithFleet()
 	}
-	g.Fleet = fleetLine(&cfg, sec, st)
-	if g.Adopted {
-		g.Fleet += ". Stop publishing opts this machine out of it."
+	// The fleet line only where it adds something: the repository line
+	// already says whose sign-in an adopted machine uses.
+	if !g.Adopted {
+		g.Fleet = fleetLine(&cfg, sec, st)
 	}
 	switch {
 	case g.On || !serverOn(&cfg, sec):
 	case cfg.GitHubFleetOptOut:
-		g.Fleet = "This machine does not take the sign-in your other machines share; signing in here publishes it again."
+		g.Fleet = "Opted out of your fleet's shared sign-in."
 	default:
-		g.Fleet = "Or sign in on any of your machines: the others on your server publish with that sign-in too."
+		g.Fleet = "Signing in on one machine publishes your others too."
 	}
 	if st != nil {
 		g.LastPublish, g.LastError, g.PagesURL = rfc(st.GitHub.LastPublish), st.GitHub.LastError, st.GitHub.PagesURL
@@ -408,9 +419,10 @@ func dashboardURL(u string) bool {
 	return err == nil && p.Scheme == "https" && p.Host != "" && p.User == nil
 }
 
-// unlockKey is the owner key that unlocks this machine's GitHub dashboard
-// (ghpub.OwnerKey of the fleet key, base64url): the page hands it only to
-// the dashboard it opened, or copies it into an unlock link.
+// unlockKey is the owner key that signs the owner in to this machine's
+// GitHub dashboard (ghpub.OwnerKey of the fleet key, base64url; the
+// dashboard's code calls it unlocking): the page hands it only to the
+// dashboard it opened, or copies it into a sign-in link.
 func (s *Settings) unlockKey() (string, error) {
 	cfg, err := retryRead(store.LoadConfig, s.a.Home)
 	if err != nil {
@@ -517,14 +529,13 @@ func (s *Settings) cancelLogin() {
 	}
 }
 
-// saveGitHubOptions changes the GitHub label, cadence, quota opt-out, the
-// country and account-history opt-ins and (nil: unchanged) whether this
-// machine's own sign-in is shared with the fleet. A new label or choice is
-// published with the next publish, which is made due now; a sharing change
-// reaches the server with the next tick. On an adopted sign-in, an opt-in
-// changed here is this machine's own from then on: the sharer's choice no
-// longer changes it.
-func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCountry, showAccountHistory bool, share *bool) error {
+// saveGitHubOptions changes the GitHub label, cadence, the country opt-in
+// and (nil: unchanged) whether this machine's own sign-in is shared with
+// the fleet. A new label or choice is published with the next publish,
+// which is made due now; a sharing change reaches the server with the next
+// tick. On an adopted sign-in, the country changed here is this machine's
+// own from then on: the sharer's choice no longer changes it.
+func (s *Settings) saveGitHubOptions(label string, every int, showCountry bool, share *bool) error {
 	a := s.a
 	label = strings.TrimSpace(label)
 	if label != "" {
@@ -554,18 +565,11 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 	if every != 0 {
 		cfg.GitHub.PublishEveryMinutes = every
 	}
-	cfg.GitHub.NoQuota = noQuota
 	recountry := showCountry != cfg.GitHub.ShowCountry
-	rehistory := showAccountHistory != cfg.GitHub.ShowAccountHistory
 	if cfg.GitHub.Adopted && recountry {
 		cfg.GitHub.SetLocalPref(store.PrefShowCountry)
 	}
-	if cfg.GitHub.Adopted && rehistory {
-		cfg.GitHub.SetLocalPref(store.PrefShowAccountHistory)
-	}
 	cfg.GitHub.ShowCountry = showCountry
-	readHistory := showAccountHistory && rehistory
-	cfg.GitHub.ShowAccountHistory = showAccountHistory
 	reshare := share != nil && *share != cfg.GitHub.SharesWithFleet() && !cfg.GitHub.Adopted
 	if reshare {
 		on := *share
@@ -582,9 +586,6 @@ func (s *Settings) saveGitHubOptions(label string, every int, noQuota, showCount
 	st.GitHub.LastAttempt = time.Time{}
 	if relabel || recountry {
 		st.GitHub.LastPublish = time.Time{}
-	}
-	if readHistory {
-		st.AccountHistory.LastAttempt = time.Time{} // read the totals with that publish
 	}
 	if reshare {
 		st.GitHub.Fleet.LastError = "" // share or withdraw with the next tick
@@ -783,8 +784,9 @@ func (a *App) markFirstRunSettings() {
 	_ = os.WriteFile(firstRunMark(a.Home), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 }
 
-// OpenSettingsCLI asks the running app to open its settings page (the page
-// lives in the app: it drives the app's sign-in and settings).
+// OpenSettingsCLI asks the running app to show its settings: the Settings
+// section of its window (tray only: the popup), or the settings page when
+// it runs headless (the page lives in the app: it drives its sign-in).
 func (a *App) OpenSettingsCLI() error {
 	if !instance.Running(a.Home) {
 		return errors.New("the app is not running: start it (" + buildinfo.Product + " app), then open Settings from its icon")
@@ -792,6 +794,6 @@ func (a *App) OpenSettingsCLI() error {
 	if err := instance.Send(a.Home, instance.Settings); err != nil {
 		return err
 	}
-	a.printf("The settings page is opening in your browser.\n")
+	a.printf(buildinfo.Product + " is showing its settings.\n")
 	return nil
 }

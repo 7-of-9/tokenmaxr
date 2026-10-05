@@ -27,6 +27,17 @@ const noD0m1Footer = (): Plugin => ({
   load: id => (id === NO_FOOTER ? 'export default function Footer() { return null }' : null),
 })
 
+export const DEFAULT_RELAY = 'https://d0m1.com/api/github/device'
+
+/** The relay base: https only (or a local harness), no trailing slash. */
+function relayUrl(): string {
+  const value = (process.env.TOKENMAXR_RELAY_URL || DEFAULT_RELAY).trim().replace(/\/+$/, '')
+  if (!/^https:\/\/[^\s?#]+$/.test(value) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/[^\s?#]*)?$/.test(value)) {
+    throw new Error(`TOKENMAXR_RELAY_URL must be an https URL (got ${value})`)
+  }
+  return value
+}
+
 export default defineConfig({
   root: here('./pages/dashboard'),
   base: './',
@@ -36,6 +47,9 @@ export default defineConfig({
     // source.ts's d0m1 default; the Pages dashboard always provides its own source.
     __AGENTS_API_ORIGIN__: JSON.stringify(''),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    // The GitHub sign-in relay (api/src/lib/github-device.js): GitHub's device-flow endpoints send no CORS headers.
+    // TOKENMAXR_RELAY_URL=<base> npm run build:pages points a build at another deployment of it.
+    __TOKENMAXR_RELAY__: JSON.stringify(relayUrl()),
   },
   build: {
     outDir: here('./pages/site'),

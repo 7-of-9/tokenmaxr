@@ -37,7 +37,9 @@ const (
 // Action is what clicking the line does in the popup (ActNone: nothing);
 // Selected marks the row under the mouse or keyboard. Links are spans that
 // act on their own click (Metrics.LinkAt), drawn as links: the account
-// line's repository, server host and Settings….
+// line's repository and Settings…. Header marks the branded header's lines
+// (the heading, status and account lines: Metrics.Brand), which are taller
+// and sit beside the icon.
 type PanelLine struct {
 	Text        string
 	Kind        LineKind
@@ -47,6 +49,10 @@ type PanelLine struct {
 	Quiet       bool
 	Age, AgeEnd int
 	Links       [2]Link
+	Header      bool
+	// Armed is the text of a row that confirms on a second click, while it
+	// waits for it (Stop publishing: what stopping does to the fleet).
+	Armed string
 }
 
 // Link is a clickable span of a line: runes From..To run Action.
@@ -90,16 +96,16 @@ func ProviderRows(lines []ProviderLine) []string {
 
 // Panel shows the machine, current work and local provider totals.
 func Panel(v View) []PanelLine {
-	heading := PanelLine{Text: "● " + buildinfo.Product + " · " + v.Machine, Kind: LineOK, HiEnd: 1}
+	heading := PanelLine{Text: "● " + buildinfo.Product + " · " + v.Machine, Kind: LineOK, HiEnd: 1, Header: true}
 	if v.Color != Green {
 		heading.Kind = LineError
 	}
 	out := []PanelLine{heading}
 	if status := strings.TrimPrefix(v.Status, "● "); status != "" {
-		out = append(out, PanelLine{Text: status, Kind: LineDim})
+		out = append(out, PanelLine{Text: status, Kind: LineDim, Header: true})
 	}
 	if v.Account != "" {
-		out = append(out, PanelLine{Text: v.Account, Kind: LineDim, Links: accountLinks(v)})
+		out = append(out, PanelLine{Text: v.Account, Kind: LineDim, Links: accountLinks(v), Header: true})
 	}
 	if len(v.Providers) > 0 {
 		out = append(out, PanelLine{Kind: LineRule})
@@ -123,8 +129,8 @@ func Panel(v View) []PanelLine {
 
 // accountLinks make the account line's names open what they name, one click
 // from the UI (owner direction 2026-10-05): the repository after "→ " the
-// GitHub dashboard, the host after "server " the server's dashboard, and
-// "Settings…" (GitHub not signed in) the settings page.
+// GitHub dashboard, and "Settings…" (GitHub not signed in) the settings
+// page. The API part is status, not a link.
 func accountLinks(v View) [2]Link {
 	var links [2]Link
 	n := 0
@@ -136,26 +142,17 @@ func accountLinks(v View) [2]Link {
 	}
 	text := v.Account
 	end := utf8.RuneCountInString(text)
-	server := runeIndex(text, " · server ")
+	api := runeIndex(text, " · API ")
 	if i := runeIndex(text, "→ "); i >= 0 {
 		to := end
-		if server > i {
-			to = server
+		if api > i {
+			to = api
 		}
-		// Published to both, GitHub has its own dashboard; to GitHub only, it is the dashboard.
-		act := ActNone
-		switch {
-		case v.GitHubDashboard != "":
-			act = ActGitHubDashboard
-		case server < 0 && v.Dashboard != "":
-			act = ActDashboard
+		if v.Dashboard != "" {
+			add(i+2, to, ActDashboard)
 		}
-		add(i+2, to, act)
 	} else if i := runeIndex(text, "Settings…"); i >= 0 {
 		add(i, i+utf8.RuneCountInString("Settings…"), ActSettings)
-	}
-	if server >= 0 && v.Dashboard != "" {
-		add(server+utf8.RuneCountInString(" · server "), end, ActDashboard)
 	}
 	return links
 }

@@ -12,7 +12,7 @@
 // UTC day) is reconciled exactly as the API reconciles it (accountUsage.ts, a port of api/src/lib/account-usage.js).
 //
 // The owner's plan limits (the Agents page) come from each machine's owner.json, encrypted for the owner and
-// decrypted in the owner's browser (owner.ts); a page that is not unlocked reads none of them.
+// decrypted in the owner's browser (owner.ts); a page that is not signed in reads none of them.
 import {
   ACCOUNT_LEDGER_VERSION, datesBetween, reconcileAccountUsage, surroundingDates,
   type AccountSnapshot, type LedgerDay, type LedgerEntry,
@@ -396,13 +396,14 @@ export interface GithubSourceOptions {
   base?: string
   fetch?: Fetch
   now?: () => Date
-  /** The owner key while the page is unlocked (owner.ts), else null. It only ever decrypts: no request carries it. */
+  /** The owner key while the owner is signed in (owner.ts), else null. It only ever decrypts: no request carries it. */
   ownerKey?: () => CryptoKey | null | Promise<CryptoKey | null>
 }
 
 export type GithubSource = UsageSource & {
   fetchIndex(signal?: AbortSignal): Promise<IndexFile>
   fetchLimits(signal: AbortSignal): Promise<LimitRow[]>
+  checkOwnerKey(key: CryptoKey, signal?: AbortSignal): Promise<'ok' | 'none' | 'wrong'>
 }
 
 export function githubSource({ base = '', fetch: get = (...args) => fetch(...args), now = () => new Date(), ownerKey = () => null }: GithubSourceOptions = {}): GithubSource {
@@ -429,6 +430,22 @@ export function githubSource({ base = '', fetch: get = (...args) => fetch(...arg
   const fetchIndex = async (signal?: AbortSignal) => {
     const index = await read('data/index.json', signal)
     return isRecord(index) ? index as IndexFile : {}
+  }
+
+  /** Every machine's owner.json opened with key: how many there are, and the rows of those that open. */
+  const ownerRows = async (key: CryptoKey, signal?: AbortSignal) => {
+    const index = await fetchIndex(signal)
+    // Only a schema 3 index (build-index.mjs since owner files) lists owner.json; under an older one, look.
+    const listsOwner = (index.schema ?? 1) >= 3
+    const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id }) => {
+      const path = `data/machines/${id}/${OWNER_FILE}`
+      if (!listsOwner) optional.add(path)
+      const file = await read(path, signal)
+      return file === null ? null : { id, file }
+    }))
+    const present = files.filter(f => f !== null)
+    const rows = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
+    return { present: present.length, opened: rows.filter(r => r !== null) }
   }
 
   return {
@@ -488,25 +505,20 @@ export function githubSource({ base = '', fetch: get = (...args) => fetch(...arg
       return buildUsage(source.published, source.at, { machine })
     },
 
-    // Locked: nothing is read (401, the page's "unlock" gate). Unlocked: every machine's owner file, merged as the
-    // API merges its rows. Files that are there but none of which open for this key: the wrong key (403).
+    // Signed out: nothing is read (401, the page's sign-in gate). Signed in: every machine's owner file, merged as
+    // the API merges its rows. Files that are there but none of which open for this key: the wrong key (403).
     async fetchLimits(signal) {
       const key = await ownerKey()
       if (!key) throw new LimitsDenied(401)
-      const index = await fetchIndex(signal)
-      // Only a schema 3 index (build-index.mjs since owner files) lists owner.json; under an older one, look.
-      const listsOwner = (index.schema ?? 1) >= 3
-      const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id }) => {
-        const path = `data/machines/${id}/${OWNER_FILE}`
-        if (!listsOwner) optional.add(path)
-        const file = await read(path, signal)
-        return file === null ? null : { id, file }
-      }))
-      const present = files.filter(f => f !== null)
-      const rows = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
-      const opened = rows.filter(r => r !== null)
-      if (present.length > 0 && opened.length === 0) throw new LimitsDenied(403)
+      const { present, opened } = await ownerRows(key, signal)
+      if (present > 0 && opened.length === 0) throw new LimitsDenied(403)
       return mergeLimitRows(opened)
+    },
+
+    // A key a sign-in derived, before it is kept: does it open the published owner files (none published: none)?
+    async checkOwnerKey(key, signal) {
+      const { present, opened } = await ownerRows(key, signal)
+      return present === 0 ? 'none' : opened.length > 0 ? 'ok' : 'wrong'
     },
   }
 }

@@ -416,7 +416,7 @@ func TestFleetSharingSwitch(t *testing.T) {
 	if strings.Contains(raw, "ghu_test") {
 		t.Fatal("the page state carries the token")
 	}
-	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-share" checked> Share this sign-in with my other machines (through your server, encrypted with the fleet key)`) {
+	if html := embeddedSettingsPage(t); !strings.Contains(html, `<input type="checkbox" id="gh-share" checked> Share this sign-in with my other machines`) {
 		t.Fatal("the sharing checkbox must exist and be checked by default")
 	}
 
@@ -453,7 +453,7 @@ func TestFleetSharingSwitch(t *testing.T) {
 	tick(t, b, TickOptions{})
 	_, baseB := settingsPage(t, b, nil)
 	stB, raw := getState(t, baseB)
-	if !stB.GitHub.On || !stB.GitHub.Adopted || stB.GitHub.CanShare || stB.GitHub.Login != "octo" || !strings.Contains(stB.GitHub.Fleet, "shared by octo") {
+	if !stB.GitHub.On || !stB.GitHub.Adopted || stB.GitHub.CanShare || stB.GitHub.Login != "octo" || stB.GitHub.Fleet != "" { // the repository line says whose
 		t.Fatalf("adopted page %s", raw)
 	}
 	// Asking an adopted machine to share does nothing.
@@ -692,24 +692,23 @@ func (fx *fleetFixture) shareOf(t *testing.T) fleetshare.Share {
 	return s
 }
 
-// setOptIns saves the country and account-history choices on a's settings
-// page, the label and the rest unchanged.
-func setOptIns(t *testing.T, a *App, country, history bool) {
+// setOptIns saves the country choice on a's settings page, the label and
+// the rest unchanged.
+func setOptIns(t *testing.T, a *App, country bool) {
 	t.Helper()
-	cfg, _ := store.LoadConfig(a.Home)
-	if err := NewSettings(a, nil).saveGitHubOptions("", 0, cfg.GitHub.NoQuota, country, history, nil); err != nil {
+	if err := NewSettings(a, nil).saveGitHubOptions("", 0, country, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// The sharer passes its country and account-history choices on with the
-// sign-in. Adopting machines take every choice not made on them (shown as
+// The sharer passes its country choice on with the sign-in (and the
+// account history always on, for adopters before 0.4.7). Adopting machines take every choice not made on them (shown as
 // "from <sharer>"), and follow the sharer's later changes, which it shares
 // again at once; a choice made on a machine stays its own. A machine opted
 // out of the fleet's sign-in takes nothing.
 func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
 	fx := newFleet(t)
-	if p := fx.shareOf(t).Prefs; p == nil || p.From != "desk" || p.ShowCountry || p.ShowAccountHistory {
+	if p := fx.shareOf(t).Prefs; p == nil || p.From != "desk" || p.ShowCountry || !p.ShowAccountHistory {
 		t.Fatalf("shared prefs %+v", p)
 	}
 	b := fx.join(t, "second", "Laptop B")
@@ -726,12 +725,12 @@ func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
 		t.Fatalf("adopted %+v", cfg.GitHub)
 	}
 	// C chooses the country flag itself.
-	setOptIns(t, c, true, false)
+	setOptIns(t, c, true)
 
-	// The sharer opts in to both: it shares again with its next tick.
+	// The sharer opts in: it shares again with its next tick.
 	fx.advance(time.Minute)
 	_, puts, _, _ := fx.api.fleetCounts()
-	setOptIns(t, fx.a, true, true)
+	setOptIns(t, fx.a, true)
 	tick(t, fx.a, TickOptions{})
 	if _, p, _, _ := fx.api.fleetCounts(); p != puts+1 {
 		t.Fatalf("changed choices not shared again: %d puts", p-puts)
@@ -748,19 +747,19 @@ func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
 		tick(t, m, TickOptions{})
 	}
 	cfg, _ = store.LoadConfig(b.Home)
-	if !cfg.GitHub.ShowCountry || !cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" {
+	if !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "desk" {
 		t.Fatalf("B did not follow: %+v", cfg.GitHub)
 	}
 	out := statusOf(t, b)
-	if !strings.Contains(out, "country (flag) published (from desk)") || !strings.Contains(out, "Codex account history published (from desk)") {
+	if !strings.Contains(out, "country (flag) published (from desk)") || strings.Contains(out, "account history") {
 		t.Fatalf("B status:\n%s", out)
 	}
 	v, err := NewSettings(b, nil).state()
-	if err != nil || v.GitHub.ShowCountryFrom != "desk" || v.GitHub.ShowAccountHistoryFrom != "desk" {
+	if err != nil || v.GitHub.ShowCountryFrom != "desk" {
 		t.Fatalf("B settings %+v: %v", v.GitHub, err)
 	}
 	cfg, _ = store.LoadConfig(c.Home)
-	if !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "" || !cfg.GitHub.ShowAccountHistory {
+	if !cfg.GitHub.ShowCountry || cfg.GitHub.PrefFrom(store.PrefShowCountry) != "" {
 		t.Fatalf("C %+v", cfg.GitHub)
 	}
 	if cfg, _ := store.LoadConfig(d.Home); cfg.GitHub != nil {
@@ -769,12 +768,12 @@ func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
 
 	// The sharer opts out of the country again: B follows, C keeps its own.
 	fx.advance(time.Minute)
-	setOptIns(t, fx.a, false, true)
+	setOptIns(t, fx.a, false)
 	tick(t, fx.a, TickOptions{})
 	fx.advance(fleetPollEvery)
 	tick(t, b, TickOptions{})
 	tick(t, c, TickOptions{})
-	if cfg, _ := store.LoadConfig(b.Home); cfg.GitHub.ShowCountry || !cfg.GitHub.ShowAccountHistory {
+	if cfg, _ := store.LoadConfig(b.Home); cfg.GitHub.ShowCountry {
 		t.Fatalf("B %+v", cfg.GitHub)
 	}
 	if out := statusOf(t, b); !strings.Contains(out, "country (flag) not published (from desk)") {
@@ -786,18 +785,6 @@ func TestFleetAdoptersFollowTheSharersOptIns(t *testing.T) {
 	}
 	if out := statusOf(t, c); !strings.Contains(out, "country (flag) published") || strings.Contains(out, "country (flag) published (from") {
 		t.Fatalf("C status:\n%s", out)
-	}
-
-	// B turns the account history off itself: the sharer no longer changes it.
-	setOptIns(t, b, false, false)
-	fx.advance(time.Minute)
-	setOptIns(t, fx.a, true, true)
-	tick(t, fx.a, TickOptions{})
-	fx.advance(fleetPollEvery)
-	tick(t, b, TickOptions{})
-	cfg, _ = store.LoadConfig(b.Home)
-	if !cfg.GitHub.ShowCountry || cfg.GitHub.ShowAccountHistory || !cfg.GitHub.LocalPref(store.PrefShowAccountHistory) {
-		t.Fatalf("B %+v", cfg.GitHub)
 	}
 }
 
@@ -837,7 +824,7 @@ func TestFleetSharesWithoutOptInsAndEarlierChoices(t *testing.T) {
 	fx.advance(fleetPollEvery)
 	tick(t, b, TickOptions{})
 	cfg, _ = store.LoadConfig(b.Home)
-	if !cfg.GitHub.ShowCountry || !cfg.GitHub.LocalPref(store.PrefShowCountry) || !cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" {
+	if !cfg.GitHub.ShowCountry || !cfg.GitHub.LocalPref(store.PrefShowCountry) {
 		t.Fatalf("after the first choices %+v", cfg.GitHub)
 	}
 }
@@ -850,7 +837,7 @@ func TestFleetOwnChoicesOutlastAWithdrawal(t *testing.T) {
 	b := fx.join(t, "second", "Laptop B")
 	tick(t, b, TickOptions{})
 	fx.advance(time.Minute)
-	setOptIns(t, fx.a, true, false)
+	setOptIns(t, fx.a, true)
 	tick(t, fx.a, TickOptions{})
 	fx.advance(fleetPollEvery)
 	tick(t, b, TickOptions{})
@@ -858,7 +845,7 @@ func TestFleetOwnChoicesOutlastAWithdrawal(t *testing.T) {
 		t.Fatalf("B did not follow: %+v", cfg.GitHub)
 	}
 	// B opts out of the country flag itself.
-	setOptIns(t, b, false, false)
+	setOptIns(t, b, false)
 
 	fx.api.mu.Lock()
 	fx.api.fleetGitHub = nil
@@ -883,7 +870,7 @@ func TestFleetOwnChoicesOutlastAWithdrawal(t *testing.T) {
 	tick(t, b, TickOptions{})
 	cfg, _ = store.LoadConfig(b.Home)
 	if cfg.GitHub == nil || !cfg.GitHub.Adopted || cfg.GitHub.ShowCountry || !cfg.GitHub.LocalPref(store.PrefShowCountry) ||
-		!cfg.GitHub.ShowAccountHistory || cfg.GitHub.PrefFrom(store.PrefShowAccountHistory) != "desk" || cfg.GitHubKeptPrefs != nil {
+		cfg.GitHubKeptPrefs != nil {
 		t.Fatalf("adopted again: github %+v, kept %+v", cfg.GitHub, cfg.GitHubKeptPrefs)
 	}
 }
@@ -894,7 +881,7 @@ func TestFleetOwnChoicesOutlastAWithdrawal(t *testing.T) {
 func TestFleetUpgradedAdopterFollowsTheShareItTook(t *testing.T) {
 	fx := newFleet(t)
 	fx.advance(time.Minute)
-	setOptIns(t, fx.a, true, false)
+	setOptIns(t, fx.a, true)
 	tick(t, fx.a, TickOptions{})
 	b := fx.join(t, "second", "Laptop B")
 	tick(t, b, TickOptions{})

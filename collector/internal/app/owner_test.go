@@ -13,6 +13,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/ghapi/ghapitest"
 	"github.com/7-of-9/tokenmaxr/collector/internal/ghpub"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
+	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 )
 
@@ -128,18 +129,23 @@ func TestGitHubPublishesQuotaMetersOnlyEncrypted(t *testing.T) {
 		t.Fatal("owner.json not updated")
 	}
 
-	// Quota meters off: owner.json goes.
-	cfg, _ := store.LoadConfig(a.Home)
-	cfg.GitHub.NoQuota = true
-	store.SaveConfig(a.Home, cfg)
+	// Quota meters are always published (encrypted): an older config.json's
+	// "noQuota" is ignored.
+	raw, _ := os.ReadFile(paths.Config(a.Home))
+	os.WriteFile(paths.Config(a.Home), []byte(strings.Replace(string(raw), `"github": {`, `"github": {"noQuota": true,`, 1)), 0o600)
+	if _, err := store.LoadConfig(a.Home); err != nil {
+		t.Fatal(err)
+	}
+	writeClaudeMeter(t, a, 62, resets)
 	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := f.Files[ghpub.OwnerPath(id)]; ok {
-		t.Fatal("owner.json kept with quota meters off")
+	found = false
+	for _, it := range ownerItems(t, a, f, id) {
+		found = found || it["window"] == "week" && it["usedPercent"] == 62.0
 	}
-	if st, _ := store.LoadState(a.Home); st.GitHub.Owner != (store.OwnerState{}) {
-		t.Fatalf("owner state kept: %+v", st.GitHub.Owner)
+	if !found {
+		t.Fatal("owner.json not published with an old noQuota")
 	}
 }
 

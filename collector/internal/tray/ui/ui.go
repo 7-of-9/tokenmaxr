@@ -5,10 +5,11 @@
 // the only package that touches the GUI and holds no logic of its own.
 // macOS needs cgo (Cocoa), so a CGO_ENABLED=0 darwin build never links it.
 //
-// Clicking the icon opens an owner-drawn popup drawn by the pinned panel's
-// sheet: on Windows menu_windows.go and popup_windows.go, on macOS
-// menu_darwin.go and popup_darwin.go. Both paint with the one sheet their
-// platform already uses for the pinned panel.
+// In tray-only mode, clicking the icon opens an owner-drawn popup drawn by
+// the pinned panel's sheet: on Windows menu_windows.go and popup_windows.go,
+// on macOS menu_darwin.go and popup_darwin.go. Both paint with the one sheet
+// their platform already uses for the pinned panel. In window mode a click
+// brings the main window to the front instead (setupClicks).
 //
 // In window mode (the default) the app also has a main window with the
 // popup's rows and actions, so it is easy to find: a normal window with a
@@ -18,7 +19,6 @@
 package ui
 
 import (
-	"runtime"
 	"strings"
 	"sync"
 
@@ -56,7 +56,7 @@ type Handler struct {
 // Run shows the icon until Quit. Call it from the main goroutine: systray
 // keeps the main thread for the OS event loop.
 func Run(h Handler) {
-	r := &renderer{h: h, icons: map[tray.Color][]byte{}}
+	r := &renderer{h: h}
 	setActivation(h.Window)
 	setupClicks(r)
 	systray.Run(func() {
@@ -78,7 +78,6 @@ type renderer struct {
 	h     Handler
 	mu    sync.Mutex
 	menu  nativeMenu
-	icons map[tray.Color][]byte
 	icon  tray.Color
 	tip   string
 	drawn bool
@@ -90,16 +89,7 @@ func (r *renderer) SetIcon(c tray.Color) {
 	if r.drawn && c == r.icon {
 		return
 	}
-	b := r.icons[c]
-	if b == nil {
-		if runtime.GOOS == "windows" {
-			b = tray.IconICO(c)
-		} else {
-			b = tray.IconPNG(c, 32, tray.MenuBarInset)
-		}
-		r.icons[c] = b
-	}
-	systray.SetIcon(b)
+	setMenuBarIcon(c)
 	r.icon, r.drawn = c, true
 	if r.h.Window {
 		setWindowIcon(c)

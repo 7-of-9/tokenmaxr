@@ -69,7 +69,9 @@ commands:
                       guides the setup; --label renames this machine there)
   github status | logout
                       show, or stop, publishing to GitHub
-  settings            open the settings page (GitHub, server, label)
+  settings            show the settings: the Settings section of the app's
+                      window (Advanced… opens the settings page in the
+                      browser); headless, the settings page
   uninstall [--purge] quit the app, remove autostart and the PATH entry
                       (--purge: all local data)
   version             print the version

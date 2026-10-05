@@ -30,6 +30,10 @@ type Fake struct {
 	Vars     map[string]string
 	Pages    bool
 	MoveOnce bool // simulate another machine moving the branch once
+	// Interleave, when set, runs once just before the next branch update
+	// lands: it edits a copy of the head's files, which is committed first
+	// (as the owner editing on github.com between a read and a commit).
+	Interleave func(files map[string]string)
 	// Commits counts branch updates; Reads lists the contents paths read
 	// ("path@ref" when read at a ref).
 	Commits int
@@ -39,9 +43,15 @@ type Fake struct {
 	// NoInstall: the user has not installed the App yet.
 	NoInstall bool
 	// Revoked tokens are refused with 401, like a revoked sign-in.
-	Revoked  map[string]bool
-	seq      int
-	AuthSeen []string
+	Revoked map[string]bool
+	// Homepage is the repository's website; HomepageSets counts updates.
+	// NoAdmin refuses settings edits (403), like an installation without
+	// Administration: write.
+	Homepage     string
+	HomepageSets int
+	NoAdmin      bool
+	seq          int
+	AuthSeen     []string
 }
 
 func New() *Fake {
@@ -190,6 +200,15 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/repos/octo/agent-usage/git/refs/heads/main":
 		var req struct{ SHA string }
 		json.Unmarshal(body, &req)
+		if edit := f.Interleave; edit != nil {
+			f.Interleave = nil
+			next := maps.Clone(f.Files)
+			edit(next)
+			t, c := f.id("t"), f.id("c")
+			f.trees[t], f.commits[c], f.parents[c] = next, t, f.Head
+			f.Head, f.Files = c, next
+			f.Commits++
+		}
 		ff := false // the new commit descends from the head
 		for c := req.SHA; c != "" && !ff; c = f.parents[c] {
 			ff = c == f.Head
@@ -222,6 +241,24 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Vars[req.Name] = req.Value
 		js(201, map[string]any{})
+	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodGet:
+		var homepage any // GitHub sends null for none
+		if f.Homepage != "" {
+			homepage = f.Homepage
+		}
+		js(200, map[string]any{"full_name": "octo/agent-usage", "default_branch": "main", "homepage": homepage})
+	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodPatch && f.NoAdmin:
+		js(403, map[string]string{"message": "Resource not accessible by integration"})
+	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodPatch:
+		var in struct {
+			Homepage *string `json:"homepage"`
+		}
+		json.Unmarshal(body, &in)
+		if in.Homepage != nil {
+			f.Homepage = *in.Homepage
+			f.HomepageSets++
+		}
+		js(200, map[string]any{"full_name": "octo/agent-usage", "homepage": f.Homepage})
 	case r.URL.Path == "/repos/octo/agent-usage/pages" && r.Method == http.MethodPost:
 		if f.Pages {
 			js(409, map[string]string{"message": "GitHub Pages is already enabled."})

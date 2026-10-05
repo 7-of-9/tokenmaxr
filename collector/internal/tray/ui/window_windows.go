@@ -2,11 +2,11 @@
 
 package ui
 
-// The main window on Windows (window mode, the default): a normal
-// top-level window (WS_EX_APPWINDOW, so it has a taskbar button and an
-// Alt-Tab entry) titled "tokenmaxr", with the app's icon in its title bar
-// and on the taskbar (the status dot, in the icon's colour). Its client
-// area is the click popup's sheet: the same rows, drawn by the same
+// The main window on Windows (window mode, the default): a normal top-level
+// window (WS_EX_APPWINDOW, so it has a taskbar button and an Alt-Tab entry)
+// titled "tokenmaxr", with the app's icon in its title bar and on the
+// taskbar (the tray icon's grid, with its red badge on a problem). Its
+// client area is the click popup's sheet: the same rows, drawn by the same
 // renderer (sheet_windows.go), and the action rows work as the popup's
 // (tray.ClickWindow), except that the window stays open. Its close button
 // (and Alt-F4, Esc) minimizes it to the taskbar: collection goes on, and
@@ -280,7 +280,17 @@ func windowProc(hwnd, m, wp, lp uintptr) uintptr {
 			pShowWindow.Call(hwnd, swShowNormal)
 		}
 		pSetForegroundWindow.Call(hwnd)
-		w.syncVisible(hwnd)
+		// Brought to the front while already on screen (behind other
+		// windows): no visibility change, but the app still checks again,
+		// as macOS's redraw(front) does.
+		if !w.syncVisible(hwnd) {
+			w.mu.Lock()
+			v, h := w.visible, w.h
+			w.mu.Unlock()
+			if v && h.Shown != nil {
+				go h.Shown(true)
+			}
+		}
 		return 0
 	case wmPaint:
 		w.paint(hwnd, w.drawn)
@@ -383,8 +393,8 @@ func windowProc(hwnd, m, wp, lp uintptr) uintptr {
 }
 
 // syncVisible records whether the window is on screen (shown, not
-// minimized) and tells the app when that changes.
-func (w *mainWindow) syncVisible(hwnd uintptr) {
+// minimized) and tells the app when that changes (reported).
+func (w *mainWindow) syncVisible(hwnd uintptr) bool {
 	vis, _, _ := pIsWindowVisible.Call(hwnd)
 	iconic, _, _ := pIsIconic.Call(hwnd)
 	v := vis != 0 && iconic == 0
@@ -396,6 +406,7 @@ func (w *mainWindow) syncVisible(hwnd uintptr) {
 	if changed && h.Shown != nil {
 		go h.Shown(v)
 	}
+	return changed
 }
 
 // select_ highlights the row with action sel (ActNone: none); leaving the
@@ -443,7 +454,7 @@ func (w *mainWindow) layout(hwnd uintptr, place bool) {
 	base, st := w.base, w.st
 	w.mu.Unlock()
 	w.drawn = tray.PopupView(base, st)
-	wider := tray.PopupView(base, tray.PopupState{Copied: true, QuitArmed: true})
+	wider := tray.PopupView(base, tray.PopupState{Copied: true, QuitArmed: true, StopArmed: true})
 	if !w.measure(hwnd, w.drawn, wider) && !place {
 		return
 	}
@@ -486,8 +497,8 @@ func (w *mainWindow) outerSize() (int32, int32) {
 	return r.Right - r.Left, r.Bottom - r.Top
 }
 
-// updateIcons sets the title-bar and taskbar icons: the status dot in the
-// tray icon's colour, sized for the window's DPI.
+// updateIcons sets the title-bar and taskbar icons: the tray icon (the
+// grid, with its red badge on a problem), sized for the window's DPI.
 func (w *mainWindow) updateIcons(hwnd uintptr) {
 	w.mu.Lock()
 	c := w.color

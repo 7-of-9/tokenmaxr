@@ -13,12 +13,23 @@ import (
 )
 
 // clickOpens is what a click on the icon shows.
-const clickOpens = "the owner-drawn popup (left or right click)"
+const clickOpens = "the main window in window mode, else the owner-drawn popup (left or right click)"
 
 // setupClicks takes both clicks from systray. With a tap handler set,
 // fyne.io/systray (v1.12) calls it instead of showing its native menu.
 func setupClicks(r *renderer) {
-	tap := func() { popupTap(r.h) }
+	tap := func() {
+		// In window mode the click brings the main window forward: one UI,
+		// never the window and the popup at once (owner direction
+		// 2026-10-05: "double ui showing; fix that"). Tray only, the popup
+		// is the UI.
+		if r.h.Window {
+			closePopup()
+			showMainWindow()
+			return
+		}
+		popupTap(r.h)
+	}
 	systray.SetOnTapped(tap)
 	systray.SetOnSecondaryTapped(tap)
 }

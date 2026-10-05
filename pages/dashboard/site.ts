@@ -1,11 +1,11 @@
 // The GitHub Pages dashboard as a TokensSite (src/components/agents/site.ts): the same shell and pages as
 // d0m1.com/tokens, with the GitHub user (or the dashboard's title) where d0m1.com says "d0m1", the pages on the hash
-// router (#/ and #/agents for /tokens and /tokens/agents), and the owner let in by the key unlocking left in this
-// browser (owner.ts: handed over by tokenmaxr's settings page, or a copied link). Sign out and Sign in toggle between
-// the public view and the owner's, keeping the key. The Agents page's choices are kept encrypted with that key (the
-// origin is shared with every Pages site of the user). There is no Prompts archive here: prompt text is never
-// published.
-import { createElement, useSyncExternalStore } from 'react'
+// router (#/ and #/agents for /tokens and /tokens/agents), and the owner signed in by the owner key this browser
+// keeps (owner.ts): from GitHub (signin.ts, the device flow on any device) or handed over by tokenmaxr's Settings.
+// Sign out and Sign in toggle between the public view and the owner's, keeping the key. The Agents page's choices
+// are kept encrypted with that key (the origin is shared with every Pages site of the user). There is no Prompts
+// archive here: prompt text is never published.
+import { createElement, useSyncExternalStore, type ComponentType } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import type { Owner, TokensSite } from '../../src/components/agents/site.ts'
 import type { HandoffStatus, OwnerStore } from './owner.ts'
@@ -91,24 +91,25 @@ export function defaultTitle(pathname: string): string {
   }
 }
 
-/** The Agents page's gate: how to unlock, or the handoff from tokenmaxr's settings under way or failed (owner.ts). */
-function agentsGate(handoff: HandoffStatus) {
+/** The Agents page's gate: the GitHub sign-in (SignIn), or tokenmaxr's Settings handing the sign-in over (owner.ts). */
+function agentsGate(handoff: HandoffStatus, SignIn?: ComponentType) {
   return {
-    title: handoff === 'waiting' ? 'Unlocking…' : 'Unlock to see the agents',
-    forbiddenTitle: 'This key does not open the agents',
+    title: handoff === 'waiting' ? 'Signing in…' : 'Sign in to see the agents',
+    forbiddenTitle: 'This sign-in does not open the agents',
     description: 'Only the owner can read the plan limits: the accounts, organisations and plans behind them are published encrypted.',
-    hint: handoff === 'waiting' ? 'Waiting for tokenmaxr’s settings to hand over the key.'
-      : handoff === 'failed' ? 'Open this from tokenmaxr’s settings to unlock.'
-        : 'Open this dashboard with “Open my dashboard (unlocked)” on your collector’s Settings page. It unlocks this browser; Sign out in the header shows the public view, and Sign in brings yours back.',
+    hint: handoff === 'waiting' ? 'Waiting for tokenmaxr’s Settings to hand over the sign-in.'
+      : 'Use Sign in in the header, or Open dashboard in tokenmaxr’s Settings.',
+    SignIn,
   }
 }
 
 const noSubscribe = () => () => {}
 const notSignedOut = () => false
 
-export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStatus = 'idle', view: ViewToggle | null = null, user: string | null = null): TokensSite {
-  // Sign out keeps the key (view.setSignedOut); Sign in brings the owner's view back, or, in a browser the key has
-  // never unlocked, opens the Agents page, which says how to unlock it from tokenmaxr.
+export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStatus = 'idle', view: ViewToggle | null = null, user: string | null = null,
+  SignIn?: ComponentType): TokensSite {
+  // Sign out keeps the key (view.setSignedOut); Sign in brings the owner's view back, or, in a browser that holds
+  // no key, opens the Agents page and starts the GitHub sign-in there (SignInPanel).
   const Controls = () => {
     const state = useSyncExternalStore(store.subscribe, store.state)
     const signedOut = useSyncExternalStore(view?.subscribe ?? noSubscribe, view?.signedOut ?? notSignedOut)
@@ -118,12 +119,13 @@ export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStat
     }
     const signIn = () => {
       if (state.status === 'unlocked') view?.setSignedOut(false)
-      else navigate('/agents')
+      else navigate('/agents', { state: { signIn: true } })
     }
-    return createElement('button', { type: 'button', onClick: signIn, title: state.status === 'unlocked' ? 'Back to your view' : 'Unlock this browser from tokenmaxr' }, 'Sign in')
+    return createElement('button', { type: 'button', onClick: signIn, title: state.status === 'unlocked' ? 'Back to your view' : 'Sign in with GitHub' }, 'Sign in')
   }
   return {
-    root: { label: user ?? title, to: '/' },
+    // "7-of-9 / tokens": the user links to their GitHub profile, as "d0m1" links home on d0m1.com.
+    root: { label: user ?? title, to: '/', href: user ? `https://github.com/${user}` : undefined },
     home: '/',
     ownerPages: [{ label: 'Agents', to: '/agents' }],
     useOwner() {
@@ -135,9 +137,9 @@ export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStat
       return state.status === 'unlocked' && !signedOut ? { status: 'owner', key: `unlocked:${state.version}`, controls: true } : SIGNED_OUT
     },
     Controls,
-    agentsGate: agentsGate(handoff),
+    agentsGate: agentsGate(handoff, SignIn),
     onDenied(status) {
-      // Owner files that none of open: the key is not this fleet's (any more). Back to locked, with the gate's advice.
+      // Owner files none of which open: the key is not this fleet's (any more). Forget it: the gate offers the sign-in.
       if (status === 403) store.lock()
     },
     prefs: store.prefs,

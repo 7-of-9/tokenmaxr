@@ -2,16 +2,16 @@
 
 package ui
 
-// The main window on macOS (window mode, the default): the app is a
-// regular app with a Dock icon (the status dot, in the menu-bar icon's
-// colour) and a normal titled window, "tokenmaxr", hosting the same sheet
-// view as the popup with the same rows and actions (tray.ClickWindow: the
-// window stays open after an action). Clicking the Dock icon shows it
-// (applicationShouldHandleReopen), closing it hides it, Cmd-Q and the Dock
-// menu's Quit quit (applicationShouldTerminate), and Hide (Cmd-H) counts as
-// off screen. At login it starts hidden, with its Dock icon. The window itself lives in
-// native_darwin.go; this file is its state, as popup_darwin.go is the
-// popup's.
+// The main window on macOS (window mode, the default): the app is a regular
+// app with a Dock icon (the heatmap tile, with the red badge when the
+// menu-bar icon has it) and a normal titled window, "tokenmaxr", hosting
+// the same sheet view as the popup with the same rows and actions
+// (tray.ClickWindow: the window stays open after an action). Clicking the
+// Dock icon shows it (applicationShouldHandleReopen), closing it hides it,
+// Cmd-Q and the Dock menu's Quit quit (applicationShouldTerminate), and
+// Hide (Cmd-H) counts as off screen. At login it starts hidden, with its
+// Dock icon. The window itself lives in native_darwin.go; this file is its
+// state, as popup_darwin.go is the popup's.
 
 import (
 	"fmt"
@@ -121,7 +121,7 @@ func closeMainWindow() {
 func (w *macWindow) redraw(front bool) {
 	w.mu.Lock()
 	lines := tray.PopupView(w.base, w.st)
-	wider := tray.PopupView(w.base, tray.PopupState{Copied: true, QuitArmed: true})
+	wider := tray.PopupView(w.base, tray.PopupState{Copied: true, QuitArmed: true, StopArmed: true})
 	w.mu.Unlock()
 	text, kinds, spans, m, wd, ht := sheetBox(lines, wider, false)
 	w.mu.Lock()

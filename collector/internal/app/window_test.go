@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -209,8 +210,24 @@ func TestSettingsTrayOnly(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 	page := embeddedSettingsPage(t)
-	if !strings.Contains(page, `id="app-tray"`) || !strings.Contains(page, "Run only in the system tray / menu bar") {
+	if !strings.Contains(page, `id="app-tray"`) || !strings.Contains(page, "Run only in the system tray") {
 		t.Fatal("the page lacks the tray-only checkbox")
+	}
+	// The basics (dashboards, Stop publishing, the display mode) come first;
+	// everything else is under Advanced, closed.
+	adv := strings.Index(page, `<details id="advanced">`)
+	if strings.Contains(page, `id="sv-dashboard"`) {
+		t.Error("the page links a server dashboard")
+	}
+	for _, id := range []string{`id="gh-dashboard"`, `id="gh-signout"`, `id="gh-connect"`, `id="app-tray"`} {
+		if i := strings.Index(page, id); i < 0 || adv < 0 || i > adv {
+			t.Errorf("%s not above Advanced", id)
+		}
+	}
+	for _, id := range []string{`id="gh-signin"`, `id="gh-label"`, `id="sv-input"`} {
+		if i := strings.Index(page, id); i < adv {
+			t.Errorf("%s not under Advanced", id)
+		}
 	}
 }
 
@@ -254,7 +271,7 @@ func TestStartMenuShortcutPath(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	s := a.startMenuShortcut(`P:\Programs`)
 	if s.Path != filepath.Join(`P:\Programs`, "tokenmaxr.lnk") || s.Target != filepath.Join(paths.Bin(a.Home), paths.ExeName(true)) ||
-		s.Args != "--home "+winArg(a.Home)+" app" || s.Dir != paths.Bin(a.Home) || s.Icon != filepath.Join(paths.Bin(a.Home), "tokenmaxr.ico") {
+		s.Args != "--home "+winArg(a.Home)+" app" || s.Dir != paths.Bin(a.Home) || s.Icon != filepath.Join(paths.Bin(a.Home), startMenuIconName()) {
 		t.Fatalf("shortcut %+v", s)
 	}
 	// Another home is no business of the real Start menu.
@@ -379,6 +396,62 @@ func TestUpgradeDesktopEntries(t *testing.T) {
 	}
 	if len(sm.made) != 1 {
 		t.Fatalf("start menu entry added again: %+v", sm.made)
+	}
+
+	// An entry with an earlier version's icon gets this one's, under its
+	// own name, saved again.
+	os.WriteFile(filepath.Join(sm.programs, "tokenmaxr.lnk"), []byte("lnk"), 0o600)
+	ico := a.startMenuShortcut(sm.programs).Icon
+	old := filepath.Join(paths.Bin(a.Home), "tokenmaxr.ico")
+	os.Remove(ico)
+	os.WriteFile(old, []byte("an old icon"), 0o644)
+	if err := a.Desktop(context.Background(), DesktopOptions{UI: func(*Desktop) {}}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(ico); !bytes.Equal(b, tray.IconICO(tray.Green)) || len(sm.made) != 2 || fileExists(old) {
+		t.Fatalf("icon not refreshed: %d bytes, %d links made, old kept %v", len(b), len(sm.made), fileExists(old))
+	}
+}
+
+// An existing Start-menu entry gets this version's icon at start in both
+// modes, under a name from its contents (the shell caches icons by path),
+// and the old icons go; tray only, a missing entry is never made.
+func TestUpgradeStartMenuIcon(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	sm := &fakeStartMenu{programs: filepath.Join(t.TempDir(), "Programs")}
+	a.StartMenu = sm
+	os.MkdirAll(a.Home, 0o700)
+	if err := a.OpenLog(nil); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Log.Close()
+	cfg := store.Config{TrayOnly: true}
+	a.upgradeStartMenu(&cfg)
+	if len(sm.made) != 0 {
+		t.Fatalf("tray only made an entry: %+v", sm.made)
+	}
+	lnk := StartMenuShortcutPath(sm.programs)
+	os.MkdirAll(sm.programs, 0o755)
+	os.WriteFile(lnk, []byte("lnk"), 0o600)
+	bin := paths.Bin(a.Home)
+	os.MkdirAll(bin, 0o755)
+	old := filepath.Join(bin, "tokenmaxr.ico")
+	os.WriteFile(old, []byte("an old icon"), 0o644)
+	a.upgradeStartMenu(&cfg)
+	ico := filepath.Join(bin, startMenuIconName())
+	if len(sm.made) != 1 || sm.made[0].Icon != ico || fileExists(old) {
+		t.Fatalf("tray only: links %+v, old icon kept %v", sm.made, fileExists(old))
+	}
+	if b, _ := os.ReadFile(ico); !bytes.Equal(b, tray.IconICO(tray.Green)) {
+		t.Fatal("icon not written")
+	}
+	if !strings.HasPrefix(startMenuIconName(), "tokenmaxr-") || len(startMenuIconName()) != len("tokenmaxr-01234567.ico") {
+		t.Fatalf("icon name %q", startMenuIconName())
+	}
+	// Up to date: nothing is saved again.
+	a.upgradeStartMenu(&cfg)
+	if len(sm.made) != 1 {
+		t.Fatalf("saved again: %+v", sm.made)
 	}
 }
 

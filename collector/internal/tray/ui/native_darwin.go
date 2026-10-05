@@ -103,7 +103,7 @@ static void d0m1SetRegular(const char *name) {
 	d0m1ObserveHide();
 }
 
-// The Dock icon: the status dot (PNG bytes, copied before returning).
+// The Dock icon: the heatmap tile (PNG bytes, copied before returning).
 static void d0m1SetDockIcon(const void *png, int n) {
 	if (!png || n <= 0) return;
 	NSData *d = [NSData dataWithBytes:png length:(NSUInteger)n];
@@ -144,6 +144,94 @@ static void d0m1OnMain(void (^block)(void)) {
 	}
 }
 
+// d0m1FindStatusButton is the menu-bar item's button under v (systray's
+// item, the app's only one), or nil.
+static NSStatusBarButton *d0m1FindStatusButton(NSView *v) {
+	if ([v isKindOfClass:[NSStatusBarButton class]]) return (NSStatusBarButton *)v;
+	for (NSView *s in v.subviews) {
+		NSStatusBarButton *b = d0m1FindStatusButton(s);
+		if (b) return b;
+	}
+	return nil;
+}
+
+// d0m1StatusButton is the menu-bar item's button (systray's), or nil. Main
+// thread.
+static NSStatusBarButton *d0m1StatusButton(void) {
+	for (NSWindow *win in NSApp.windows) {
+		if ([NSStringFromClass(win.class) rangeOfString:@"StatusBar"].location == NSNotFound) continue;
+		NSStatusBarButton *btn = d0m1FindStatusButton(win.contentView);
+		if (btn) return btn;
+	}
+	return nil;
+}
+
+// d0m1Image16 is a 16 pt image with two bitmap reps, the 16 px PNG for 1x
+// displays and the 32 px one for Retina, so each draws pixels made for it
+// (a lone 32 px rep is halved on a 1x display, and its gaps blur). nil if
+// either PNG does not decode.
+static NSImage *d0m1Image16(const void *p1, int n1, const void *p2, int n2) {
+	if (!p1 || n1 <= 0 || !p2 || n2 <= 0) return nil;
+	NSBitmapImageRep *r1 = [NSBitmapImageRep imageRepWithData:[NSData dataWithBytes:p1 length:(NSUInteger)n1]];
+	NSBitmapImageRep *r2 = [NSBitmapImageRep imageRepWithData:[NSData dataWithBytes:p2 length:(NSUInteger)n2]];
+	if (!r1 || !r2) return nil;
+	r1.size = NSMakeSize(16, 16);
+	r2.size = NSMakeSize(16, 16);
+	NSImage *img = [[NSImage alloc] initWithSize:NSMakeSize(16, 16)];
+	[img addRepresentation:r1];
+	[img addRepresentation:r2];
+	return img;
+}
+
+// d0m1SetStatusGreen sets the menu-bar icon to the template grid at 16 and
+// 32 px (d0m1Image16). 1 when done; 0 leaves systray's single 32 px
+// template.
+static int d0m1SetStatusGreen(const void *p1, int n1, const void *p2, int n2) {
+	__block int ok = 0;
+	d0m1OnMain(^{
+		NSImage *img = d0m1Image16(p1, n1, p2, n2);
+		NSStatusBarButton *btn = d0m1StatusButton();
+		if (!img || !btn) return;
+		img.template = YES;
+		btn.image = img;
+		ok = 1;
+	});
+	return ok;
+}
+
+// d0m1SetStatusRed replaces the menu-bar icon (systray's template, its
+// badge in the bar's colour) with one drawn each time the bar draws it:
+// the grid in the bar's text colour, so it follows a light bar and a dark
+// one as a template does, and the badge in red, which a template cannot
+// hold. 1 when done; 0 leaves the template. Each layer comes at 16 and 32
+// px (d0m1Image16), so a 1x display gets its own pixels too.
+static int d0m1SetStatusRed(const void *g1, int g1n, const void *g2, int g2n, const void *b1, int b1n, const void *b2, int b2n) {
+	__block int ok = 0;
+	d0m1OnMain(^{
+		NSImage *g = d0m1Image16(g1, g1n, g2, g2n);
+		NSImage *b = d0m1Image16(b1, b1n, b2, b2n);
+		if (!g || !b) return;
+		NSStatusBarButton *btn = d0m1StatusButton();
+		if (!btn) return;
+		NSImage *img = [NSImage imageWithSize:NSMakeSize(16, 16) flipped:NO drawingHandler:^BOOL(NSRect r) {
+			// The grid's alpha, filled with the bar's text colour (resolved
+			// for the appearance being drawn), in a layer of its own so the
+			// fill touches nothing else.
+			CGContextRef ctx = NSGraphicsContext.currentContext.CGContext;
+			CGContextBeginTransparencyLayerWithRect(ctx, NSRectToCGRect(r), NULL);
+			[g drawInRect:r];
+			[NSColor.labelColor set];
+			NSRectFillUsingOperation(r, NSCompositingOperationSourceIn);
+			CGContextEndTransparencyLayer(ctx);
+			[b drawInRect:r];
+			return YES;
+		}];
+		btn.image = img;
+		ok = 1;
+	});
+	return ok;
+}
+
 // d0m1ReplyTerminate ends a held termination (the app's quit is done): 1
 // when there was one, so the app exits through it rather than by stopping
 // the event loop.
@@ -172,24 +260,40 @@ extern void d0m1WindowKey(int key);
 extern void d0m1WindowVisible(int on);
 extern void d0m1WindowResign(void);
 
-int d0m1Pad = 12;
+int d0m1Pad = 16;
 int d0m1LineH = 0;
-int d0m1RuleH = 9;
+int d0m1RuleH = 15;
 int d0m1ActionH = 0;
 double d0m1CharW = 0;
 static NSFont *d0m1Mono;
 static NSFont *d0m1LightFont;
+static NSFont *d0m1StrongFont; // the header's product name
+// The header icons (tray.BrandIcon): [0] green, [1] red.
+static NSImage *d0m1BrandImg[2];
 
 static void d0m1Measure(void) {
 	if (d0m1LineH > 0) return;
 	d0m1Mono = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
 	d0m1LightFont = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightLight];
+	d0m1StrongFont = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightBold];
 	NSSize sz = [@"Mg" sizeWithAttributes:@{NSFontAttributeName : d0m1Mono}];
-	d0m1LineH = (int)ceil(sz.height);
-	if (d0m1LineH < 1) d0m1LineH = 14;
+	d0m1LineH = (int)ceil(sz.height) + 3; // a little air between rows
+	if (d0m1LineH < 4) d0m1LineH = 17;
 	d0m1ActionH = d0m1LineH + 8;
 	// The monospace advance, for the column under the pointer (links).
 	d0m1CharW = [@"0000000000" sizeWithAttributes:@{NSFontAttributeName : d0m1Mono}].width / 10.0;
+}
+
+// d0m1SetBrand keeps the header icons (PNG bytes, copied), drawn at the
+// brand size whatever their pixels.
+static void d0m1SetBrand(const void *g, int gn, const void *r, int rn) {
+	if (!g || gn <= 0 || !r || rn <= 0) return;
+	NSData *gd = [NSData dataWithBytes:g length:(NSUInteger)gn];
+	NSData *rd = [NSData dataWithBytes:r length:(NSUInteger)rn];
+	d0m1OnMain(^{
+		d0m1BrandImg[0] = [[NSImage alloc] initWithData:gd];
+		d0m1BrandImg[1] = [[NSImage alloc] initWithData:rd];
+	});
 }
 
 static void d0m1Metrics(void) {
@@ -377,24 +481,42 @@ static BOOL d0m1Dragging;
 		NSUInteger n = MIN(lines.count, (NSUInteger)kinds.length);
 		for (NSUInteger i = 0; i < n; i++) {
 			int kind = [kinds characterAtIndex:i] - '0';
-			int rh = [self rowH:kind];
+			int age = 0, ageEnd = 0, hi = 0, hiEnd = 0, quiet = 0, selected = 0, l1 = 0, l1End = 0, l2 = 0, l2End = 0;
+			int indent = 0, brand = 0, span = 0, rowH = 0;
+			if (i < spanLines.count) {
+				sscanf(spanLines[i].UTF8String, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", &age, &ageEnd, &hi, &hiEnd, &quiet, &selected,
+					&l1, &l1End, &l2, &l2End, &indent, &brand, &span, &rowH);
+			}
+			int rh = rowH > 0 ? rowH : [self rowH:kind];
 			CGFloat rowBottom = H - yTop - rh;
 			if (kind == 4) {
 				[d0m1RGB(0x3d444d) setFill];
 				NSRectFill(NSMakeRect(self.pad, rowBottom + rh / 2.0, b.size.width - 2 * self.pad, 1));
 			} else {
-				int age = 0, ageEnd = 0, hi = 0, hiEnd = 0, quiet = 0, selected = 0, l1 = 0, l1End = 0, l2 = 0, l2End = 0;
-				if (i < spanLines.count) {
-					sscanf(spanLines[i].UTF8String, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", &age, &ageEnd, &hi, &hiEnd, &quiet, &selected,
-						&l1, &l1End, &l2, &l2End);
+				if (brand > 0) {
+					// The header icon, centred on the header's rows.
+					NSImage *img = d0m1BrandImg[kind == 1 ? 0 : 1];
+					CGFloat top = yTop + (span - brand) / 2.0;
+					[img drawInRect:NSMakeRect(self.pad, H - top - brand, brand, brand) fromRect:NSZeroRect
+						operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:@{NSImageHintInterpolation : @(NSImageInterpolationHigh)}];
 				}
 				if (selected) {
 					[d0m1RGB(0x17331f) setFill];
 					NSRectFill(NSMakeRect(self.pad - 6, rowBottom, b.size.width - 2 * (self.pad - 6), rh));
 				}
-				NSAttributedString *attr = d0m1LineAttr(lines[i], kind, age, ageEnd, hi, hiEnd, quiet, selected, l1, l1End, l2, l2End);
+				NSAttributedString *attr;
+				if (indent > 0 && (kind == 1 || kind == 2)) {
+					// The heading beside the icon: the product name strong, then the machine.
+					NSMutableAttributedString *h = [[NSMutableAttributedString alloc] init];
+					NSUInteger n = MIN((NSUInteger)MAX(hiEnd, 0), lines[i].length);
+					d0m1Append(h, lines[i], 0, n, d0m1StrongFont, d0m1RGB(0xffffff));
+					d0m1Append(h, lines[i], n, lines[i].length, d0m1Mono, d0m1RGB(0xc9d1d9));
+					attr = h;
+				} else {
+					attr = d0m1LineAttr(lines[i], kind, age, ageEnd, hi, hiEnd, quiet, selected, l1, l1End, l2, l2End);
+				}
 				NSSize ts = attr.size;
-				[attr drawInRect:NSMakeRect(self.pad, rowBottom + (rh - ts.height) / 2.0, ts.width, ts.height)];
+				[attr drawInRect:NSMakeRect(self.pad + indent, rowBottom + (rh - ts.height) / 2.0, ts.width, ts.height)];
 			}
 			yTop += rh;
 		}
@@ -449,7 +571,18 @@ static void d0m1Fill(D0m1SheetView *v, NSButton *close, NSString *t, NSString *k
 	v.lineH = lineH;
 	v.ruleH = ruleH;
 	v.actionH = actionH;
-	close.frame = NSMakeRect(w - lineH - 6, h - lineH - 6, lineH, lineH);
+	// The × sits centred on the first row (the branded heading is taller
+	// than a line), as the Windows sheet's closeRect.
+	int first = lineH;
+	if (k.length > 0) {
+		int f[14] = {0};
+		NSString *s0 = [sp componentsSeparatedByString:@"\n"].firstObject;
+		if (s0) sscanf(s0.UTF8String, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", &f[0], &f[1], &f[2], &f[3], &f[4], &f[5],
+			&f[6], &f[7], &f[8], &f[9], &f[10], &f[11], &f[12], &f[13]);
+		first = f[13] > 0 ? f[13] : [v rowH:[k characterAtIndex:0] - '0'];
+	}
+	CGFloat top = pad + (first - lineH) / 2.0;
+	close.frame = NSMakeRect(w - lineH - 6, h - top - lineH, lineH, lineH);
 	[v setNeedsDisplay:YES];
 }
 
@@ -790,11 +923,13 @@ import (
 	"sync"
 	"unsafe"
 
+	"fyne.io/systray"
+
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
 // setActivation runs on the main thread (systray locks it at init). Window
-// mode is a regular app: a Dock icon (the status dot), an app menu with
+// mode is a regular app: a Dock icon (the heatmap tile), an app menu with
 // Quit (Cmd-Q), and a click on the Dock icon shows the main window. Tray
 // only, it is a menu-bar accessory, as before.
 func setActivation(window bool) {
@@ -815,8 +950,28 @@ func replyTerminate() bool { return C.d0m1ReplyTerminate() != 0 }
 
 // setDockIcon draws the Dock icon in c.
 func setDockIcon(c tray.Color) {
-	b := tray.IconPNG(c, 256, tray.DockInset)
+	b := tray.IconPNG(c, 256, tray.Tile)
 	C.d0m1SetDockIcon(unsafe.Pointer(&b[0]), C.int(len(b)))
+}
+
+// setMenuBarIcon shows the menu-bar icon in c: a template image (macOS
+// paints it in the bar's colour) with 16 and 32 px reps
+// (d0m1SetStatusGreen), and for red the grid in the bar's colour with a red
+// badge (d0m1SetStatusRed). systray's single 32 px template, set first,
+// stays when the item has no button yet (red: its badge in the bar's
+// colour).
+func setMenuBarIcon(c tray.Color) {
+	tpl := tray.IconPNG(c, 32, tray.Template)
+	systray.SetTemplateIcon(tpl, tpl)
+	if c == tray.Green {
+		t1 := tray.IconPNG(c, 16, tray.Template)
+		C.d0m1SetStatusGreen(unsafe.Pointer(&t1[0]), C.int(len(t1)), unsafe.Pointer(&tpl[0]), C.int(len(tpl)))
+		return
+	}
+	g1, b1 := tray.MenuBarRedParts(16)
+	g2, b2 := tray.MenuBarRedParts(32)
+	C.d0m1SetStatusRed(unsafe.Pointer(&g1[0]), C.int(len(g1)), unsafe.Pointer(&g2[0]), C.int(len(g2)),
+		unsafe.Pointer(&b1[0]), C.int(len(b1)), unsafe.Pointer(&b2[0]), C.int(len(b2)))
 }
 
 // showMainNative draws the main window's rows (creating it, hidden, the
@@ -863,13 +1018,31 @@ func textWidth(s string) int {
 }
 
 // encodeLines is the sheet's wire form: kinds one digit a line, spans
-// "age,ageEnd,hi,hiEnd,quiet,selected".
-func encodeLines(lines []tray.PanelLine) (text, kinds, spans string) {
+// "age,ageEnd,hi,hiEnd,quiet,selected,l1,l1End,l2,l2End,indent,brand,span,rowH"
+// (rowH: the row's height, tray.Metrics.RowH):
+// the header's rows (tray.Brand) start indent further right, and the
+// heading row draws the brand icon, brand points square, centred on the
+// span points the header's rows take. The heading's text is
+// tray.HeadingText, its name (hi..hiEnd) set strong.
+func encodeLines(lines []tray.PanelLine, m tray.Metrics) (text, kinds, spans string) {
 	var tb, kb, sb strings.Builder
+	br := m.Brand(lines)
 	for i, l := range lines {
 		if i > 0 {
 			tb.WriteByte('\n')
 			sb.WriteByte('\n')
+		}
+		indent, brand, span := 0, 0, 0
+		if i < br.Rows {
+			indent = br.Indent
+		}
+		if i == 0 && br.Rows > 0 {
+			brand = br.Size
+			for _, h := range lines[:br.Rows] {
+				span += m.RowH(h)
+			}
+			l.Text, l.HiEnd = tray.HeadingText(l)
+			l.Hi = 0
 		}
 		tb.WriteString(l.Text)
 		kb.WriteString(strconv.Itoa(int(l.Kind)))
@@ -886,7 +1059,8 @@ func encodeLines(lines []tray.PanelLine) (text, kinds, spans string) {
 				links[2*k], links[2*k+1] = ln.From, ln.To
 			}
 		}
-		fmt.Fprintf(&sb, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", l.Age, l.AgeEnd, l.Hi, l.HiEnd, quiet, sel, links[0], links[1], links[2], links[3])
+		fmt.Fprintf(&sb, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", l.Age, l.AgeEnd, l.Hi, l.HiEnd, quiet, sel, links[0], links[1], links[2], links[3],
+			indent, brand, span, m.RowH(l))
 	}
 	return tb.String(), kb.String(), sb.String()
 }
@@ -896,14 +1070,23 @@ func encodeLines(lines []tray.PanelLine) (text, kinds, spans string) {
 // leaves room for the × beside the first line (not in the main window).
 func sheetBox(lines, wider []tray.PanelLine, close bool) (text, kinds, spans string, m tray.Metrics, w, h int) {
 	m = sheetMetrics()
-	text, kinds, spans = encodeLines(lines)
+	brandIcons.Do(func() { setBrandIcons(m) })
+	text, kinds, spans = encodeLines(lines, m)
 	maxW := 0
 	for _, set := range [][]tray.PanelLine{lines, wider} {
+		br := m.Brand(set)
 		for i, l := range set {
 			if l.Kind == tray.LineRule {
 				continue
 			}
 			tw := textWidth(l.Text)
+			if i < br.Rows {
+				t := l.Text
+				if i == 0 {
+					t, _ = tray.HeadingText(l)
+				}
+				tw = br.Indent + textWidth(t) + 2 // + the strong name's extra width
+			}
 			if i == 0 && close {
 				tw += 10 + m.LineH // the × beside the status line
 			}
@@ -913,6 +1096,20 @@ func sheetBox(lines, wider []tray.PanelLine, close bool) (text, kinds, spans str
 		}
 	}
 	return text, kinds, spans, m, maxW + 2*m.Pad, m.Height(lines)
+}
+
+// brandIcons hands the sheet its header icons once (tray.BrandIcon, green
+// and red, at 3x the point size).
+var brandIcons sync.Once
+
+func setBrandIcons(m tray.Metrics) {
+	h := []tray.PanelLine{{Kind: tray.LineOK, Header: true}, {Kind: tray.LineDim, Header: true}, {Kind: tray.LineDim, Header: true}}
+	px := max(48, 3*m.Brand(h).Size)
+	g, r := tray.BrandPNG(tray.Green, px), tray.BrandPNG(tray.Red, px)
+	if len(g) == 0 || len(r) == 0 {
+		return
+	}
+	C.d0m1SetBrand(unsafe.Pointer(&g[0]), C.int(len(g)), unsafe.Pointer(&r[0]), C.int(len(r)))
 }
 
 func cstr(s string) *C.char {

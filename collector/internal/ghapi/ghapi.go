@@ -457,6 +457,27 @@ func (c *Client) CreateVariable(ctx context.Context, repo, name, value string) e
 	return err
 }
 
+// --- repository ---
+
+// RepoInfo is what the collector reads of a repository's settings.
+type RepoInfo struct {
+	// Homepage is the repository's website ("" when unset; GitHub sends
+	// null).
+	Homepage      string `json:"homepage"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+// Repository returns repo's settings.
+func (c *Client) Repository(ctx context.Context, repo string) (RepoInfo, error) {
+	var r RepoInfo
+	return r, c.do(ctx, http.MethodGet, c.API, "/repos/"+repo, nil, &r)
+}
+
+// SetHomepage sets repo's website (the App's Administration: write).
+func (c *Client) SetHomepage(ctx context.Context, repo, homepage string) error {
+	return c.do(ctx, http.MethodPatch, c.API, "/repos/"+repo, map[string]string{"homepage": homepage}, nil)
+}
+
 // --- Pages ---
 
 // EnablePages switches GitHub Pages on, built by Actions. Already enabled is fine.

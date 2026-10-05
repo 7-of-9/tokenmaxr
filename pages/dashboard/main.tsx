@@ -4,9 +4,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
+import { BackgroundThemeProvider } from '../../src/contexts/BackgroundThemeContext'
 import Dashboard from './Dashboard'
 import { githubSource } from './githubSource'
 import { consumeUnlockFragment, createOwnerStore, createUnlockHandoff, indexedDbVault, memoryVault, ownerStorageName } from './owner'
+import { createDeviceSignIn, pagesRepository, parseDashboardConfig, type DashboardConfig } from './signin'
 import { storedViewToggle } from './site'
 // d0m1.com's site-wide styles, which its token pages sit on; pages.css adds the two faces they use.
 import '../../src/index.css'
@@ -34,10 +36,11 @@ const owner = createOwnerStore({
   channel,
   events: window,
 })
-// Before the router reads the address: an unlock link's key leaves the address bar at once, and #unlock (tokenmaxr's
-// settings page handing the key over by postMessage) asks the window that opened this one for it. So does either
-// opened in a tab already showing the dashboard (the same document: no reload, only popstate and hashchange), and
-// these listeners come before the router's. Both land on #/agents.
+// Before the router reads the address: a copied link's key (#unlock=<key>) leaves the address bar at once, and
+// #unlock (tokenmaxr's Settings handing the key over by postMessage, "Open dashboard") asks the window that opened
+// this one for it. So does either opened in a tab already showing the dashboard (the same document: no reload, only
+// popstate and hashchange), and these listeners come before the router's. Both land on #/agents. (The fragment
+// names are the collector's: they stay as they are.)
 const handoff = createUnlockHandoff({ window, store: owner })
 const takeUnlock = () => {
   if (!handoff.consume(window.location, window.history)) consumeUnlockFragment(window.location, window.history, owner)
@@ -50,6 +53,25 @@ const source = githubSource({ ownerKey: owner.ready })
 // Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
 const view = storedViewToggle(storage, `${name}:signed-out`, window)
 
+// tokenmaxr.json, served beside the page: the background (off unless "background": true) and, on a custom domain,
+// the repository. Missing or unreadable: the defaults.
+const config: Promise<DashboardConfig> = fetch('tokenmaxr.json', { cache: 'no-cache', headers: { Accept: 'application/json' } })
+  .then(response => (response.ok ? response.json() : null))
+  .catch(() => null)
+  .then(parseDashboardConfig)
+const repository = () => config.then(c => c.repository ?? pagesRepository(window.location.hostname, window.location.pathname))
+// Sign in with GitHub (device flow through the relay): the owner key from the repository's fleet key, checked on
+// the published owner files, kept as the handoff keeps it. A signed-out view flag left from before is cleared.
+const signIn = createDeviceSignIn({
+  relay: __TOKENMAXR_RELAY__,
+  repository,
+  check: (key, signal) => source.checkOwnerKey(key, signal),
+  accept: async bytes => {
+    await owner.unlock(bytes)
+    view.setSignedOut(false)
+  },
+})
+
 // The earlier dashboard kept its period in the hash (#7, #30, #90, #365, #0). The router owns the hash now
 // (a hash router needs no server fallback on Pages): carry the nearest period over.
 if (!window.location.hash.startsWith('#/')) {
@@ -57,10 +79,20 @@ if (!window.location.hash.startsWith('#/')) {
   window.history.replaceState(null, '', `#/${legacy[window.location.hash] ?? ''}`)
 }
 
+// As on d0m1.com (App.tsx): console.log and console.info are off unless ?debug=true, before the hash or in it
+// (#/?debug=true): the background video (when tokenmaxr.json turns it on) narrates every play attempt.
+const debug = [window.location.search, window.location.hash.split('?')[1] ?? ''].some(q => new URLSearchParams(q).get('debug') === 'true')
+if (!debug) {
+  console.log = () => {}
+  console.info = () => {}
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
-      <Dashboard source={source} owner={owner} handoff={handoff} view={view} />
+      <BackgroundThemeProvider>
+        <Dashboard source={source} owner={owner} handoff={handoff} view={view} config={config} signIn={signIn} repository={repository} />
+      </BackgroundThemeProvider>
     </HashRouter>
   </StrictMode>,
 )

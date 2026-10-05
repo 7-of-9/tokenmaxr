@@ -82,13 +82,17 @@ type Config struct {
 // KeptPrefs are an adopted machine's own choices (GitHubConfig.LocalPrefs)
 // with their values.
 type KeptPrefs struct {
-	LocalPrefs         []string `json:"localPrefs"`
-	ShowCountry        bool     `json:"showCountry,omitempty"`
-	ShowAccountHistory bool     `json:"showAccountHistory,omitempty"`
+	LocalPrefs  []string `json:"localPrefs"`
+	ShowCountry bool     `json:"showCountry,omitempty"`
 }
 
-// GitHubConfig is the GitHub publisher's settings. Everything published is
-// public: daily token and prompt totals, quota meters, and Label.
+// GitHubConfig is the GitHub publisher's settings. What it publishes is
+// public (daily token and prompt totals, Codex account history, Label),
+// apart from the quota meters, which are encrypted for the owner. Since
+// collector 0.4.7 the meters and the account history are always published:
+// an older config's "noQuota" and "showAccountHistory" are ignored (owner
+// direction 2026-10-05: "quota meters are private - so just remove that
+// option", "codex option ... just remove it - default it to on").
 type GitHubConfig struct {
 	// Repo is "owner/name" of the publishing repository; Branch its branch.
 	Repo   string `json:"repo"`
@@ -97,16 +101,10 @@ type GitHubConfig struct {
 	Label string `json:"label"`
 	// PublishEveryMinutes is the publishing interval (default 30, minimum 10).
 	PublishEveryMinutes int `json:"publishEveryMinutes,omitempty"`
-	// NoQuota leaves quota meters (plan, % used, reset time) unpublished.
-	NoQuota bool `json:"noQuota,omitempty"`
 	// ShowCountry publishes the country of this machine's time zone (a flag
 	// on the dashboard). Off by default: the repository is public and tied to
 	// its owner. Never the zone itself, only the two-letter country.
 	ShowCountry bool `json:"showCountry,omitempty"`
-	// ShowAccountHistory publishes account-usage.json: Codex's account-wide
-	// daily totals and this machine's tokens per UTC day. Off by default:
-	// next to the local-date rows, UTC days reveal the time zone's offset.
-	ShowAccountHistory bool `json:"showAccountHistory,omitempty"`
 	// ShareWithFleet shares this machine's own GitHub sign-in with the other
 	// machines of its fleet through the server, sealed with the fleet key
 	// (absent: on; see SharesWithFleet).
@@ -114,19 +112,16 @@ type GitHubConfig struct {
 	// Adopted: the sign-in is one another machine of the fleet shared through
 	// the server, not this machine's own; it is never shared again from here.
 	Adopted bool `json:"adopted,omitempty"`
-	// LocalPrefs names the shared options (PrefShowCountry,
-	// PrefShowAccountHistory) chosen on this machine: an adopted sign-in's
+	// LocalPrefs names the shared options (PrefShowCountry) chosen on this
+	// machine: an adopted sign-in's
 	// sharer never changes those. The others follow the sharer's choices,
 	// and PrefsFrom is the sharer's public label ("" while none were taken).
 	LocalPrefs []string `json:"localPrefs,omitempty"`
 	PrefsFrom  string   `json:"prefsFrom,omitempty"`
 }
 
-// The options a sharer passes on to the machines that adopt its sign-in.
-const (
-	PrefShowCountry        = "showCountry"
-	PrefShowAccountHistory = "showAccountHistory"
-)
+// The option a sharer passes on to the machines that adopt its sign-in.
+const PrefShowCountry = "showCountry"
 
 // SharesWithFleet reports whether this machine's own sign-in is shared with
 // the fleet (the default), never an adopted one.
@@ -568,6 +563,14 @@ type GitHubState struct {
 	// QuotaSwept is the repository@branch whose quota.json files (published
 	// in the clear before 0.4.2, by any machine) this machine deleted.
 	QuotaSwept string `json:"quotaSwept,omitempty"`
+	// Linked is the repository@branch whose tokenmaxr.json records that its
+	// website and README were linked to the dashboard (ghpub.LinkDashboard):
+	// a cache, so later publishes read nothing. The record that counts is the
+	// repository's, which every machine of the fleet reads.
+	Linked string `json:"linked,omitempty"`
+	// LinkRetryAt: the installation could not set the repository's website
+	// (no Administration: write); it is tried again from then (daily).
+	LinkRetryAt time.Time `json:"linkRetryAt,omitzero"`
 }
 
 // OwnerState identifies what a committed owner.json says without keeping it

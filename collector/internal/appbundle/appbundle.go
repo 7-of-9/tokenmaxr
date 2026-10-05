@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
@@ -101,6 +102,13 @@ func Ensure(dirs []string, exe, version string) (path string, changed bool, err 
 		changed = true
 	}
 	if changed {
+		// Finder, Spotlight and Launchpad cache a bundle's icon by the
+		// bundle and its modification date, and replacing a file inside
+		// changes only its own folder's: touch the bundle and its
+		// Info.plist, so they read the new icon. Best effort.
+		now := time.Now()
+		_ = os.Chtimes(filepath.Join(path, "Contents", "Info.plist"), now, now)
+		_ = os.Chtimes(path, now, now)
 		// Let LaunchServices (and so Spotlight and `open -a`) see it now.
 		register("-f", path)
 	}
@@ -208,8 +216,8 @@ func xmlText(s string) string {
 	return b.String()
 }
 
-// ICNS is the app icon: the Dock tile's green dot at every size Finder
-// asks for, as PNG entries.
+// ICNS is the app icon: the Dock's heatmap tile at every size Finder asks
+// for, as PNG entries.
 func ICNS() []byte {
 	entries := []struct {
 		kind string
@@ -220,7 +228,7 @@ func ICNS() []byte {
 	}
 	var body bytes.Buffer
 	for _, e := range entries {
-		png := tray.IconPNG(tray.Green, e.size, tray.DockInset)
+		png := tray.IconPNG(tray.Green, e.size, tray.Tile)
 		body.WriteString(e.kind)
 		binary.Write(&body, binary.BigEndian, uint32(8+len(png)))
 		body.Write(png)

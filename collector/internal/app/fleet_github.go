@@ -104,7 +104,7 @@ func (a *App) fleetGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 func (a *App) fleetShare(cfg *store.Config, sec store.Secrets) fleetshare.Share {
 	return fleetshare.Share{Token: sec.GitHub.Token, Login: sec.GitHub.Login, UserID: sec.GitHub.UserID,
 		Repo: cfg.GitHub.Repo, Branch: cfg.GitHub.Branch, SharedAt: a.Now().UTC(),
-		Prefs: &fleetshare.Prefs{From: cfg.GitHub.Label, ShowCountry: cfg.GitHub.ShowCountry, ShowAccountHistory: cfg.GitHub.ShowAccountHistory}}
+		Prefs: &fleetshare.Prefs{From: cfg.GitHub.Label, ShowCountry: cfg.GitHub.ShowCountry, ShowAccountHistory: true}}
 }
 
 // fleetFailed records a failed step; it is retried after fleetRetryEvery.
@@ -217,7 +217,7 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 		if adopted {
 			if gh := cfg.GitHub; len(gh.LocalPrefs) > 0 {
 				// The choices made here outlast the share (adoptGitHub).
-				cfg.GitHubKeptPrefs = &store.KeptPrefs{LocalPrefs: gh.LocalPrefs, ShowCountry: gh.ShowCountry, ShowAccountHistory: gh.ShowAccountHistory}
+				cfg.GitHubKeptPrefs = &store.KeptPrefs{LocalPrefs: gh.LocalPrefs, ShowCountry: gh.ShowCountry}
 			}
 			cfg.GitHub, sec.GitHub = nil, nil
 			if err := a.saveGitHub(cfg, sec); err != nil {
@@ -284,7 +284,6 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 			// Chosen here under a share since withdrawn: still this machine's.
 			gh.LocalPrefs = slices.Clone(kp.LocalPrefs)
 			gh.ShowCountry = kp.ShowCountry && gh.LocalPref(store.PrefShowCountry)
-			gh.ShowAccountHistory = kp.ShowAccountHistory && gh.LocalPref(store.PrefShowAccountHistory)
 		}
 	}
 	gh.Repo, gh.Branch = s.Repo, s.Branch
@@ -331,7 +330,6 @@ func (a *App) followPrefs(gh *store.GitHubConfig, st *store.State, p *fleetshare
 		v    bool
 	}{
 		{store.PrefShowCountry, &gh.ShowCountry, p.ShowCountry},
-		{store.PrefShowAccountHistory, &gh.ShowAccountHistory, p.ShowAccountHistory},
 	} {
 		switch {
 		case gh.LocalPref(o.name):
@@ -340,11 +338,7 @@ func (a *App) followPrefs(gh *store.GitHubConfig, st *store.State, p *fleetshare
 			changed = true
 		case *o.cur != o.v:
 			*o.cur, changed = o.v, true
-			if o.name == store.PrefShowCountry {
-				st.GitHub.LastPublish = time.Time{} // meta.json with (or without) the country now
-			} else if o.v {
-				st.AccountHistory.LastAttempt = time.Time{} // read the totals for that publish
-			}
+			st.GitHub.LastPublish = time.Time{} // meta.json with (or without) the country now
 			st.GitHub.LastAttempt = time.Time{}
 			a.Log.Printf("github: %s %s, following %s", o.name, onOff(o.v), from)
 		}

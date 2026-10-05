@@ -1,0 +1,230 @@
+/* Click area at bottom of screen to toggle controls */
+.bc-toggle-area {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  z-index: 3999;
+  cursor: pointer;
+}
+
+/* Unified background controls bar - Fixed Layout (Global) */
+.bc-unified {
+  position: fixed;
+  /* Centered at bottom with margins */
+  bottom: 20px;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: 90%;
+  max-width: 380px;
+  
+  z-index: 4000;
+  
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 14px;
+  
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 255, 65, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.6);
+  box-sizing: border-box;
+  
+  align-items: center;
+  justify-content: flex-start;
+  
+  transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.bc-unified.bc-visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.bc-unified.bc-hidden {
+  transform: translateY(150%); /* Move further down so it fully hides */
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Hide divider globally */
+.bc-divider {
+  display: none;
+}
+
+/* --- ROW 1: Name + Buttons --- */
+.bc-theme-name {
+  order: 1;
+  width: calc(100% - 150px); 
+  flex-grow: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--mono-font-1);
+  color: #00ff41;
+  margin: 0;
+  padding-right: 4px;
+  user-select: none;
+}
+
+.bc-btn {
+  /* Common button styles */
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(0, 255, 65, 0.6);
+  color: #00ff41;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono-font-1);
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.bc-btn:hover {
+  background: rgba(0, 255, 65, 0.2);
+  border-color: #00ff41;
+  transform: scale(1.05);
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.4);
+}
+
+.bc-btn:active {
+  transform: scale(0.95);
+}
+
+.bc-prev { 
+  order: 2;
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.bc-toggle-btn {
+  order: 3;
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+.bc-next { 
+  order: 4;
+  width: 40px;
+  height: 40px;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+/* --- ROW 2 & 3: Sliders --- */
+
+.bc-control {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 100%;
+  justify-content: space-between;
+  background: rgba(0,0,0,0.3);
+  padding: 8px 10px;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+/* DOM Order: Prev(1), Name(2), Toggle(3), Next(4), Div(5), Op(6), Gr(7) */
+/* We want Opacity (6) on Row 2 (order 5) and Grayscale (7) on Row 3 (order 6) */
+
+.bc-control:nth-child(6) {
+  order: 5;
+  margin-top: 4px;
+}
+
+.bc-control:nth-child(7) {
+  order: 6;
+  margin-top: 0;
+}
+
+.bc-disabled {
+  opacity: 0.3;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
+.bc-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono-font-1);
+  font-size: 12px;
+  color: #00ff41;
+  font-weight: 600;
+  min-width: 45px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.bc-icon {
+  font-size: 12px;
+}
+
+.bc-value {
+  min-width: 28px;
+  font-size: 12px;
+  text-align: right;
+}
+
+.bc-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(0, 255, 65, 0.2);
+  outline: none;
+  border-radius: 2px;
+  cursor: pointer;
+  
+  width: auto;
+  flex-grow: 1;
+  height: 6px;
+  margin-left: 10px;
+  min-width: 40px;
+}
+
+.bc-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  background: #00ff41;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 255, 65, 0.6);
+  transition: all 0.2s ease;
+  margin-top: -8px; /* For webkit */
+}
+
+.bc-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  background: #00ff41;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(0, 255, 65, 0.6);
+  transition: all 0.2s ease;
+}
+
+.bc-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.8);
+}
+
+.bc-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 12px rgba(0, 255, 65, 0.8);
+}

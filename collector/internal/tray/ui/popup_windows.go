@@ -67,6 +67,11 @@ type popup struct {
 	drawn    []tray.PanelLine // the rows as last laid out (hit-testing)
 	tracking bool             // WM_MOUSELEAVE requested
 	closing  bool
+	// keep is the row last clicked that keeps the popup open (Settings ►),
+	// and keepY its screen y then: a resize keeps that row in place, so
+	// the next click at the same point lands on it again.
+	keep  tray.Action
+	keepY int
 }
 
 var (
@@ -188,7 +193,7 @@ func (p *popup) create() bool {
 	p.mu.Lock()
 	p.hwnd = hwnd
 	p.mu.Unlock()
-	p.closing, p.tracking = false, false
+	p.closing, p.tracking, p.keep = false, false, tray.ActNone
 	p.layout(hwnd)
 	pShowWindow.Call(hwnd, swShow)
 	pSetForegroundWindow.Call(hwnd)
@@ -385,6 +390,12 @@ func (p *popup) select_(hwnd uintptr, sel tray.Action) {
 // do runs a row's action: the identity row copies and says so, Quit asks
 // for a second click, anything else closes the popup and runs.
 func (p *popup) do(hwnd uintptr, act tray.Action) {
+	p.keep = tray.ActNone
+	if i := tray.RowOf(p.drawn, act); i >= 0 && act.Stays() {
+		var wr rect
+		pGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&wr)))
+		p.keep, p.keepY = act, int(wr.Top)+p.m.RowTop(p.drawn, i)
+	}
 	p.mu.Lock()
 	h := p.h
 	res := tray.ClickPopup(&p.st, act)
@@ -413,20 +424,26 @@ func (p *popup) redraw(hwnd uintptr) {
 }
 
 // layout lays the rows out for the current state and, when the size
-// changed, places the popup at the icon again.
+// changed, places the popup at the icon again: on the side the taskbar
+// leaves free, except that the row last clicked to work in place (the
+// Settings heading) keeps its screen y, clamped to the work area.
 func (p *popup) layout(hwnd uintptr) {
 	p.mu.Lock()
 	base, st, a := p.base, p.st, p.anchor
 	p.mu.Unlock()
 	p.drawn = tray.PopupView(base, st)
-	wider := tray.PopupView(base, tray.PopupState{Copied: true, QuitArmed: true})
+	wider := tray.PopupView(base, tray.PopupState{Copied: true, QuitArmed: true, StopArmed: true})
 	if !p.measure(hwnd, p.drawn, wider) {
 		return
 	}
 	ar := rect{int32(a.Left), int32(a.Top), int32(a.Right) + 1, int32(a.Bottom) + 1}
 	x, y := int(ar.Left), int(ar.Top)-int(p.height)
 	if mon, work, ok := monitorAt(ar); ok {
-		x, y = tray.PopupPos(a, mon.model(), work.model(), int(p.width), int(p.height), int(p.scale(8)))
+		gap := int(p.scale(8))
+		x, y = tray.PopupPos(a, mon.model(), work.model(), int(p.width), int(p.height), gap)
+		if i := tray.RowOf(p.drawn, p.keep); i >= 0 {
+			y = tray.KeepRowY(p.keepY, p.m.RowTop(p.drawn, i), int(p.height), work.model(), gap)
+		}
 	}
 	pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(p.width), uintptr(p.height), swpNoActivate)
 }

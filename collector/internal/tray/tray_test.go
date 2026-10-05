@@ -1,8 +1,10 @@
 package tray
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image/color"
+	"image/png"
 	"math"
 	"strings"
 	"testing"
@@ -171,18 +173,18 @@ func TestPanel(t *testing.T) {
 		want []PanelLine
 	}{
 		{"ok with providers", func(*Input) {}, []PanelLine{
-			{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
-			{Text: "Up to date", Kind: LineDim},
-			{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}, {From: 43, To: 51, Action: ActDashboard}}},
+			{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1, Header: true},
+			{Text: "Up to date", Kind: LineDim, Header: true},
+			{Text: "GitHub: not signed in · Settings… · API d0m1.com: sent 12s ago", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}}, Header: true},
 			{Kind: LineRule},
 			{Text: "Grok     30s ago        +10  │   24h   900   30d   900", Kind: LineText, Hi: 24, HiEnd: 27, Age: 9, AgeEnd: 16},
 			{Text: "Claude   2 min ago   +67.5K  │   24h 20.1B   30d 13.4B", Kind: LineText, Hi: 21, HiEnd: 27, Age: 9, AgeEnd: 18},
 			{Text: "OpenAI   3 h ago      +135K  │   24h  4.2M   30d  611M", Kind: LineText, Hi: 22, HiEnd: 27, Quiet: true, Age: 9, AgeEnd: 16},
 		}},
 		{"error, nothing seen", func(in *Input) { in.Providers, in.Enrolled = nil, false }, []PanelLine{
-			{Text: "● tokenmaxr · STUDIO", Kind: LineError, HiEnd: 1},
-			{Text: "Error: not set up", Kind: LineDim},
-			{Text: "GitHub: not signed in · Settings…", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}}},
+			{Text: "● tokenmaxr · STUDIO", Kind: LineError, HiEnd: 1, Header: true},
+			{Text: "Error: not set up", Kind: LineDim, Header: true},
+			{Text: "GitHub: not signed in · Settings…", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}}, Header: true},
 		}},
 	}
 	for _, c := range cases {
@@ -220,18 +222,6 @@ func TestIdentity(t *testing.T) {
 	if v := Evaluate(in); v.Identity != "Machine STUDIO · not set up" || v.Fleet != "" || v.CanSync {
 		t.Fatalf("unenrolled %+v", v)
 	}
-	for ep, want := range map[string]string{
-		"https://d0m1.com":           "https://d0m1.com/tokens",
-		"http://127.0.0.1:7071/":     "http://127.0.0.1:7071/tokens",
-		"https://staging.d0m1.com/x": "https://staging.d0m1.com/tokens",
-		"file:///etc/passwd":         "",
-		"https://user@evil.example":  "",
-		"":                           "",
-	} {
-		if got := DashboardURL(ep); got != want {
-			t.Errorf("DashboardURL(%q) = %s, want %s", ep, got, want)
-		}
-	}
 }
 
 func TestMenu(t *testing.T) {
@@ -242,7 +232,7 @@ func TestMenu(t *testing.T) {
 	for _, it := range items {
 		keys = append(keys, it.Key)
 	}
-	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard github-dashboard settings log quit"
+	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard settings log quit"
 	if got := strings.Join(keys, " "); got != wantKeys {
 		t.Fatalf("keys\n got %s\nwant %s", got, wantKeys)
 	}
@@ -315,36 +305,109 @@ func contrast(a, b color.NRGBA) float64 {
 
 func TestIcon(t *testing.T) {
 	light, dark := color.NRGBA{0xf3, 0xf3, 0xf3, 255}, color.NRGBA{0x20, 0x20, 0x20, 255}
-	for _, c := range []Color{Green, Red} {
-		for _, size := range []int{16, 32} {
-			img := DrawIcon(c, size, WindowsInset)
-			if a := img.NRGBAAt(0, 0).A; a != 0 {
-				t.Errorf("%s %d: corner alpha %d", c, size, a)
-			}
-			mid := img.NRGBAAt(size/2, size/2)
-			if mid.A != 255 {
-				t.Errorf("%s %d: centre alpha %d", c, size, mid.A)
-			}
-			// The fill stands out on a dark taskbar, the rim on a light one.
-			if r := contrast(mid, dark); r < 3 {
-				t.Errorf("%s %d: fill/dark contrast %.2f", c, size, r)
-			}
-			// The rim: the first opaque pixel down the centre column.
-			var edge color.NRGBA
-			for y := range size {
-				if edge = img.NRGBAAt(size/2, y); edge.A == 255 {
-					break
-				}
-			}
-			if r := contrast(edge, light); r < 3 {
-				t.Errorf("%s %d: rim/light contrast %.2f (%v)", c, size, r, edge)
+	isRed := func(p color.NRGBA) bool { return p.A > 200 && p.R > 200 && p.G < 120 && p.B < 120 }
+	for _, size := range []int{16, 20, 24, 32, 48} {
+		// The grid sits on whole pixels: 3 cells, 2 gaps, the margin.
+		m, c, g := gridLayout(size)
+		if c < 4 || g < 1 || m < 0 || 3*c+2*g+2*m < size-1 || 3*c+2*g+2*m > size {
+			t.Errorf("grid %d: margin %d cell %d gap %d", size, m, c, g)
+		}
+		// The green grid: clear corner, a solid middle cell, crisp up to its
+		// straight edges, that holds against a light bar and a dark one.
+		img := DrawIcon(Green, size, Grid)
+		if a := img.NRGBAAt(0, 0).A; a != 0 {
+			t.Errorf("grid %d: corner alpha %d", size, a)
+		}
+		x0 := m + c + g
+		for _, p := range [][2]int{{size / 2, size / 2}, {x0, x0 + c/2}, {x0 + c - 1, x0 + c/2}, {x0 + c/2, x0}} {
+			if a := img.NRGBAAt(p[0], p[1]).A; a != 255 {
+				t.Errorf("grid %d: middle cell alpha %d at %v", size, a, p)
 			}
 		}
+		if a := img.NRGBAAt(x0-1, x0+c/2).A; a != 0 {
+			t.Errorf("grid %d: gap alpha %d", size, a)
+		}
+		mid := img.NRGBAAt(size/2, size/2)
+		if r := contrast(mid, light); r < 3 {
+			t.Errorf("grid %d: green/light contrast %.2f", size, r)
+		}
+		if r := contrast(mid, dark); r < 3 {
+			t.Errorf("grid %d: green/dark contrast %.2f", size, r)
+		}
+		// The template: black only, so macOS can paint it in the bar's colour.
+		tpl := DrawIcon(Red, size, Template)
+		for i := 0; i < len(tpl.Pix); i += 4 {
+			if p := tpl.Pix[i : i+4]; p[3] > 0 && (p[0] > 0 || p[1] > 0 || p[2] > 0) {
+				t.Fatalf("template %d: colour %v", size, p)
+			}
+		}
+		if a := tpl.NRGBAAt(size/2, size/2).A; a != 255 {
+			t.Errorf("template %d: middle cell alpha %d", size, a)
+		}
 	}
-	// Green and red must differ in more than hue for red-green colour blind
-	// users: the dots differ in lightness too.
-	if d := math.Abs(lum(colGreen) - lum(colRed)); d < 0.15 {
-		t.Errorf("green/red luminance differ by %.2f", d)
+	// The tile at every size the app icon has: transparent outside its
+	// rounded corners, opaque inside.
+	for _, size := range []int{16, 32, 64, 256} {
+		tile := DrawIcon(Green, size, Tile)
+		q := size / 4
+		if tile.NRGBAAt(0, 0).A != 0 || tile.NRGBAAt(size/2, size/2).A != 255 || tile.NRGBAAt(size/2, q).A != 255 {
+			t.Errorf("tile %d alpha: corner %d centre %d top %d", size, tile.NRGBAAt(0, 0).A, tile.NRGBAAt(size/2, size/2).A, tile.NRGBAAt(size/2, q).A)
+		}
+	}
+	// Red is a badge, bottom right, in shape as well as hue (red-green colour
+	// blindness): green has none. On the tile it sits at the corner without
+	// cutting into it.
+	for _, size := range []int{16, 32, 256} {
+		for _, st := range []Style{Grid, Tile} {
+			b := badgeFor(size, st)
+			x, y := int(b.x), int(b.y)
+			if !isRed(DrawIcon(Red, size, st).NRGBAAt(x, y)) {
+				t.Errorf("%d/%d: no red badge at %d,%d", size, st, x, y)
+			}
+			g := DrawIcon(Green, size, st)
+			for py := range size {
+				for px := range size {
+					if isRed(g.NRGBAAt(px, py)) {
+						t.Fatalf("%d/%d: red in the green icon at %d,%d", size, st, px, py)
+					}
+				}
+			}
+		}
+		if p := DrawIcon(Red, size, Template).NRGBAAt(int(badgeFor(size, Template).x), int(badgeFor(size, Template).y)); p.A != 255 {
+			t.Errorf("template %d: badge alpha %d", size, p.A)
+		}
+	}
+	red, green := DrawIcon(Red, 256, Tile), DrawIcon(Green, 256, Tile)
+	for i := 3; i < len(red.Pix); i += 4 {
+		if green.Pix[i] == 255 && red.Pix[i] != 255 {
+			t.Fatalf("tile: the badge cuts into the tile at %d,%d", i/4%256, i/4/256)
+		}
+	}
+	// The red menu bar's layers, at 16 px (1x) and 32 px (Retina): the grid
+	// with the badge's place cut out, and the badge alone.
+	for _, size := range []int{16, 32} {
+		gp, bp := MenuBarRedParts(size)
+		gi, err := png.Decode(bytes.NewReader(gp))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bi, err := png.Decode(bytes.NewReader(bp))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gi.Bounds().Dx() != size || bi.Bounds().Dx() != size {
+			t.Fatalf("%d px: layers %v %v", size, gi.Bounds(), bi.Bounds())
+		}
+		bx, by := int(badgeFor(size, Template).x), int(badgeFor(size, Template).y)
+		if _, _, _, a := gi.At(bx, by).RGBA(); a != 0 {
+			t.Errorf("%d px menu-bar grid: badge not cut out", size)
+		}
+		if !isRed(color.NRGBAModel.Convert(bi.At(bx, by)).(color.NRGBA)) {
+			t.Errorf("%d px menu-bar badge: not red", size)
+		}
+		if _, _, _, a := bi.At(size/2, size/2).RGBA(); a != 0 {
+			t.Errorf("%d px menu-bar badge: more than the badge", size)
+		}
 	}
 
 	ico := IconICO(Green)
@@ -358,7 +421,7 @@ func TestIcon(t *testing.T) {
 			t.Fatalf("entry %d: bad dib at %d+%d of %d", i, off, size, len(ico))
 		}
 	}
-	if png := IconPNG(Red, 32, MenuBarInset); len(png) < 8 || string(png[1:4]) != "PNG" {
+	if png := IconPNG(Red, 32, Template); len(png) < 8 || string(png[1:4]) != "PNG" {
 		t.Fatal("not a PNG")
 	}
 }
@@ -418,32 +481,44 @@ func TestDestinationsWithoutAServer(t *testing.T) {
 	if gh.Color != Green || gh.Dashboard != in.PagesURL {
 		t.Fatalf("github-only %+v", gh)
 	}
-	if gh.GitHubDashboard != "" {
-		t.Fatalf("github-only has one dashboard: %+v", gh)
-	}
-
-	// GitHub and a server: the menu opens either dashboard.
+	// GitHub and a server: the GitHub dashboard is the only one the app
+	// opens; the server shows as push status (owner direction 2026-10-05).
 	both := in
 	both.Enrolled, both.Endpoint = true, "https://d0m1.com/api"
+	both.LastUploadOK, both.LastUploadErr, both.Unauthorized = now.Add(-2*time.Minute), "", false
 	bv := Evaluate(both)
-	if bv.Dashboard != "https://d0m1.com/tokens" || bv.GitHubDashboard != in.PagesURL {
+	if bv.Dashboard != in.PagesURL || bv.Account != "GitHub → octo/tokenmaxr-usage · API d0m1.com: sent 2 min ago" {
 		t.Fatalf("both %+v", bv)
 	}
-	shown := map[string]bool{}
-	for _, it := range Menu(bv) {
-		shown[it.Key] = !it.Hidden
-	}
-	if !shown["dashboard"] || !shown["github-dashboard"] {
-		t.Fatalf("both dashboards in the menu: %v", shown)
-	}
-	var rows []Action
+	var rows []string
 	for _, l := range Popup(bv) {
-		if l.Action == ActDashboard || l.Action == ActGitHubDashboard {
-			rows = append(rows, l.Action)
+		if l.Kind == LineAction && l.Action == ActDashboard {
+			rows = append(rows, l.Text)
 		}
 	}
-	if len(rows) != 2 || rows[0] != ActDashboard || rows[1] != ActGitHubDashboard {
+	if len(rows) != 1 || rows[0] != "Open GitHub dashboard" {
 		t.Fatalf("popup dashboard rows %v", rows)
+	}
+	server := both
+	server.GitHub, server.PagesURL = "", ""
+	if sv := Evaluate(server); sv.Dashboard != "" {
+		t.Fatalf("a server's dashboard is not the app's to open: %+v", sv)
+	}
+	for _, c := range []struct {
+		edit func(*Input)
+		want string
+	}{
+		{func(in *Input) { in.Outbox = 1204 }, "sending 1,204"},
+		{func(in *Input) { in.LastUploadErr = "HTTP 502 bad gateway" }, "error: "},
+		{func(in *Input) { in.Unauthorized = true }, "token rejected"},
+		{func(in *Input) { in.BackoffUntil = now.Add(time.Minute) }, "paused"},
+		{func(in *Input) { in.LastUploadOK = time.Time{} }, "nothing sent yet"},
+	} {
+		x := both
+		c.edit(&x)
+		if got := Evaluate(x).Account; !strings.Contains(got, "· API d0m1.com: "+c.want) {
+			t.Errorf("account %q, want API %q", got, c.want)
+		}
 	}
 	in.GitHubErr = "the tokenmaxor App cannot write to the repository: check it is installed with access to it"
 	if bad := Evaluate(in); bad.Color != Red || !strings.HasPrefix(bad.Status, "● Error: GitHub: ") {

@@ -40,7 +40,7 @@ func TestWindowRows(t *testing.T) {
 			acts = append(acts, l.Action)
 		}
 	}
-	want := []Action{ActDashboard, ActSettings, ActOpenLog, ActQuit}
+	want := []Action{ActDashboard, ActSettingsToggle, ActOpenLog, ActQuit}
 	if !slices.Equal(acts, want) {
 		t.Fatalf("window actions %v, want %v", acts, want)
 	}

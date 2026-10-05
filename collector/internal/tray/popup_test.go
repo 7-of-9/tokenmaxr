@@ -10,6 +10,7 @@ import (
 
 func popupInput() Input {
 	in := ok()
+	in.GitHub, in.GitHubLogin, in.PagesURL = "7-of-9/tokenmaxr-usage", "7-of-9", "https://7-of-9.github.io/tokenmaxr-usage/"
 	in.Providers = []recent.Summary{
 		{Provider: "anthropic", LastTS: now.Add(-8 * time.Hour), LastTokens: 787_000, PastDay: 194_000_000, PastMonth: 13_500_000_000},
 	}
@@ -20,14 +21,14 @@ func TestPopupRows(t *testing.T) {
 	v := Evaluate(popupInput())
 	got := Popup(v)
 	want := []PanelLine{
-		{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
-		{Text: "Up to date", Kind: LineDim},
-		{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}, {From: 43, To: 51, Action: ActDashboard}}},
+		{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1, Header: true},
+		{Text: "Up to date", Kind: LineDim, Header: true},
+		{Text: "GitHub 7-of-9 → tokenmaxr-usage · API d0m1.com: sent 12s ago", Kind: LineDim, Links: [2]Link{{From: 16, To: 31, Action: ActDashboard}}, Header: true},
 		{Kind: LineRule},
 		{Text: "Claude   8 h ago   +787K  │   24h 194M   30d 13.5B", Kind: LineText, Hi: 19, HiEnd: 24, Quiet: true, Age: 9, AgeEnd: 16},
 		{Kind: LineRule},
-		{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard},
-		{Text: "Settings…", Kind: LineAction, Action: ActSettings},
+		{Text: "Open GitHub dashboard", Kind: LineAction, Action: ActDashboard},
+		{Text: "Settings ►", Kind: LineAction, Action: ActSettingsToggle},
 		{Text: "Open log", Kind: LineAction, Action: ActOpenLog},
 		{Text: "Quit", Kind: LineAction, Action: ActQuit},
 		{Text: "dev build", Kind: LineDim},
@@ -59,11 +60,11 @@ func TestPopupRows(t *testing.T) {
 	}
 
 	// No Pin, Unpin or Sync row in any state (pinned, ticking, not
-	// enrolled); not enrolled, no copy or dashboard either.
+	// enrolled); not publishing to GitHub, no copy or dashboard either.
 	in := popupInput()
 	in.Pinned, in.Ticking, in.TickStarted = true, true, now
 	unenrolled := popupInput()
-	unenrolled.Enrolled = false
+	unenrolled.Enrolled, unenrolled.GitHub = false, ""
 	for _, rows := range [][]PanelLine{Popup(Evaluate(in)), Popup(Evaluate(unenrolled))} {
 		for _, l := range rows {
 			switch {
@@ -126,7 +127,7 @@ func TestPopupView(t *testing.T) {
 
 func TestPopupNav(t *testing.T) {
 	rows := Popup(Evaluate(popupInput()))
-	order := []Action{ActDashboard, ActSettings, ActOpenLog, ActQuit}
+	order := []Action{ActDashboard, ActSettingsToggle, ActOpenLog, ActQuit}
 	cases := []struct {
 		sel  Action
 		dir  int
@@ -134,10 +135,10 @@ func TestPopupNav(t *testing.T) {
 	}{
 		{ActNone, 1, ActDashboard},
 		{ActNone, -1, ActQuit},
-		{ActDashboard, 1, ActSettings},
+		{ActDashboard, 1, ActSettingsToggle},
 		{ActQuit, 1, ActDashboard}, // wraps
 		{ActDashboard, -1, ActQuit},
-		{ActOpenLog, -1, ActSettings},
+		{ActOpenLog, -1, ActSettingsToggle},
 		{ActCopyFleet, 1, ActDashboard}, // not a hover row: starts over
 		{ActOpenLog, 0, ActOpenLog},
 	}
@@ -162,11 +163,11 @@ func TestPopupNav(t *testing.T) {
 func TestPopupHitTest(t *testing.T) {
 	rows := Popup(Evaluate(popupInput()))
 	m := Metrics{Pad: 12, LineH: 20, RuleH: 9, ActionH: 28}
-	// heading, status, account, rule, Claude, rule, 4 actions, build footer.
-	if h := m.Height(rows); h != 12+20+20+20+9+20+9+4*28+20+12 {
+	// heading, status, account (header lines, 8 taller), rule, Claude, rule, 4 actions, build footer.
+	if h := m.Height(rows); h != 12+28+28+28+9+20+9+4*28+20+12 {
 		t.Fatalf("height %d", h)
 	}
-	if top := m.RowTop(rows, 6); top != 12+20+20+20+9+20+9 {
+	if top := m.RowTop(rows, 6); top != 12+28+28+28+9+20+9 {
 		t.Fatalf("first action at %d", top)
 	}
 	first := m.RowTop(rows, 6) // 110
@@ -179,7 +180,7 @@ func TestPopupHitTest(t *testing.T) {
 		{12, ActNone, ActNone}, // status
 		{first, ActDashboard, ActDashboard},
 		{first + 27, ActDashboard, ActDashboard},
-		{first + 28, ActSettings, ActSettings},
+		{first + 28, ActSettingsToggle, ActSettingsToggle},
 		{first + 2*28 + 5, ActOpenLog, ActOpenLog},
 		{first + 3*28, ActQuit, ActQuit},
 		{first + 3*28 + 27, ActQuit, ActQuit},
@@ -308,14 +309,49 @@ func TestPopupPos(t *testing.T) {
 	}
 }
 
+// Opening Settings in a popup above a bottom taskbar keeps the heading
+// under the pointer: the popup grows downward from it while it fits, and
+// is pushed up only as far as the work area needs.
+func TestKeepRowY(t *testing.T) {
+	m := Metrics{Pad: 16, LineH: 20, RuleH: 15, ActionH: 28}
+	work := Rect{0, 0, 1920, 1032}
+	const gap = 8
+	closed := SettingsRows(View{Settings: SettingsState{CanSwitch: true}})
+	open := SettingsRows(View{Publishing: true, Settings: SettingsState{Open: true, CanSwitch: true}})
+	lines := func(s []PanelLine) []PanelLine {
+		return append([]PanelLine{{Text: "a"}, {Text: "b"}}, append(s, PanelLine{Text: "Quit", Kind: LineAction, Action: ActQuit})...)
+	}
+	before, after := lines(closed), lines(open)
+	i, j := RowOf(before, ActSettingsToggle), RowOf(after, ActSettingsToggle)
+	if i < 0 || j != i {
+		t.Fatalf("heading at %d, then %d", i, j)
+	}
+	// Opened from high on the screen: the heading stays put.
+	top := 300
+	rowY := top + m.RowTop(before, i)
+	y := KeepRowY(rowY, m.RowTop(after, j), m.Height(after), work, gap)
+	if y+m.RowTop(after, j) != rowY {
+		t.Fatalf("heading moved from %d to %d", rowY, y+m.RowTop(after, j))
+	}
+	// Opened just above the taskbar: pushed up to fit, never below it.
+	top = work.Bottom - gap - m.Height(before)
+	y = KeepRowY(top+m.RowTop(before, i), m.RowTop(after, j), m.Height(after), work, gap)
+	if y+m.Height(after) != work.Bottom-gap {
+		t.Fatalf("bottom at %d, want %d", y+m.Height(after), work.Bottom-gap)
+	}
+	if RowOf(after, ActStopPublishingNow) != RowOf(after, ActStopPublishing) || RowOf(after, ActNone) != -1 {
+		t.Fatal("RowOf")
+	}
+}
+
 func TestSheetText(t *testing.T) {
-	rows := PopupView(Popup(Evaluate(popupInput())), PopupState{Sel: ActSettings})
+	rows := PopupView(Popup(Evaluate(popupInput())), PopupState{Sel: ActSettingsToggle})
 	got := SheetText(rows, "  ")
 	for _, want := range []string{
 		"  ----\n",
 		"  ● tokenmaxr · STUDIO\n",
-		"  Open dashboard   [action: dashboard]\n",
-		"  Settings…   [action: settings] [selected]\n",
+		"  Open GitHub dashboard   [action: dashboard]\n",
+		"  Settings ►   [action: settings-toggle] [selected]\n",
 		"  Quit   [action: quit]\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -324,9 +360,10 @@ func TestSheetText(t *testing.T) {
 	}
 }
 
-// The account line's names are links (owner direction 2026-10-05: one click
-// to each dashboard): the repository to the GitHub dashboard, the server
-// host to the server's, "Settings…" to the settings page.
+// The account line's names are links (owner direction 2026-10-05): the
+// repository to the GitHub dashboard, "Settings…" to the settings page. The
+// API part says how pushes to the server go and links nowhere: the app opens
+// no server dashboard (owner direction 2026-10-05: out of scope).
 func TestAccountLinks(t *testing.T) {
 	span := func(text string, l Link) string { return string([]rune(text)[l.From:l.To]) }
 	both := ok()
@@ -340,9 +377,9 @@ func TestAccountLinks(t *testing.T) {
 		text  string
 		links []string // "span → action"
 	}{
-		{"both", both, "GitHub 7-of-9 → tokenmaxr-usage · server d0m1.com", []string{"tokenmaxr-usage github-dashboard", "d0m1.com dashboard"}},
+		{"both", both, "GitHub 7-of-9 → tokenmaxr-usage · API d0m1.com: sent 12s ago", []string{"tokenmaxr-usage dashboard"}},
 		{"github only", githubOnly, "GitHub 7-of-9 → tokenmaxr-usage", []string{"tokenmaxr-usage dashboard"}},
-		{"not signed in", signedOut, "GitHub: not signed in · Settings… · server d0m1.com", []string{"Settings… settings", "d0m1.com dashboard"}},
+		{"not signed in", signedOut, "GitHub: not signed in · Settings… · API d0m1.com: sent 12s ago", []string{"Settings… settings"}},
 	} {
 		v := Evaluate(c.in)
 		var line PanelLine
@@ -366,7 +403,7 @@ func TestAccountLinks(t *testing.T) {
 	}
 
 	// A click maps x to the column: on a link it runs the link, elsewhere the row's action.
-	lines := []PanelLine{{Text: "GitHub 7-of-9 → tokenmaxr-usage · server d0m1.com", Kind: LineDim, Links: accountLinks(Evaluate(both))},
+	lines := []PanelLine{{Text: Evaluate(both).Account, Kind: LineDim, Links: accountLinks(Evaluate(both))},
 		{Text: "Quit", Kind: LineAction, Action: ActQuit}}
 	m := Metrics{Pad: 12, LineH: 20, RuleH: 9, ActionH: 28, CharW: 7.5}
 	col := func(c int) int { return 12 + int(float64(c)*7.5) + 1 }
@@ -375,13 +412,13 @@ func TestAccountLinks(t *testing.T) {
 		x, y int
 		want Action
 	}{
-		{col(repo), 15, ActGitHubDashboard},
-		{col(repo + 14), 15, ActGitHubDashboard}, // its last rune
-		{col(repo + 15), 15, ActNone},            // the space after it
-		{col(host), 15, ActDashboard},
-		{col(0), 15, ActNone},    // "GitHub", not a link
-		{5, 15, ActNone},         // the padding
-		{col(repo), 40, ActQuit}, // the Quit row below
+		{col(repo), 15, ActDashboard},
+		{col(repo + 14), 15, ActDashboard}, // its last rune
+		{col(repo + 15), 15, ActNone},      // the space after it
+		{col(host), 15, ActNone},           // the API host: status, not a link
+		{col(0), 15, ActNone},              // "GitHub", not a link
+		{5, 15, ActNone},                   // the padding
+		{col(repo), 40, ActQuit},           // the Quit row below
 	} {
 		if got := m.ClickAt(lines, c.x, c.y); got != c.want {
 			t.Errorf("ClickAt(%d, %d) = %s, want %s", c.x, c.y, got, c.want)

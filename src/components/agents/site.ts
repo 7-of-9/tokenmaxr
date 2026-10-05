@@ -1,6 +1,6 @@
 // Which site the token pages are on: what the shell's breadcrumb starts with, where the pages live, and how the
 // owner gets in. d0m1.com (the default: nothing provides one) signs its owner in with GitHub and offers Prompts
-// and Agents; the tokenmaxr GitHub Pages dashboard (pages/dashboard/site.ts) unlocks its owner pages with a key
+// and Agents; the tokenmaxr GitHub Pages dashboard (pages/dashboard/site.ts) opens its owner pages with a key
 // kept in the browser and offers Agents. TokensShell, AgentsPage and LimitsPage read it, so both sites render the
 // same pages from the same code.
 import { createContext, useContext, type ComponentType } from 'react'
@@ -25,11 +25,13 @@ export interface Owner {
 /** What the Agents page says to someone who cannot open it. */
 export interface OwnerGate {
   title: string
-  /** Signed in (or unlocked), but not as the owner. */
+  /** Signed in, but not as the owner. */
   forbiddenTitle: string
   description: string
   /** How to get in (default: AuthGate's sign-in advice). */
   hint?: string
+  /** The sign-in itself, shown in place of the hint to someone signed out (the Pages dashboard's GitHub device sign-in). */
+  SignIn?: ComponentType
 }
 
 /**
@@ -59,8 +61,11 @@ export const LOCAL_PREFS: SitePrefs = {
 }
 
 export interface TokensSite {
-  /** The breadcrumb's first link: "d0m1" to the home page on d0m1.com. */
-  root: { label: string; to: string }
+  /**
+   * The breadcrumb's first link: "d0m1" to the home page on d0m1.com. href is a home outside the site (the GitHub
+   * profile above a Pages dashboard): the link goes there, and so does "<" on a page with nothing above it in the site.
+   */
+  root: { label: string; to: string; href?: string }
   /** The /tokens page's route: the token pages are this route and the routes below it. */
   home: string
   /** The owner's pages, offered in the header once the owner is in. */

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureWritesRepairsAndRemovesTheBundle(t *testing.T) {
@@ -64,6 +65,36 @@ func TestEnsureWritesRepairsAndRemovesTheBundle(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("bundle left behind")
+	}
+}
+
+// A rewritten icon touches the bundle, so Finder, Spotlight and Launchpad
+// read it again (they cache the icon by the bundle's modification date);
+// an unchanged bundle is left as it is.
+func TestEnsureTouchesTheBundleWhenItChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("macOS bundles")
+	}
+	apps := t.TempDir()
+	path, _, err := Ensure([]string{apps}, "/bin/tokenmaxr", "0.4.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	os.Chtimes(path, old, old)
+	if _, changed, _ := Ensure([]string{apps}, "/bin/tokenmaxr", "0.4.2"); changed {
+		t.Fatal("unchanged bundle rewritten")
+	}
+	if st, _ := os.Stat(path); !st.ModTime().Equal(old) {
+		t.Fatalf("unchanged bundle touched: %v", st.ModTime())
+	}
+	os.WriteFile(filepath.Join(path, "Contents", "Resources", "AppIcon.icns"), []byte("an old icon"), 0o644)
+	os.Chtimes(path, old, old)
+	if _, changed, err := Ensure([]string{apps}, "/bin/tokenmaxr", "0.4.2"); err != nil || !changed {
+		t.Fatalf("icon not rewritten: %v", err)
+	}
+	if st, _ := os.Stat(path); !st.ModTime().After(old.Add(time.Hour)) {
+		t.Fatalf("bundle not touched after its icon changed: %v", st.ModTime())
 	}
 }
 

@@ -210,6 +210,23 @@ func TestGitHubOnlyMachineCollectsAndPublishesWithoutAServer(t *testing.T) {
 	if st2, _ := store.LoadState(a.Home); !st2.GitHub.LastAttempt.Equal(before) || f.Head != head {
 		t.Fatal("published again before the interval")
 	}
+	// A retry (a network change) keeps the cadence after a good publish,
+	if _, err := a.Tick(ctx, TickOptions{Retry: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := store.LoadState(a.Home); !st2.GitHub.LastAttempt.Equal(before) {
+		t.Fatal("a retry published again after a good publish")
+	}
+	// and publishes at once after a failed one (offline).
+	st2, _ := store.LoadState(a.Home)
+	st2.GitHub.LastError = "offline"
+	store.SaveState(a.Home, st2)
+	if _, err := a.Tick(ctx, TickOptions{Retry: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := store.LoadState(a.Home); st2.GitHub.LastAttempt.Equal(before) || st2.GitHub.LastError != "" {
+		t.Fatalf("a retry after a failure did not publish: %+v", st2.GitHub)
+	}
 	// ...and a forced sync with unchanged data commits nothing.
 	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
 		t.Fatal(err)
@@ -535,24 +552,13 @@ func codexAccountReader(a *App, total *int64, fail *error) *int {
 	return calls
 }
 
-// showAccountHistory sets the account-history opt-in in config.json.
-func showAccountHistory(t *testing.T, a *App, on bool) {
-	t.Helper()
-	cfg, _ := store.LoadConfig(a.Home)
-	cfg.GitHub.ShowAccountHistory = on
-	if err := store.SaveConfig(a.Home, cfg); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// A GitHub-only machine (no server outbox) that opted in reads account
-// history on the same schedule and publishes it as account-usage.json;
+// A GitHub-only machine (no server outbox) reads account history on the
+// same schedule and publishes it as account-usage.json;
 // nothing is marked as sent to a server.
 func TestGitHubPublishesAccountHistoryWithoutAServer(t *testing.T) {
 	f, _ := useFakeGitHub(t)
 	a, _, _ := newTestApp(t)
 	githubOnly(t, a, f)
-	showAccountHistory(t, a, true)
 	total := int64(5000)
 	calls := codexAccountReader(a, &total, nil)
 	ctx := context.Background()
@@ -608,60 +614,30 @@ func TestGitHubPublishesAccountHistoryWithoutAServer(t *testing.T) {
 	}
 }
 
-// Account history is opt-in: by default a GitHub-only machine neither reads
-// it nor publishes account-usage.json (UTC days next to local dates reveal
-// the time zone's offset). Opting out again deletes the published file.
-func TestGitHubAccountHistoryIsOptIn(t *testing.T) {
+// Account history is always published (owner direction 2026-10-05: "codex
+// option ... just remove it - default it to on"): a config.json that
+// switched it off under an older collector publishes it too.
+func TestGitHubAccountHistoryIsAlwaysOn(t *testing.T) {
 	f, _ := useFakeGitHub(t)
 	a, _, _ := newTestApp(t)
 	githubOnly(t, a, f)
+	raw, err := os.ReadFile(paths.Config(a.Home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := strings.Replace(string(raw), `"github": {`, `"github": {"showAccountHistory": false, "noQuota": true,`, 1)
+	if old == string(raw) {
+		t.Fatalf("no github block in %s", raw)
+	}
+	os.WriteFile(paths.Config(a.Home), []byte(old), 0o600)
 	total := int64(5000)
 	calls := codexAccountReader(a, &total, nil)
-	ctx := context.Background()
-	if _, err := a.Tick(ctx, TickOptions{}); err != nil {
+	if _, err := a.Tick(context.Background(), TickOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	st, _ := store.LoadState(a.Home)
-	path := ghpub.AccountUsagePath(st.GitHub.MachineID)
-	if _, ok := f.Files[path]; ok || *calls != 0 || f.Files[ghpub.MachineDir(st.GitHub.MachineID)+"/meta.json"] == "" {
-		t.Fatalf("account history without opting in: reader calls %d, files %v", *calls, keys(f.Files))
-	}
-
-	showAccountHistory(t, a, true)
-	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(f.Files[path], `"totalTokens": 5000`) || *calls != 1 {
-		t.Fatalf("opted in: reader calls %d, %q", *calls, f.Files[path])
-	}
-
-	showAccountHistory(t, a, false)
-	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	st, _ = store.LoadState(a.Home)
-	if _, ok := f.Files[path]; ok || st.GitHub.Published[path] != "" || st.GitHub.LastError != "" {
-		t.Fatalf("opted out: file still published (%v), state %+v", keys(f.Files), st.GitHub)
-	}
-	// Nothing is deleted again on later publishes, and a file someone has
-	// removed by hand already never blocks publishing.
-	// (A forced tick may still commit data that changed meanwhile.)
-	deletes := f.Deletes
-	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil || f.Deletes != deletes {
-		t.Fatalf("a publish after opting out deleted again (%d) or failed (%v)", f.Deletes-deletes, err)
-	}
-	if _, ok := f.Files[path]; ok {
-		t.Fatal("account history came back after opting out")
-	}
-	st, _ = store.LoadState(a.Home)
-	st.GitHub.Published[path] = "stale"
-	st.GitHub.LastPublish = time.Time{}
-	store.SaveState(a.Home, st)
-	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
-		t.Fatal(err)
-	}
-	if st, _ = store.LoadState(a.Home); st.GitHub.LastError != "" || st.GitHub.Published[path] != "" {
-		t.Fatalf("deleting a file that is gone: %+v", st.GitHub)
+	if p := ghpub.AccountUsagePath(st.GitHub.MachineID); !strings.Contains(f.Files[p], `"totalTokens": 5000`) || *calls != 1 {
+		t.Fatalf("reader calls %d, %q", *calls, f.Files[p])
 	}
 }
 
@@ -672,7 +648,6 @@ func TestGitHubRebuildKeepsThePublishedAccountHistory(t *testing.T) {
 	f, _ := useFakeGitHub(t)
 	a, _, _ := newTestApp(t)
 	githubOnly(t, a, f)
-	showAccountHistory(t, a, true)
 	total := int64(5000)
 	var fail error
 	calls := codexAccountReader(a, &total, &fail)
@@ -745,6 +720,102 @@ func countReads(f *ghapitest.Fake, path string) (n int) {
 		}
 	}
 	return n
+}
+
+// A publishing machine links the usage repository to its dashboard once
+// (owner direction 2026-10-05: "can collector add a link to the public stats
+// page for logged-in users, automatically?"): the repository's website and a
+// README line, recorded in the repository's tokenmaxr.json. A link the owner
+// later changes or removes stays as they left it, on every machine: a second
+// machine with no state of its own reads the record and leaves both alone.
+func TestGitHubLinksTheDashboardOnce(t *testing.T) {
+	f, _ := useFakeGitHub(t)
+	a, _, _ := newTestApp(t)
+	githubOnly(t, a, f)
+	f.Pages = true
+	f.Files["README.md"] = "# usage\n\nData.\n"
+	ctx := context.Background()
+	const url = "https://octo.github.io/agent-usage/"
+
+	if _, err := a.Tick(ctx, TickOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.LoadState(a.Home)
+	if f.Homepage != url || !strings.Contains(f.Files["README.md"], ghpub.DashboardLine(url)) || st.GitHub.Linked != "octo/agent-usage@main" {
+		t.Fatalf("website %q, README %q, linked %q", f.Homepage, f.Files["README.md"], st.GitHub.Linked)
+	}
+	if !strings.Contains(f.Files[ghpub.MarkerFile], `"linked"`) {
+		t.Fatalf("not recorded in the repository: %s", f.Files[ghpub.MarkerFile])
+	}
+
+	// The owner clears the website and drops the line: later publishes
+	// (forced, so they run) leave both alone and read nothing.
+	f.Homepage, f.Files["README.md"] = "", "# usage\n"
+	sets, reads := f.HomepageSets, countReads(f, "README.md")+countReads(f, ghpub.MarkerFile)
+	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := store.LoadState(a.Home); !again.GitHub.LastAttempt.After(st.GitHub.LastAttempt) {
+		t.Fatal("the forced tick did not publish")
+	}
+	if f.Homepage != "" || f.Files["README.md"] != "# usage\n" || f.HomepageSets != sets || countReads(f, "README.md")+countReads(f, ghpub.MarkerFile) != reads {
+		t.Fatalf("linked again: website %q, README %q, %d reads", f.Homepage, f.Files["README.md"], countReads(f, "README.md")+countReads(f, ghpub.MarkerFile)-reads)
+	}
+
+	// Another machine of the fleet, publishing for the first time (no
+	// state of its own), reads the record and puts nothing back.
+	b, _, _ := newTestApp(t)
+	marker := f.Files[ghpub.MarkerFile]
+	githubOnly(t, b, f)
+	f.Files[ghpub.MarkerFile] = marker // githubOnly seeds a bare one
+	if _, err := b.Tick(ctx, TickOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.Homepage != "" || f.Files["README.md"] != "# usage\n" || f.HomepageSets != sets {
+		t.Fatalf("the second machine linked again: website %q, README %q", f.Homepage, f.Files["README.md"])
+	}
+	if stB, _ := store.LoadState(b.Home); stB.GitHub.Linked != "octo/agent-usage@main" {
+		t.Fatalf("second machine linked %q", stB.GitHub.Linked)
+	}
+}
+
+// An installation that may not set the repository's website links the
+// README and tries the website again a day later, not with every publish.
+func TestGitHubRetriesTheWebsiteDaily(t *testing.T) {
+	f, _ := useFakeGitHub(t)
+	a, _, _ := newTestApp(t)
+	githubOnly(t, a, f)
+	now := time.Now()
+	a.Now = func() time.Time { return now }
+	f.Pages, f.NoAdmin = true, true
+	f.Files["README.md"] = "# usage\n"
+	ctx := context.Background()
+	const url = "https://octo.github.io/agent-usage/"
+
+	if _, err := a.Tick(ctx, TickOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := store.LoadState(a.Home)
+	if f.Homepage != "" || !strings.Contains(f.Files["README.md"], ghpub.DashboardLine(url)) || st.GitHub.Linked != "" || !st.GitHub.LinkRetryAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("website %q, README %q, linked %q, retry %v", f.Homepage, f.Files["README.md"], st.GitHub.Linked, st.GitHub.LinkRetryAt)
+	}
+
+	// Granted within the day: publishes before the retry leave it.
+	f.NoAdmin = false
+	now = now.Add(time.Hour)
+	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if f.Homepage != "" {
+		t.Fatalf("retried within the day: %q", f.Homepage)
+	}
+	now = now.Add(24 * time.Hour)
+	if _, err := a.Tick(ctx, TickOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := store.LoadState(a.Home); f.Homepage != url || st.GitHub.Linked != "octo/agent-usage@main" || !st.GitHub.LinkRetryAt.IsZero() {
+		t.Fatalf("website %q, linked %q, retry %v", f.Homepage, st.GitHub.Linked, st.GitHub.LinkRetryAt)
+	}
 }
 
 func TestGitHubKeepsTheDashboardCurrent(t *testing.T) {

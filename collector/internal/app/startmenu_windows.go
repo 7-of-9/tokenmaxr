@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 func init() { defaultStartMenu = shellStartMenu{} }
@@ -50,7 +52,20 @@ func (shellStartMenu) Create(s Shortcut) error {
 	if !fileExists(s.Path) {
 		return fmt.Errorf("start menu shortcut: %s was not written", s.Path)
 	}
+	shellChanged()
 	return nil
+}
+
+var pSHChangeNotify = windows.NewLazySystemDLL("shell32.dll").NewProc("SHChangeNotify")
+
+// shellChanged tells the shell that icons may have changed
+// (SHCNE_ASSOCCHANGED), so Explorer and the Start menu look again rather
+// than keep a cached icon. Best effort.
+func shellChanged() {
+	const shcneAssocChanged, shcnfIDList = 0x08000000, 0
+	if pSHChangeNotify.Find() == nil {
+		pSHChangeNotify.Call(shcneAssocChanged, shcnfIDList, 0, 0)
+	}
 }
 
 func (shellStartMenu) Remove(path string) error {

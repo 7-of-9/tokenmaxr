@@ -72,6 +72,7 @@ var (
 	pAdjustWindowRectExForDpi     = user32.NewProc("AdjustWindowRectExForDpi")
 	pCreateIconFromResourceEx     = user32.NewProc("CreateIconFromResourceEx")
 	pDestroyIcon                  = user32.NewProc("DestroyIcon")
+	pDrawIconEx                   = user32.NewProc("DrawIconEx")
 	pSendMessageW                 = user32.NewProc("SendMessageW")
 	pGetSystemMetrics             = user32.NewProc("GetSystemMetrics")
 	pGetSystemMetricsForDpi       = user32.NewProc("GetSystemMetricsForDpi")
@@ -282,10 +283,18 @@ type sheet struct {
 	dpi       uint32
 	font      uintptr
 	fontLight uintptr // quieter weight for an event older than an hour
+	fontBold  uintptr // the header's product name
+	// brand are the header icons (tray.BrandIcon), green and red, at
+	// brandSize px.
+	brand     [2]uintptr
+	brandSize int32
 	m         tray.Metrics
 	closeSize int32
-	width     int32
-	height    int32
+	// firstH is the first row's height (the branded heading is taller than
+	// a line): the × is centred on it.
+	firstH int32
+	width  int32
+	height int32
 }
 
 // scale is v at 96 DPI in the sheet's DPI.
@@ -293,7 +302,11 @@ func (s *sheet) scale(v int32) int32 { return int32(int64(v) * int64(s.dpi) / 96
 
 func (s *sheet) closeRect() rect {
 	m := s.scale(6)
-	return rect{s.width - m - s.closeSize, m, s.width - m, m + s.closeSize}
+	top := m
+	if s.firstH > 0 {
+		top = int32(s.m.Pad) + (s.firstH-s.closeSize)/2
+	}
+	return rect{s.width - m - s.closeSize, top, s.width - m, top + s.closeSize}
 }
 
 func (s *sheet) inClose(x, y int32) bool {
@@ -301,12 +314,42 @@ func (s *sheet) inClose(x, y int32) bool {
 	return x >= c.Left && x < c.Right && y >= c.Top && y < c.Bottom
 }
 
-// free releases the font (the window is gone).
+// free releases the font and icons (the window is gone).
 func (s *sheet) free() {
-	if s.font != 0 {
-		pDeleteObject.Call(s.font)
+	for _, f := range []uintptr{s.font, s.fontLight, s.fontBold} {
+		if f != 0 {
+			pDeleteObject.Call(f)
+		}
 	}
-	s.font, s.dpi, s.width, s.height = 0, 0, 0, 0
+	s.freeBrand()
+	s.font, s.fontLight, s.fontBold, s.dpi, s.width, s.height = 0, 0, 0, 0, 0, 0
+}
+
+func (s *sheet) freeBrand() {
+	for i, h := range s.brand {
+		if h != 0 {
+			pDestroyIcon.Call(h)
+		}
+		s.brand[i] = 0
+	}
+	s.brandSize = 0
+}
+
+// brandIcon is the header icon for the heading's kind at size px.
+func (s *sheet) brandIcon(kind tray.LineKind, size int32) uintptr {
+	if size != s.brandSize {
+		s.freeBrand()
+		for i, c := range []tray.Color{tray.Green, tray.Red} {
+			b := tray.BrandDIB(c, int(size))
+			s.brand[i], _, _ = pCreateIconFromResourceEx.Call(uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)), 1, 0x00030000,
+				uintptr(size), uintptr(size), 0)
+		}
+		s.brandSize = size
+	}
+	if kind == tray.LineError {
+		return s.brand[1]
+	}
+	return s.brand[0]
 }
 
 func windowDPI(hwnd uintptr) uint32 {
@@ -362,6 +405,9 @@ func (s *sheet) measure(hwnd uintptr, lines, wider []tray.PanelLine) bool {
 		if s.fontLight != 0 {
 			pDeleteObject.Call(s.fontLight)
 		}
+		if s.fontBold != 0 {
+			pDeleteObject.Call(s.fontBold)
+		}
 		s.dpi = dpi
 		face, _ := windows.UTF16PtrFromString("Consolas")
 		const fwNormal, fwLight, defaultCharset, outTTPrecis, clearType, fixedModern = 400, 300, 1, 4, 5, 0x31
@@ -369,20 +415,43 @@ func (s *sheet) measure(hwnd uintptr, lines, wider []tray.PanelLine) bool {
 			defaultCharset, outTTPrecis, 0, clearType, fixedModern, uintptr(unsafe.Pointer(face)))
 		s.fontLight, _, _ = pCreateFontW.Call(uintptr(-s.scale(14)), 0, 0, 0, fwLight, 0, 0, 0,
 			defaultCharset, outTTPrecis, 0, clearType, fixedModern, uintptr(unsafe.Pointer(face)))
+		const fwBold = 700
+		s.fontBold, _, _ = pCreateFontW.Call(uintptr(-s.scale(14)), 0, 0, 0, fwBold, 0, 0, 0,
+			defaultCharset, outTTPrecis, 0, clearType, fixedModern, uintptr(unsafe.Pointer(face)))
 	}
 	hdc, _, _ := pGetDC.Call(hwnd)
 	old, _, _ := pSelectObject.Call(hdc, s.font)
-	lineH := textExtent(hdc, "M").CY + s.scale(3)
+	lineH := textExtent(hdc, "M").CY + s.scale(6) // a little air between rows
 	// The monospace advance, for the column under the pointer (links).
 	charW := float64(textExtent(hdc, "0000000000").CX) / 10
-	s.m = tray.Metrics{Pad: int(s.scale(12)), LineH: int(lineH), RuleH: int(s.scale(9)), ActionH: int(lineH + s.scale(8)), CharW: charW}
+	s.m = tray.Metrics{Pad: int(s.scale(16)), LineH: int(lineH), RuleH: int(s.scale(15)), ActionH: int(lineH + s.scale(8)), CharW: charW}
 	s.closeSize = lineH
+	s.firstH = 0
+	if len(lines) > 0 {
+		s.firstH = int32(s.m.RowH(lines[0]))
+	}
 	var textW int32
+	brLines, brWider := s.m.Brand(lines), s.m.Brand(wider)
 	for i, l := range append(append([]tray.PanelLine(nil), lines...), wider...) {
 		if l.Kind == tray.LineRule {
 			continue
 		}
 		w := textExtent(hdc, l.Text).CX
+		if br, j := brLines, i; i < len(lines) && j < br.Rows || i >= len(lines) && i-len(lines) < brWider.Rows {
+			if i >= len(lines) {
+				br, j = brWider, i-len(lines)
+			}
+			t := l.Text
+			if j == 0 {
+				t, _ = tray.HeadingText(l)
+				pSelectObject.Call(hdc, s.fontBold)
+				w = textExtent(hdc, t).CX
+				pSelectObject.Call(hdc, s.font)
+			} else {
+				w = textExtent(hdc, t).CX
+			}
+			w += int32(br.Indent)
+		}
 		if i == 0 && !s.noClose {
 			w += s.scale(10) + s.closeSize // the × beside the status line
 		}
@@ -456,8 +525,34 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 
 	pad, lineH := int32(s.m.Pad), int32(s.m.LineH)
 	y := pad
-	for _, l := range lines {
+	br := s.m.Brand(lines)
+	var span int32
+	for _, l := range lines[:br.Rows] {
+		span += int32(s.m.RowH(l))
+	}
+	for i, l := range lines {
 		rowH := int32(s.m.RowH(l))
+		x0 := pad // where the row's text starts
+		if i < br.Rows {
+			x0 += int32(br.Indent)
+		}
+		if i == 0 && br.Rows > 0 {
+			// The header icon, centred on the header's rows, and the
+			// heading beside it: the product name strong, then the machine.
+			size := int32(br.Size)
+			const diNormal = 3
+			pDrawIconEx.Call(mem, uintptr(pad), uintptr(y+(span-size)/2), s.brandIcon(l.Kind, size), uintptr(size), uintptr(size), 0, 0, diNormal)
+			text, n := tray.HeadingText(l)
+			r := []rune(text)
+			n = min(n, len(r))
+			ty := y + (rowH-lineH)/2
+			pSelectObject.Call(mem, s.fontBold)
+			x := x0 + textOut(mem, x0, ty, string(r[:n]), colHot)
+			pSelectObject.Call(mem, s.font)
+			textOut(mem, x, ty, string(r[n:]), colInk)
+			y += rowH
+			continue
+		}
 		if l.Kind == tray.LineRule {
 			mid := y + rowH/2
 			fill(mem, rect{pad, mid, w - pad, mid + one}, colBorder)
@@ -477,7 +572,7 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 			if light == 0 {
 				light = s.font
 			}
-			x := pad
+			x := x0
 			pSelectObject.Call(mem, s.font)
 			x += textOut(mem, x, ty, string(r[:l.Age]), col)
 			pSelectObject.Call(mem, light)
@@ -489,13 +584,13 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 			textOut(mem, x, ty, string(r[l.HiEnd:]), colMuted)
 			pSelectObject.Call(mem, s.font)
 		} else if l.HiEnd > l.Hi && l.Hi >= 0 && l.HiEnd <= len(r) {
-			x := pad
+			x := x0
 			x += textOut(mem, x, ty, string(r[:l.Hi]), col)
 			x += textOut(mem, x, ty, string(r[l.Hi:l.HiEnd]), accent)
 			textOut(mem, x, ty, string(r[l.HiEnd:]), col)
 		} else if l.Kind == tray.LineDim && hasLinks(l) {
 			// The account line's names are links (tray.Link).
-			x, at := pad, 0
+			x, at := x0, 0
 			for _, ln := range l.Links {
 				if ln.Action == tray.ActNone || ln.From < at || ln.To <= ln.From || ln.To > len(r) {
 					continue
@@ -506,7 +601,7 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 			}
 			textOut(mem, x, ty, string(r[at:]), col)
 		} else {
-			textOut(mem, pad, ty, l.Text, col)
+			textOut(mem, x0, ty, l.Text, col)
 		}
 		y += rowH
 	}

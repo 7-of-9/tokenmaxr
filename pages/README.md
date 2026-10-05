@@ -12,9 +12,20 @@ recorded tokens outlined, exact and estimated tokens, prompts per model, an
 API-equivalent cost, a monthly activity feed, machines (with their country's
 flag when the owner publishes it) and, under Detail, charts per provider,
 model, machine and country. Pick one machine from the menu to see only its
-own records. Once the owner unlocks it (below), the owner also gets the
+own records. Once the owner signs in (below), the owner also gets the
 **Agents** page: every AI account's plan, email and organisation, the weekly
 quota left and when it resets, as on d0m1.com/tokens/agents.
+
+The collectors link the dashboard from this repository once: its website
+(the About box) when it has none, and an "Open the dashboard" line under this
+README's title when the README does not link it yet. Whichever machine does
+it records it in `tokenmaxr.json` (`"linked"`, below), and every machine
+reads that first, so change or remove either and it stays that way, however
+many machines you add later. A website you set yourself is left alone. If
+tokenmaxor may not change this repository's settings, the README line still
+goes in and the website is tried again once a day. Your GitHub profile is
+never touched; to show the dashboard there, add it to your profile README (a
+repository named after your account) or your profile's website.
 
 - `data/machines/<id>/` is written by the collectors, one folder per machine:
   - `meta.json`: the machine's public label, OS, collector version, when it
@@ -31,21 +42,21 @@ quota left and when it resets, as on d0m1.com/tokens/agents.
   - `owner.json`: the owner's plan limits (the rows d0m1.com's owner-only
     `GET /api/limits` returns: account email, organisation, plan, each
     window's use and reset), **encrypted** for the owner (see *Owner
-    unlock*). Without the owner key it reveals nothing but its size. It is
-    rewritten (with a fresh nonce) only when what it says changes, and
-    removed when the owner turns quota meters off.
+    sign-in*). Without the owner key it reveals nothing but its size. It is
+    rewritten (with a fresh nonce) only when what it says changes. Collectors
+    from 0.4.7 always publish it (there is no option to turn the meters off:
+    they are encrypted).
   - `quota.json` was published in the clear by collectors before 0.4.2
     (plans and reset times). The first publish of a newer collector deletes
     every machine's, a retired machine's too, and the dashboard does not
     read it. Git history still holds the old files.
-  - `account-usage.json` (Codex, when signed in with a ChatGPT account, and
-    only if the owner turned on `github.showAccountHistory` in the collector
-    config or settings page; off by default, and turning it off deletes the
-    file): the account's daily token totals as Codex reports them (UTC days,
+  - `account-usage.json` (Codex, when signed in with a ChatGPT account;
+    collectors from 0.4.7 always publish it, and before that it was the
+    opt-in `github.showAccountHistory`): the account's daily token totals as Codex reports them (UTC days,
     covering every machine signed into it, with no input/output split), and
     this machine's own Codex tokens per UTC day (`ledger`, read by the names
     in `ledgerCols`). Next to the local-date usage rows, UTC days reveal the
-    machine's time-zone offset, which is why it is opt-in. The dashboard adds
+    machine's time-zone offset. The dashboard adds
     only the part of each total that no machine recorded locally, shown as
     **account history**, exactly as d0m1.com reconciles it. The account counts
     per account and day, not per machine, so the machine and region panels
@@ -92,83 +103,149 @@ quota left and when it resets, as on d0m1.com/tokens/agents.
 - `.github/workflows/pages.yml` rebuilds `data/index.json` (the list of
   machines and files; Pages cannot list folders) and deploys on every push.
   `scripts/build-index.mjs` writes schema 3, which lists `owner.json`; under
-  an older index the unlocked dashboard looks for each machine's `owner.json`
+  an older index the signed-in dashboard looks for each machine's `owner.json`
   itself (a 404 means none).
-- `tokenmaxr.json` marks this repository for the collector; set `title` there
-  to rename the dashboard.
+- `tokenmaxr.json` marks this repository for the collector, and holds the
+  dashboard's settings (the Pages workflow serves it beside the page):
+  - `title` renames the dashboard.
+  - `"background": true` turns on d0m1.com's animated background (a video
+    streamed from d0m1.com's CDN, `cdn.d0m1.com`) and its controls along the
+    bottom edge. Off by default: the dashboard is plain dark and loads
+    nothing from d0m1.com's CDN.
+  - `repository` (`"<owner>/<name>"`) names this repository, for a dashboard
+    on a custom domain (on `<you>.github.io/<repository>/` the address says
+    it). Without it, signing in on a custom domain tries the repositories
+    tokenmaxor can reach for that account.
+  - `linked` is written by the collectors: `{"readme": true, "website":
+    true}` once they have linked the dashboard from this README and from the
+    repository's website (above). Each step marked `true` is never done
+    again; `"website": false` means tokenmaxor could not set the website yet.
+    Set `"linked": true` yourself to keep the collectors from doing either.
+
+  For example:
+
+  ```json
+  {
+   "tokenmaxr": 1,
+   "title": "AI token usage",
+   "background": true
+  }
+  ```
+
+  Pushing the change redeploys the dashboard.
 
 The dashboard lives at `https://<you>.github.io/<this repository>/`. Its
 settings are in the link: `#/?period=90d`, `#/?view=detail`,
 `#/?machine=<id>`; the owner's Agents page is `#/agents`.
 
-## Owner unlock
+## Owner sign-in
 
-Pages has no sign-in, so the owner's page is unlocked with a key instead.
-Collectors from 0.4.2 publish `owner.json` and offer the unlock on their
-Settings page (while they publish to GitHub and the dashboard has its
-address).
+Collectors from 0.4.2 publish `owner.json`, encrypted with the owner key.
+Signing in puts that key in your browser; there are two ways.
 
-1. On a machine you own, open the collector's Settings page and choose
-   **Open my dashboard (unlocked)**. It opens the dashboard at `#unlock` and
-   hands it the key by `postMessage`, so the key is never in an address or
-   the browser's history. (**Copy unlock link**, for a phone or another
-   browser, gives `https://<you>.github.io/<this repository>/#unlock=<key>`
-   instead; that link does stay in that browser's history.)
-2. The dashboard takes the key out of the address bar at once, turns it into
-   a WebCrypto key that cannot be read back out (non-extractable), keeps that
-   in this browser's IndexedDB for this dashboard, and shows **Agents** and
-   **Sign out** in the header, as d0m1.com does.
-3. From then on the browser fetches each machine's `owner.json` and decrypts
+**Sign in with GitHub** (any device, a phone included):
+
+1. Choose **Sign in** in the dashboard's header. The Agents page asks GitHub
+   for a code and shows it, large, with **Copy code**.
+2. **Open GitHub** opens `https://github.com/login/device` in a new tab and
+   copies the code. Paste it there, signed in as the GitHub account that owns
+   this repository (or a collaborator), and approve **tokenmaxor**, the
+   collector's GitHub App.
+3. The dashboard notices by itself. With GitHub's token for that account it
+   reads this repository's `TOKENMAXR_FLEET_KEY` (an Actions variable: only
+   collaborators can read it, and tokenmaxor must be installed with access to
+   this repository), derives the owner key from it in the browser (WebCrypto),
+   checks that the key opens the published `owner.json` files, keeps it, and
+   forgets the token and the fleet key. It shows **Agents** and **Sign out**
+   in the header, as d0m1.com does.
+
+GitHub's device-flow endpoints cannot be called from a web page (they send no
+CORS headers), so the page reaches them through a small relay on d0m1.com
+(`https://d0m1.com/api/github/device/code` and `.../token`). It forwards exactly
+those two requests with tokenmaxor's public client id and nothing else; there is
+no client secret. The relay passes GitHub's answer back, the token included, and
+keeps and logs none of it. The page sends the token only to `api.github.com`.
+The key never leaves the browser. What can go wrong is said in so many words:
+an expired code (get a new one), sign-in cancelled on GitHub, "This GitHub
+account can't read `<repository>`", "tokenmaxor isn't installed with access to
+`<repository>`" (add the repository to the App's installation), or GitHub
+unreachable.
+
+**Open dashboard** in the collector's settings page (on a machine you own,
+while it publishes to GitHub and the dashboard has its address) opens the
+dashboard at `#unlock` and hands it the key by `postMessage`, so the key is
+never in an address or the browser's history. (**Copy sign-in link (for
+another browser)**, under Advanced, gives
+`https://<you>.github.io/<this repository>/#unlock=<key>` instead; that link
+does stay in that browser's history. The `#unlock` names are the collector's.)
+
+Either way:
+
+1. The dashboard turns the key into a WebCrypto key that cannot be read back
+   out (non-extractable) and keeps that in this browser's IndexedDB for this
+   dashboard. A link's key leaves the address bar at once.
+2. From then on the browser fetches each machine's `owner.json` and decrypts
    it locally (WebCrypto, AES-256-GCM). The key is never sent anywhere: no
    request carries it, and fragments (`#...`) are never sent to a server.
    The Agents page's choices (which accounts are tracked, by email) are kept
    encrypted with the same key.
-4. **Sign out** shows the public view (what any visitor sees) and **Sign in**
+3. **Sign out** shows the public view (what any visitor sees) and **Sign in**
    brings yours back, in this browser and its other tabs of this dashboard.
-   Signing out keeps the key, so signing in takes one click; in a browser
-   never unlocked, **Sign in** opens the Agents page, which says how to
-   unlock it. To remove the key from a browser, clear this site's data
-   (the browser's site settings for `<you>.github.io`).
+   Signing out keeps the key, so signing in again takes one click. In a
+   browser without the key, **Sign in** starts the GitHub sign-in. To remove
+   the key from a browser, clear this site's data (the browser's site settings
+   for `<you>.github.io`).
 
-The key is derived from the fleet key (`TOKENMAXR_FLEET_KEY`):
-HMAC-SHA256(fleet key, `tokenmaxr dashboard owner v1`). The collectors encrypt
-with it; the page never sees the fleet key itself. Each file is bound to its
-machine (the AES-GCM additional data is `tokenmaxr dashboard owner v1|<machine
-id>`), so a file moved between machines, altered, or opened with another key
-does not open, and the page stays locked rather than failing. Anyone who has
-the key (or the unlock link) can read the owner's accounts, now and in every
-later `owner.json`: treat the link like a password. Whoever can read the fleet
-key (the repository's collaborators) can derive it.
+The key is derived from the fleet key (`TOKENMAXR_FLEET_KEY`, 32 bytes in
+standard base64): HMAC-SHA256(fleet key, `tokenmaxr dashboard owner v1`). The
+collectors encrypt with it. Each file is bound to its machine (the AES-GCM
+additional data is `tokenmaxr dashboard owner v1|<machine id>`), so a file
+moved between machines, altered, or opened with another key does not open,
+and the page shows the public view rather than failing. Anyone who has the key
+(or the sign-in link) can read the owner's accounts, now and in every later
+`owner.json`: treat the link like a password. Whoever can read the fleet key
+(the repository's collaborators) can derive it, which is what the GitHub
+sign-in does.
 
 What the browser keeps, and who else could reach it:
 
-- **The unlock link stays in the browser's history.** Taking the key out of
+- **The sign-in link stays in the browser's history.** Taking the key out of
   the address bar does not remove the visit the browser has already recorded,
   and a browser that syncs its history copies the link to your other devices
-  and offers it as an address-bar suggestion. Sign out does not remove it either.
-  After unlocking, delete that history entry (search history for `unlock=`),
-  or unlock in a browser profile that does not sync history.
+  and offers it as an address-bar suggestion. Sign out does not remove it
+  either. After using one, delete that history entry (search history for
+  `unlock=`), or use it in a browser profile that does not sync history. The
+  GitHub sign-in leaves nothing in the history.
 - **Every Pages site of your account shares one origin** (`<you>.github.io`),
   and with it the storage this dashboard uses. Any script on any of those
   sites (another repository's page, its analytics or a library it loads)
-  could use the stored key to decrypt `owner.json` while this browser is
-  unlocked. Because the key is non-extractable, it cannot copy the key out to
-  use after you lock. To keep the dashboard on an origin of its own, give
-  this repository's Pages a custom domain; otherwise unlock only in a
+  could use the stored key to decrypt `owner.json` while this browser holds
+  it. Because the key is non-extractable, it cannot copy the key out to use
+  after the key is gone. To keep the dashboard on an origin of its own, give
+  this repository's Pages a custom domain; otherwise sign in only in a
   browser profile that does not visit your other Pages sites, and clear this
   site's data when done (Sign out keeps the key).
 
 ## Differences from d0m1.com/tokens
 
-The pages, shell and styles are d0m1.com's own, without an outer panel on
-either site. What differs on purpose: the breadcrumb starts with the GitHub
-user (`<you>` of `<you>.github.io`; elsewhere the dashboard's title, cut short
-when long) where d0m1.com has "d0m1", and `<` does nothing on the first page
-(there is no home page above it); the owner gets in with the unlock link
-rather than a GitHub sign-in (Sign out and Sign in then toggle the public
-view); there is no Prompts page (prompt text is never published); and
-the page sits on plain black, without d0m1.com's background video, theme
-controls, page-slide transitions or site footer.
+The dashboard is d0m1.com/tokens: the same pages, shell, styles and fonts, the
+same slide between pages, and no outer panel on either site. d0m1.com's
+animated background is opt-in (`"background": true` in `tokenmaxr.json`,
+above); without it the dashboard is plain dark. d0m1.com's site footer (its copyright and links) is
+hidden on its token pages, so the dashboard leaves it out. What differs on
+purpose:
+
+- The breadcrumb starts with the GitHub user (`<you>` of `<you>.github.io`,
+  linking to your GitHub profile) where d0m1.com has "d0m1" (linking home);
+  on another host it is the dashboard's title, cut short when long, and
+  links to the dashboard. `<` on the first page goes up to that profile, as
+  it goes home on d0m1.com (Esc stays on the dashboard).
+- The owner signs in with GitHub's device flow (a code to enter at
+  github.com/login/device) or from the collector, and the browser keeps a key
+  rather than a session; Sign out and Sign in then toggle the public view.
+- There is no Prompts page: prompt text is never published.
+- The data footer names this repository as the source, and the browser tab
+  says `<title> · tokenmaxr`, with no favicon.
 
 Preview locally:
 

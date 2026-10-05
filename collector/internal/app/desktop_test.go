@@ -194,12 +194,13 @@ func TestDesktopApp(t *testing.T) {
 		t.Fatalf("identity %q", got)
 	}
 
-	// Clicks: copy the fleet id, open the dashboard behind the endpoint.
+	// Clicks: copy the fleet id. A server's dashboard is not the app's to
+	// open (owner direction 2026-10-05), so with no GitHub there is none.
 	d := *dp
 	d.Click(tray.ActCopyFleet)
 	d.Click(tray.ActDashboard)
 	side.Lock()
-	if !slices.Equal(copied, []string{fleet}) || len(opened) != 1 || opened[0] != srv.URL+"/tokens" {
+	if !slices.Equal(copied, []string{fleet}) || len(opened) != 0 {
 		t.Fatalf("copied %q opened %q", copied, opened)
 	}
 	side.Unlock()
@@ -521,13 +522,42 @@ func TestRelaunchThroughLaunchd(t *testing.T) {
 	}
 }
 
-// Tray only, a start the user asked to see (app.showonstart) opens the
-// popup once the icon exists; any other start, or window mode, does not.
+// Run another way (Windows, or macOS outside launchd), a restart starts
+// the app again itself; one the user asked for leaves app.showonstart too,
+// so the new process shows the app (tray only: nothing else would).
+func TestRestartInPlaceShowsTheApp(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	os.MkdirAll(a.Home, 0o700)
+	t.Setenv("XPC_SERVICE_NAME", "")
+	var got [][]string
+	fail := error(nil)
+	startAgain = func(exe string, args []string) error { got = append(got, args); return fail }
+	t.Cleanup(func() { startAgain = reexec })
+	if err := a.reexecApp(true); err != nil || fileExists(paths.AppShowOnStart(a.Home)) {
+		t.Fatalf("minimized restart: %v, marker %v", err, fileExists(paths.AppShowOnStart(a.Home)))
+	}
+	if err := a.reexecApp(false); err != nil || !fileExists(paths.AppShowOnStart(a.Home)) {
+		t.Fatalf("shown restart: %v, marker %v", err, fileExists(paths.AppShowOnStart(a.Home)))
+	}
+	if len(got) != 2 || !slices.Contains(got[0], "--minimized") || slices.Contains(got[1], "--minimized") {
+		t.Fatalf("restart args %q", got)
+	}
+	// A restart that could not start leaves no marker for a later start.
+	os.Remove(paths.AppShowOnStart(a.Home))
+	fail = errors.New("no exec")
+	if err := a.reexecApp(false); err == nil || fileExists(paths.AppShowOnStart(a.Home)) {
+		t.Fatalf("failed restart: %v, marker %v", err, fileExists(paths.AppShowOnStart(a.Home)))
+	}
+}
+
+// A start the user asked to see (app.showonstart) shows the app once the
+// icon exists: tray only the popup, in window mode the window comes to the
+// front. Any other start does not.
 func TestReadyShowsTrayOnlyApp(t *testing.T) {
 	for _, c := range []struct {
 		show, trayOnly bool
 		shows          int
-	}{{true, true, 1}, {true, false, 0}, {false, true, 0}} {
+	}{{true, true, 1}, {true, false, 1}, {false, true, 0}, {false, false, 0}} {
 		a, _, _ := newTestApp(t)
 		d := a.newDesktop(context.Background())
 		d.showOnStart, d.trayOnly = c.show, c.trayOnly
@@ -717,7 +747,7 @@ func TestDesktopPopup(t *testing.T) {
 			acts = append(acts, l.Action)
 		}
 	}
-	if want := []tray.Action{tray.ActDashboard, tray.ActSettings, tray.ActOpenLog, tray.ActQuit}; !slices.Equal(acts, want) {
+	if want := []tray.Action{tray.ActSettingsToggle, tray.ActOpenLog, tray.ActQuit}; !slices.Equal(acts, want) {
 		t.Fatalf("popup actions %v, want %v", acts, want)
 	}
 
