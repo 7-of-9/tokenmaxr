@@ -166,7 +166,7 @@ const ActivityFeed = ({ months, today, noun }: ActivityFeedProps) => {
                   {month.accountHistory > 0 && (
                     <p className="agents-footnote">
                       {machinesEstimated
-                        ? 'Account history has no model or project breakdown; its machine split below is an estimate.'
+                        ? 'Account history has no model or project breakdown.'
                         : 'Account history has no model, project or machine breakdown.'}
                     </p>
                   )}
@@ -198,12 +198,7 @@ const ActivityFeed = ({ months, today, noun }: ActivityFeedProps) => {
                         <li key={row.key} className="gh-row">
                           <span className="gh-row__main">
                             <Flag cc={row.cc} />
-                            <span className="gh-row__name">{row.label}</span>
-                            {row.assigned > 0 && (
-                              <span className="gh-row__est" title={`Partly estimated: ${assignedNote(row.assigned, row.assignedProviders)}`}>
-                                est.
-                              </span>
-                            )}
+                            <span className="gh-row__name" title={row.assigned > 0 ? `Partly estimated: ${assignedNote(row.assigned, row.assignedProviders)}` : undefined}>{row.label}</span>
                             <span className="gh-row__count">{counts(row.value, row.prompts)}</span>
                           </span>
                           <Bar share={share} lead={machineTotal > 0 ? row.value === topMachine : row === month.machines[0]} />

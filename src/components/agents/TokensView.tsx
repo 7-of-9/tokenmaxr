@@ -178,15 +178,15 @@ const TokensView = () => {
                   <div className={`agents-headline-block${loading && data ? ' is-refreshing' : ''}`} aria-live="polite">
                     <h1 className="agents-headline" title="Both averages use days with recorded tokens. Prompts on days without recorded tokens are excluded from the daily average.">
                       <span className="agents-headline__figure"><Numeral text={data ? formatCount(perActiveDay(summary.total, activeDays)) : '–'} /></span> {noun}
-                      <span className="agents-headline__separator" aria-hidden="true"> · </span>
+                      <span className="agents-headline__separator"> &amp; </span>
                       <span className="agents-headline__figure"><Numeral text={data ? formatCount(perActiveDay(summary.activeDayPrompts, activeDays)) : '–'} /></span> prompts
                       <span className="agents-headline__period"> / active day</span>
+                      {data && <span className="agents-headline__period" title="Active days: days with recorded tokens. Empty days and days with only prompts are excluded."> ({activeDays.toLocaleString('en-US')})</span>}
                     </h1>
                     <p className="agents-headline__totals">
                       <span className="agents-headline__total">{data ? formatCount(summary.total) : '–'}</span> {noun}
-                      {' · '}<span className="agents-headline__total">{data ? formatCount(summary.prompts) : '–'}</span> prompts
+                      {' & '}<span className="agents-headline__total">{data ? formatCount(summary.prompts) : '–'}</span> prompts
                       <span> in {range.phrase}</span>
-                      {data && <span className="agents-headline__days" title="Days with recorded tokens. Empty days and days with only prompts are excluded."> · {plural(activeDays, 'active day')}</span>}
                     </p>
                   </div>
                   <div className="agents-top__end">

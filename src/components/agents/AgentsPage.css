@@ -104,12 +104,6 @@
   font-weight: 600;
 }
 
-.agents-headline__days {
-  color: var(--gh-muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
 .agents-headline__separator {
   color: var(--gh-muted);
 }
@@ -621,16 +615,6 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-/* A machine row that includes account history placed by estimate. */
-.gh-row__est {
-  flex: none;
-  border-bottom: 1px dotted currentcolor;
-  color: var(--gh-muted);
-  font-size: 11px;
-  line-height: 1.2;
-  cursor: help;
 }
 
 .gh-bar {

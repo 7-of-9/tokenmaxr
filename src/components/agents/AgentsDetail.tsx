@@ -94,7 +94,6 @@ interface ShareRow {
 const ShareList = ({ rows, noun, title }: { rows: ShareRow[]; noun: string; title: string }) => {
   const total = rows.reduce((sum, row) => sum + row.value, 0)
   if (rows.length === 0) return <p className="agents-muted">Nothing counted in this period.</p>
-  const estimated = rows.some(row => row.assigned > 0)
   return (
     <>
       <ul className="agents-share" aria-label={title}>
@@ -106,11 +105,6 @@ const ShareList = ({ rows, noun, title }: { rows: ShareRow[]; noun: string; titl
               <Flag cc={row.cc} title={countryName(row.cc)} />
               <span className="agents-share__label">
                 <span className="agents-share__name">{row.label}</span>
-                {note && (
-                  <span className="agents-share__est" title={`Partly estimated: ${note}`}>
-                    est.
-                  </span>
-                )}
                 {row.live && (
                   <span className="agents-share__live" title="Reported in the last few minutes">
                     <span className="sr-only">live</span>
@@ -134,19 +128,12 @@ const ShareList = ({ rows, noun, title }: { rows: ShareRow[]; noun: string; titl
           )
         })}
       </ul>
-      {estimated && (
-        <p className="agents-footnote">
-          est.: includes account history placed by estimate. Account totals are per account and day, not per machine, so
-          they follow each machine's local activity for that provider on the day (or the nearest days): first its prompts
-          with no token records, then its recorded tokens.
-        </p>
-      )}
     </>
   )
 }
 
 const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeDays }: AgentsDetailProps) => {
-  const [granularity, setGranularity] = useState<Granularity>('week')
+  const [granularity, setGranularity] = useState<Granularity>('day')
   const [allModels, setAllModels] = useState(false)
   const [priceMode, setPriceMode] = usePriceMode()
   const providers = view.provider === 'all' ? PROVIDERS : [view.provider]
