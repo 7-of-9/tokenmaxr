@@ -177,6 +177,7 @@ var (
 	colHover    = rgb(0x17, 0x33, 0x1f)
 	colHot      = rgb(0xff, 0xff, 0xff)
 	colArmedHot = rgb(0xff, 0x7b, 0x72)
+	colLink     = rgb(0x58, 0xa6, 0xff)
 )
 
 type point struct{ X, Y int32 }
@@ -372,7 +373,9 @@ func (s *sheet) measure(hwnd uintptr, lines, wider []tray.PanelLine) bool {
 	hdc, _, _ := pGetDC.Call(hwnd)
 	old, _, _ := pSelectObject.Call(hdc, s.font)
 	lineH := textExtent(hdc, "M").CY + s.scale(3)
-	s.m = tray.Metrics{Pad: int(s.scale(12)), LineH: int(lineH), RuleH: int(s.scale(9)), ActionH: int(lineH + s.scale(8))}
+	// The monospace advance, for the column under the pointer (links).
+	charW := float64(textExtent(hdc, "0000000000").CX) / 10
+	s.m = tray.Metrics{Pad: int(s.scale(12)), LineH: int(lineH), RuleH: int(s.scale(9)), ActionH: int(lineH + s.scale(8)), CharW: charW}
 	s.closeSize = lineH
 	var textW int32
 	for i, l := range append(append([]tray.PanelLine(nil), lines...), wider...) {
@@ -394,6 +397,16 @@ func (s *sheet) measure(hwnd uintptr, lines, wider []tray.PanelLine) bool {
 }
 
 // lineColors are a row's text and accent colours.
+// hasLinks reports whether a line has a link to draw.
+func hasLinks(l tray.PanelLine) bool {
+	for _, ln := range l.Links {
+		if ln.Action != tray.ActNone {
+			return true
+		}
+	}
+	return false
+}
+
 func lineColors(l tray.PanelLine) (text, accent uintptr) {
 	switch l.Kind {
 	case tray.LineOK:
@@ -480,6 +493,18 @@ func (s *sheet) paint(hwnd uintptr, lines []tray.PanelLine) {
 			x += textOut(mem, x, ty, string(r[:l.Hi]), col)
 			x += textOut(mem, x, ty, string(r[l.Hi:l.HiEnd]), accent)
 			textOut(mem, x, ty, string(r[l.HiEnd:]), col)
+		} else if l.Kind == tray.LineDim && hasLinks(l) {
+			// The account line's names are links (tray.Link).
+			x, at := pad, 0
+			for _, ln := range l.Links {
+				if ln.Action == tray.ActNone || ln.From < at || ln.To <= ln.From || ln.To > len(r) {
+					continue
+				}
+				x += textOut(mem, x, ty, string(r[at:ln.From]), col)
+				x += textOut(mem, x, ty, string(r[ln.From:ln.To]), colLink)
+				at = ln.To
+			}
+			textOut(mem, x, ty, string(r[at:]), col)
 		} else {
 			textOut(mem, pad, ty, l.Text, col)
 		}

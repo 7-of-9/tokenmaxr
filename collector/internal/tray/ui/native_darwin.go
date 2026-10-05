@@ -160,14 +160,14 @@ static int d0m1ReplyTerminate(void) {
 // one, so the pane, the type and the row colours exist once.
 extern void d0m1PanelMoved(int x, int top);
 extern void d0m1PanelClosed(void);
-extern int d0m1PopupHover(int y);
-extern void d0m1PopupClick(int y);
+extern int d0m1PopupHover(int x, int y);
+extern void d0m1PopupClick(int x, int y);
 extern void d0m1PopupKey(int key);
 extern void d0m1PopupResign(void);
 extern void d0m1PopupClosed(void);
 extern void d0m1PopupOutside(void);
-extern int d0m1WindowHover(int y);
-extern void d0m1WindowClick(int y);
+extern int d0m1WindowHover(int x, int y);
+extern void d0m1WindowClick(int x, int y);
 extern void d0m1WindowKey(int key);
 extern void d0m1WindowVisible(int on);
 extern void d0m1WindowResign(void);
@@ -176,6 +176,7 @@ int d0m1Pad = 12;
 int d0m1LineH = 0;
 int d0m1RuleH = 9;
 int d0m1ActionH = 0;
+double d0m1CharW = 0;
 static NSFont *d0m1Mono;
 static NSFont *d0m1LightFont;
 
@@ -187,6 +188,8 @@ static void d0m1Measure(void) {
 	d0m1LineH = (int)ceil(sz.height);
 	if (d0m1LineH < 1) d0m1LineH = 14;
 	d0m1ActionH = d0m1LineH + 8;
+	// The monospace advance, for the column under the pointer (links).
+	d0m1CharW = [@"0000000000" sizeWithAttributes:@{NSFontAttributeName : d0m1Mono}].width / 10.0;
 }
 
 static void d0m1Metrics(void) {
@@ -218,8 +221,10 @@ static void d0m1Append(NSMutableAttributedString *s, NSString *line, NSUInteger 
 }
 
 // One row. quiet grays the age, +count, and rolling totals. A LineDim hi span is the
-// green "copied". selected is the action-row highlight.
-static NSAttributedString *d0m1LineAttr(NSString *body, int kind, int age, int ageEnd, int hi, int hiEnd, int quiet, int selected) {
+// green "copied"; its link spans (l1..l1End, l2..l2End) are drawn as links. selected is
+// the action-row highlight.
+static NSAttributedString *d0m1LineAttr(NSString *body, int kind, int age, int ageEnd, int hi, int hiEnd, int quiet, int selected,
+	int l1, int l1End, int l2, int l2End) {
 	d0m1Measure();
 	NSColor *muted = d0m1RGB(0x9198a1);
 	NSColor *c = d0m1RGB(0xf0f6fc);
@@ -241,6 +246,16 @@ static NSAttributedString *d0m1LineAttr(NSString *body, int kind, int age, int a
 		d0m1Append(s, body, 0, (NSUInteger)hi, d0m1Mono, c);
 		d0m1Append(s, body, (NSUInteger)hi, (NSUInteger)hiEnd, d0m1Mono, d0m1RGB(0x56d364));
 		d0m1Append(s, body, (NSUInteger)hiEnd, body.length, d0m1Mono, c);
+	} else if (kind == 3 && (l1End > l1 || l2End > l2)) {
+		int spans[2][2] = {{l1, l1End}, {l2, l2End}};
+		NSUInteger at = 0;
+		for (int k = 0; k < 2; k++) {
+			if (spans[k][1] <= spans[k][0] || spans[k][0] < (int)at) continue;
+			d0m1Append(s, body, at, (NSUInteger)spans[k][0], d0m1Mono, c);
+			d0m1Append(s, body, (NSUInteger)spans[k][0], (NSUInteger)spans[k][1], d0m1Mono, d0m1RGB(0x58a6ff));
+			at = (NSUInteger)spans[k][1];
+		}
+		d0m1Append(s, body, at, body.length, d0m1Mono, c);
 	} else {
 		d0m1Append(s, body, 0, body.length, d0m1Mono, c);
 	}
@@ -277,6 +292,9 @@ static BOOL d0m1Dragging;
 	NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
 	return (int)llround(self.bounds.size.height - p.y);
 }
+- (int)xOf:(NSEvent *)e {
+	return (int)llround([self convertPoint:e.locationInWindow fromView:nil].x);
+}
 - (void)updateTrackingAreas {
 	[super updateTrackingAreas];
 	if (self.track) {
@@ -291,15 +309,15 @@ static BOOL d0m1Dragging;
 }
 - (void)mouseMoved:(NSEvent *)e {
 	if (!self.interactive) return;
-	int y = [self yOf:e];
-	int hand = self.owner == 1 ? d0m1WindowHover(y) : d0m1PopupHover(y);
+	int x = [self xOf:e], y = [self yOf:e];
+	int hand = self.owner == 1 ? d0m1WindowHover(x, y) : d0m1PopupHover(x, y);
 	if (hand) [[NSCursor pointingHandCursor] set];
 	else [[NSCursor arrowCursor] set];
 }
 - (void)mouseExited:(NSEvent *)e {
 	if (self.interactive) {
-		if (self.owner == 1) d0m1WindowHover(-1);
-		else d0m1PopupHover(-1);
+		if (self.owner == 1) d0m1WindowHover(-1, -1);
+		else d0m1PopupHover(-1, -1);
 	}
 	[[NSCursor arrowCursor] set];
 }
@@ -324,8 +342,8 @@ static BOOL d0m1Dragging;
 }
 - (void)mouseUp:(NSEvent *)e {
 	if (!self.interactive) return;
-	if (self.owner == 1) d0m1WindowClick([self yOf:e]);
-	else d0m1PopupClick([self yOf:e]);
+	if (self.owner == 1) d0m1WindowClick([self xOf:e], [self yOf:e]);
+	else d0m1PopupClick([self xOf:e], [self yOf:e]);
 }
 - (void)keyDown:(NSEvent *)e {
 	if (!self.interactive) { [super keyDown:e]; return; }
@@ -365,15 +383,16 @@ static BOOL d0m1Dragging;
 				[d0m1RGB(0x3d444d) setFill];
 				NSRectFill(NSMakeRect(self.pad, rowBottom + rh / 2.0, b.size.width - 2 * self.pad, 1));
 			} else {
-				int age = 0, ageEnd = 0, hi = 0, hiEnd = 0, quiet = 0, selected = 0;
+				int age = 0, ageEnd = 0, hi = 0, hiEnd = 0, quiet = 0, selected = 0, l1 = 0, l1End = 0, l2 = 0, l2End = 0;
 				if (i < spanLines.count) {
-					sscanf(spanLines[i].UTF8String, "%d,%d,%d,%d,%d,%d", &age, &ageEnd, &hi, &hiEnd, &quiet, &selected);
+					sscanf(spanLines[i].UTF8String, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", &age, &ageEnd, &hi, &hiEnd, &quiet, &selected,
+						&l1, &l1End, &l2, &l2End);
 				}
 				if (selected) {
 					[d0m1RGB(0x17331f) setFill];
 					NSRectFill(NSMakeRect(self.pad - 6, rowBottom, b.size.width - 2 * (self.pad - 6), rh));
 				}
-				NSAttributedString *attr = d0m1LineAttr(lines[i], kind, age, ageEnd, hi, hiEnd, quiet, selected);
+				NSAttributedString *attr = d0m1LineAttr(lines[i], kind, age, ageEnd, hi, hiEnd, quiet, selected, l1, l1End, l2, l2End);
 				NSSize ts = attr.size;
 				[attr drawInRect:NSMakeRect(self.pad, rowBottom + (rh - ts.height) / 2.0, ts.width, ts.height)];
 			}
@@ -834,7 +853,7 @@ func confirm(question string) bool {
 
 func sheetMetrics() tray.Metrics {
 	C.d0m1Metrics()
-	return tray.Metrics{Pad: int(C.d0m1Pad), LineH: int(C.d0m1LineH), RuleH: int(C.d0m1RuleH), ActionH: int(C.d0m1ActionH)}
+	return tray.Metrics{Pad: int(C.d0m1Pad), LineH: int(C.d0m1LineH), RuleH: int(C.d0m1RuleH), ActionH: int(C.d0m1ActionH), CharW: float64(C.d0m1CharW)}
 }
 
 func textWidth(s string) int {
@@ -861,7 +880,13 @@ func encodeLines(lines []tray.PanelLine) (text, kinds, spans string) {
 		if l.Selected {
 			sel = 1
 		}
-		fmt.Fprintf(&sb, "%d,%d,%d,%d,%d,%d", l.Age, l.AgeEnd, l.Hi, l.HiEnd, quiet, sel)
+		var links [4]int
+		for k, ln := range l.Links {
+			if ln.Action != tray.ActNone {
+				links[2*k], links[2*k+1] = ln.From, ln.To
+			}
+		}
+		fmt.Fprintf(&sb, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", l.Age, l.AgeEnd, l.Hi, l.HiEnd, quiet, sel, links[0], links[1], links[2], links[3])
 	}
 	return tb.String(), kb.String(), sb.String()
 }

@@ -16,8 +16,6 @@ interface TokensShellProps {
   /** Path after the site's root ("d0m1 /"), e.g. [{ label: 'tokens', to: '/tokens' }, { label: 'prompts' }]. */
   crumbs: Crumb[]
   className?: string
-  /** The page never scrolls: its sheet stays put under the header and only the sheet's inside scrolls. */
-  pinned?: boolean
   children: ReactNode
 }
 
@@ -27,7 +25,7 @@ interface TokensShellProps {
  * sites: the TokensSite in context (site.ts) gives the breadcrumb's root, the owner's pages and the sign-in
  * (d0m1.com) or lock (the GitHub Pages dashboard) controls.
  */
-const TokensShell = ({ crumbs, className = '', pinned = false, children }: TokensShellProps) => {
+const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => {
   const navigate = useNavigate()
   const location = useLocation()
   const site = useTokensSite()
@@ -63,7 +61,7 @@ const TokensShell = ({ crumbs, className = '', pinned = false, children }: Token
   }, [])
 
   return (
-    <div className={`gallery-page tokens-shell${pinned ? ' tokens-shell--pinned' : ''}`}>
+    <div className="gallery-page tokens-shell">
       <div className={`gallery-header header-visible${owner.controls ? ' tokens-header--auth' : ''}`}>
         <button type="button" className="back-button" onClick={back} aria-label="Back">
           &lt;

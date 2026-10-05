@@ -89,6 +89,17 @@ func popupTap(h Handler) {
 	macPop.redraw(true)
 }
 
+// revealPopup opens the popup unless it is open (tray only, a second launch):
+// at the icon, or at the pointer when a full menu bar hides the icon.
+func revealPopup(h Handler) {
+	macPop.mu.Lock()
+	open := macPop.open
+	macPop.mu.Unlock()
+	if !open {
+		popupTap(h)
+	}
+}
+
 // closePopup closes the popup (the app quits).
 func closePopup() { macPop.close("app quit") }
 
@@ -223,7 +234,7 @@ func (p *macPopup) do(act tray.Action) {
 	}
 }
 
-func popupHover(y int) int {
+func popupHover(x, y int) int {
 	macPop.mu.Lock()
 	if !macPop.open {
 		macPop.mu.Unlock()
@@ -231,7 +242,7 @@ func popupHover(y int) int {
 	}
 	sel := macPop.m.HoverAt(macPop.lines, y)
 	changed := tray.HoverPopup(&macPop.st, sel)
-	clickable := macPop.m.ActionAt(macPop.lines, y) != tray.ActNone
+	clickable := macPop.m.ClickAt(macPop.lines, x, y) != tray.ActNone
 	macPop.mu.Unlock()
 	if changed {
 		macPop.redraw(false)
@@ -242,13 +253,13 @@ func popupHover(y int) int {
 	return 0
 }
 
-func popupClick(y int) {
+func popupClick(x, y int) {
 	macPop.mu.Lock()
 	if !macPop.open {
 		macPop.mu.Unlock()
 		return
 	}
-	act := macPop.m.ActionAt(macPop.lines, y)
+	act := macPop.m.ClickAt(macPop.lines, x, y)
 	macPop.mu.Unlock()
 	macPop.do(act)
 }

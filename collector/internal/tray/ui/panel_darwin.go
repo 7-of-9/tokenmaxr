@@ -25,10 +25,10 @@ func d0m1PanelClosed() {
 }
 
 //export d0m1PopupHover
-func d0m1PopupHover(y C.int) C.int { return C.int(popupHover(int(y))) }
+func d0m1PopupHover(x, y C.int) C.int { return C.int(popupHover(int(x), int(y))) }
 
 //export d0m1PopupClick
-func d0m1PopupClick(y C.int) { popupClick(int(y)) }
+func d0m1PopupClick(x, y C.int) { popupClick(int(x), int(y)) }
 
 //export d0m1PopupKey
 func d0m1PopupKey(key C.int) { popupKey(int(key)) }
@@ -45,10 +45,10 @@ func d0m1PopupOutside() { popupClose("click outside") }
 // The main window's callbacks (window_darwin.go).
 
 //export d0m1WindowHover
-func d0m1WindowHover(y C.int) C.int { return C.int(windowHover(int(y))) }
+func d0m1WindowHover(x, y C.int) C.int { return C.int(windowHover(int(x), int(y))) }
 
 //export d0m1WindowClick
-func d0m1WindowClick(y C.int) { windowClick(int(y)) }
+func d0m1WindowClick(x, y C.int) { windowClick(int(x), int(y)) }
 
 //export d0m1WindowKey
 func d0m1WindowKey(key C.int) { windowKey(int(key)) }

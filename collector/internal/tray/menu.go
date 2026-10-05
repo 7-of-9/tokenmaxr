@@ -64,17 +64,11 @@ func Menu(v View) []Item {
 		}
 	}
 
-	pin := Item{Key: "pin", Title: "Pin to screen", Action: ActPin}
-	if v.Pinned {
-		pin.Title, pin.Action = "Unpin", ActUnpin
-	}
-	sync := Item{Key: "sync", Title: "Sync now", Action: ActSyncNow, Disabled: !v.CanSync, Hidden: v.Syncing}
+	// No Sync or Pin item: as in the popup (Popup).
 	return append(items,
 		Item{Key: "sep-actions", Separator: true},
 		Item{Key: "dashboard", Title: "Open dashboard", Action: ActDashboard, Hidden: v.Dashboard == ""},
 		Item{Key: "github-dashboard", Title: "Open GitHub dashboard", Action: ActGitHubDashboard, Hidden: v.GitHubDashboard == ""},
-		pin,
-		sync,
 		Item{Key: "settings", Title: "Settings…", Action: ActSettings},
 		Item{Key: "log", Title: "Open log", Action: ActOpenLog},
 		Item{Key: "quit", Title: "Quit", Action: ActQuit},

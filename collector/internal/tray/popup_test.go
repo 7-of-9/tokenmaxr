@@ -22,13 +22,11 @@ func TestPopupRows(t *testing.T) {
 	want := []PanelLine{
 		{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
 		{Text: "Up to date", Kind: LineDim},
-		{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim},
+		{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}, {From: 43, To: 51, Action: ActDashboard}}},
 		{Kind: LineRule},
 		{Text: "Claude   8 h ago   +787K  │   24h 194M   30d 13.5B", Kind: LineText, Hi: 19, HiEnd: 24, Quiet: true, Age: 9, AgeEnd: 16},
 		{Kind: LineRule},
 		{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard},
-		{Text: "Pin to screen", Kind: LineAction, Action: ActPin},
-		{Text: "Sync now", Kind: LineAction, Action: ActSyncNow},
 		{Text: "Settings…", Kind: LineAction, Action: ActSettings},
 		{Text: "Open log", Kind: LineAction, Action: ActOpenLog},
 		{Text: "Quit", Kind: LineAction, Action: ActQuit},
@@ -60,29 +58,25 @@ func TestPopupRows(t *testing.T) {
 		}
 	}
 
-	// Pinned: Unpin. Ticking: no Sync row (the status line says it). Not
-	// enrolled: no copy, no sync. The rows end with Quit, then the build.
+	// No Pin, Unpin or Sync row in any state (pinned, ticking, not
+	// enrolled); not enrolled, no copy or dashboard either.
 	in := popupInput()
 	in.Pinned, in.Ticking, in.TickStarted = true, true, now
-	rows := Popup(Evaluate(in))
-	if p := rows[len(rows)-5]; p.Text != "Unpin" || p.Action != ActUnpin {
-		t.Errorf("pinned row %+v", p)
-	}
-	for _, l := range rows {
-		if l.Action == ActSyncNow || l.Text == "Sync now" {
-			t.Errorf("sync row while syncing %+v", l)
+	unenrolled := popupInput()
+	unenrolled.Enrolled = false
+	for _, rows := range [][]PanelLine{Popup(Evaluate(in)), Popup(Evaluate(unenrolled))} {
+		for _, l := range rows {
+			switch {
+			case l.Action == ActPin || l.Action == ActUnpin || l.Action == ActSyncNow,
+				l.Text == "Pin to screen" || l.Text == "Unpin" || l.Text == "Sync now":
+				t.Errorf("removed row is back %+v", l)
+			}
 		}
 	}
-	in = popupInput()
-	in.Enrolled = false
-	rows = Popup(Evaluate(in))
-	for _, l := range rows {
-		if l.Action == ActCopyFleet || l.Action == ActSyncNow || l.Action == ActDashboard {
+	for _, l := range Popup(Evaluate(unenrolled)) {
+		if l.Action == ActCopyFleet || l.Action == ActDashboard {
 			t.Errorf("unenrolled row %+v", l)
 		}
-	}
-	if s := rows[len(rows)-5]; s.Text != "Sync now" || s.Kind != LineActionOff {
-		t.Errorf("unenrolled sync row %+v", s)
 	}
 }
 
@@ -132,7 +126,7 @@ func TestPopupView(t *testing.T) {
 
 func TestPopupNav(t *testing.T) {
 	rows := Popup(Evaluate(popupInput()))
-	order := []Action{ActDashboard, ActPin, ActSyncNow, ActSettings, ActOpenLog, ActQuit}
+	order := []Action{ActDashboard, ActSettings, ActOpenLog, ActQuit}
 	cases := []struct {
 		sel  Action
 		dir  int
@@ -140,10 +134,10 @@ func TestPopupNav(t *testing.T) {
 	}{
 		{ActNone, 1, ActDashboard},
 		{ActNone, -1, ActQuit},
-		{ActDashboard, 1, ActPin},
+		{ActDashboard, 1, ActSettings},
 		{ActQuit, 1, ActDashboard}, // wraps
 		{ActDashboard, -1, ActQuit},
-		{ActSyncNow, -1, ActPin},
+		{ActOpenLog, -1, ActSettings},
 		{ActCopyFleet, 1, ActDashboard}, // not a hover row: starts over
 		{ActOpenLog, 0, ActOpenLog},
 	}
@@ -160,13 +154,6 @@ func TestPopupNav(t *testing.T) {
 			t.Fatalf("step %d: %s, want %s", i, sel, want)
 		}
 	}
-	// No Sync row while syncing.
-	in := popupInput()
-	in.Ticking, in.TickStarted = true, now
-	busy := Popup(Evaluate(in))
-	if got := PopupNav(busy, ActPin, 1); got != ActSettings {
-		t.Errorf("skip Syncing…: %s", got)
-	}
 	if got := PopupNav(nil, ActNone, 1); got != ActNone {
 		t.Errorf("no rows: %s", got)
 	}
@@ -175,8 +162,8 @@ func TestPopupNav(t *testing.T) {
 func TestPopupHitTest(t *testing.T) {
 	rows := Popup(Evaluate(popupInput()))
 	m := Metrics{Pad: 12, LineH: 20, RuleH: 9, ActionH: 28}
-	// heading, status, account, rule, Claude, rule, 6 actions, build footer.
-	if h := m.Height(rows); h != 12+20+20+20+9+20+9+6*28+20+12 {
+	// heading, status, account, rule, Claude, rule, 4 actions, build footer.
+	if h := m.Height(rows); h != 12+20+20+20+9+20+9+4*28+20+12 {
 		t.Fatalf("height %d", h)
 	}
 	if top := m.RowTop(rows, 6); top != 12+20+20+20+9+20+9 {
@@ -192,12 +179,11 @@ func TestPopupHitTest(t *testing.T) {
 		{12, ActNone, ActNone}, // status
 		{first, ActDashboard, ActDashboard},
 		{first + 27, ActDashboard, ActDashboard},
-		{first + 28, ActPin, ActPin},
-		{first + 2*28 + 5, ActSyncNow, ActSyncNow},
-		{first + 3*28, ActSettings, ActSettings},
-		{first + 4*28, ActOpenLog, ActOpenLog},
-		{first + 5*28 + 27, ActQuit, ActQuit},
-		{first + 6*28, ActNone, ActNone}, // build footer
+		{first + 28, ActSettings, ActSettings},
+		{first + 2*28 + 5, ActOpenLog, ActOpenLog},
+		{first + 3*28, ActQuit, ActQuit},
+		{first + 3*28 + 27, ActQuit, ActQuit},
+		{first + 4*28, ActNone, ActNone}, // build footer
 		{-5, ActNone, ActNone},
 	}
 	for _, c := range cases {
@@ -207,13 +193,6 @@ func TestPopupHitTest(t *testing.T) {
 		if got := m.HoverAt(rows, c.y); got != c.hover {
 			t.Errorf("HoverAt(%d) = %s, want %s", c.y, got, c.hover)
 		}
-	}
-	// Syncing: the Sync row is gone, so Settings moves up into its place.
-	in := popupInput()
-	in.Ticking, in.TickStarted = true, now
-	busy := Popup(Evaluate(in))
-	if a := m.ActionAt(busy, first+2*28+5); a != ActSettings {
-		t.Errorf("row after Pin while syncing: %s", a)
 	}
 }
 
@@ -330,17 +309,85 @@ func TestPopupPos(t *testing.T) {
 }
 
 func TestSheetText(t *testing.T) {
-	rows := PopupView(Popup(Evaluate(popupInput())), PopupState{Sel: ActPin})
+	rows := PopupView(Popup(Evaluate(popupInput())), PopupState{Sel: ActSettings})
 	got := SheetText(rows, "  ")
 	for _, want := range []string{
 		"  ----\n",
 		"  ● tokenmaxr · STUDIO\n",
 		"  Open dashboard   [action: dashboard]\n",
-		"  Pin to screen   [action: pin] [selected]\n",
+		"  Settings…   [action: settings] [selected]\n",
 		"  Quit   [action: quit]\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
+	}
+}
+
+// The account line's names are links (owner direction 2026-10-05: one click
+// to each dashboard): the repository to the GitHub dashboard, the server
+// host to the server's, "Settings…" to the settings page.
+func TestAccountLinks(t *testing.T) {
+	span := func(text string, l Link) string { return string([]rune(text)[l.From:l.To]) }
+	both := ok()
+	both.GitHub, both.GitHubLogin, both.PagesURL = "7-of-9/tokenmaxr-usage", "7-of-9", "https://7-of-9.github.io/tokenmaxr-usage/"
+	githubOnly := both
+	githubOnly.Enrolled = false
+	signedOut := ok()
+	for _, c := range []struct {
+		name  string
+		in    Input
+		text  string
+		links []string // "span → action"
+	}{
+		{"both", both, "GitHub 7-of-9 → tokenmaxr-usage · server d0m1.com", []string{"tokenmaxr-usage github-dashboard", "d0m1.com dashboard"}},
+		{"github only", githubOnly, "GitHub 7-of-9 → tokenmaxr-usage", []string{"tokenmaxr-usage dashboard"}},
+		{"not signed in", signedOut, "GitHub: not signed in · Settings… · server d0m1.com", []string{"Settings… settings", "d0m1.com dashboard"}},
+	} {
+		v := Evaluate(c.in)
+		var line PanelLine
+		for _, l := range Panel(v) {
+			if l.Text == c.text {
+				line = l
+			}
+		}
+		if line.Text == "" {
+			t.Fatalf("%s: no account line %q in\n%s", c.name, c.text, SheetText(Panel(v), "  "))
+		}
+		var got []string
+		for _, l := range line.Links {
+			if l.Action != ActNone {
+				got = append(got, span(line.Text, l)+" "+l.Action.String())
+			}
+		}
+		if strings.Join(got, ", ") != strings.Join(c.links, ", ") {
+			t.Errorf("%s: links %q, want %q", c.name, got, c.links)
+		}
+	}
+
+	// A click maps x to the column: on a link it runs the link, elsewhere the row's action.
+	lines := []PanelLine{{Text: "GitHub 7-of-9 → tokenmaxr-usage · server d0m1.com", Kind: LineDim, Links: accountLinks(Evaluate(both))},
+		{Text: "Quit", Kind: LineAction, Action: ActQuit}}
+	m := Metrics{Pad: 12, LineH: 20, RuleH: 9, ActionH: 28, CharW: 7.5}
+	col := func(c int) int { return 12 + int(float64(c)*7.5) + 1 }
+	repo, host := runeIndex(lines[0].Text, "tokenmaxr-usage"), runeIndex(lines[0].Text, "d0m1.com")
+	for _, c := range []struct {
+		x, y int
+		want Action
+	}{
+		{col(repo), 15, ActGitHubDashboard},
+		{col(repo + 14), 15, ActGitHubDashboard}, // its last rune
+		{col(repo + 15), 15, ActNone},            // the space after it
+		{col(host), 15, ActDashboard},
+		{col(0), 15, ActNone},    // "GitHub", not a link
+		{5, 15, ActNone},         // the padding
+		{col(repo), 40, ActQuit}, // the Quit row below
+	} {
+		if got := m.ClickAt(lines, c.x, c.y); got != c.want {
+			t.Errorf("ClickAt(%d, %d) = %s, want %s", c.x, c.y, got, c.want)
+		}
+	}
+	if got := (Metrics{Pad: 12, LineH: 20}).LinkAt(lines, col(repo), 15); got != ActNone {
+		t.Errorf("no CharW, yet a link: %s", got)
 	}
 }

@@ -20,27 +20,17 @@ const QuitArmedText = "Click again to quit (stops until next login)"
 const CopiedText = "  copied"
 
 // Popup is the machine heading and providers, then a rule and actions.
+// There is no Sync row (showing the UI syncs) and no Pin row (the main
+// window replaced the pinned panel; owner direction 2026-10-05: "remove the
+// "sync now" from ui menu - not needed; remove pin to screen").
 func Popup(v View) []PanelLine {
 	out := Panel(v)
-	pin := PanelLine{Text: "Pin to screen", Kind: LineAction, Action: ActPin}
-	if v.Pinned {
-		pin.Text, pin.Action = "Unpin", ActUnpin
-	}
-	sync := PanelLine{Text: "Sync now", Kind: LineAction, Action: ActSyncNow}
-	if !v.CanSync {
-		sync.Kind, sync.Action = LineActionOff, ActNone
-	}
 	out = append(out, PanelLine{Kind: LineRule})
 	if v.Dashboard != "" {
 		out = append(out, PanelLine{Text: "Open dashboard", Kind: LineAction, Action: ActDashboard})
 	}
 	if v.GitHubDashboard != "" {
 		out = append(out, PanelLine{Text: "Open GitHub dashboard", Kind: LineAction, Action: ActGitHubDashboard})
-	}
-	out = append(out, pin)
-	// While a sync runs the status line says so: no Sync row.
-	if !v.Syncing {
-		out = append(out, sync)
 	}
 	out = append(out,
 		PanelLine{Text: "Settings…", Kind: LineAction, Action: ActSettings},
@@ -142,6 +132,9 @@ func PopupNav(lines []PanelLine, sel Action, dir int) Action {
 // text line with room for its highlight).
 type Metrics struct {
 	Pad, LineH, RuleH, ActionH int
+	// CharW is the monospace font's advance, for the column under x
+	// (LinkAt); 0 means links are not clickable.
+	CharW float64
 }
 
 // RowH is the height of a row.
@@ -192,6 +185,31 @@ func (m Metrics) ActionAt(lines []PanelLine, y int) Action {
 		return lines[i].Action
 	}
 	return ActNone
+}
+
+// LinkAt is the link under x, y (window coordinates; the text starts at
+// Pad), or ActNone.
+func (m Metrics) LinkAt(lines []PanelLine, x, y int) Action {
+	i := m.RowAt(lines, y)
+	if i < 0 || m.CharW <= 0 || x < m.Pad {
+		return ActNone
+	}
+	col := int(float64(x-m.Pad) / m.CharW)
+	for _, l := range lines[i].Links {
+		if l.Action != ActNone && col >= l.From && col < l.To {
+			return l.Action
+		}
+	}
+	return ActNone
+}
+
+// ClickAt is what a click at x, y does: the link there, else its row's
+// action.
+func (m Metrics) ClickAt(lines []PanelLine, x, y int) Action {
+	if a := m.LinkAt(lines, x, y); a != ActNone {
+		return a
+	}
+	return m.ActionAt(lines, y)
 }
 
 // HoverAt is the row the mouse highlights at y (ActNone off the action

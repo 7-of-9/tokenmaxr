@@ -464,6 +464,81 @@ func winArg(s string) string {
 	return strings.TrimPrefix(line, `"x" `)
 }
 
+// Showing the UI checks again: a tick now, unless one runs, just started or
+// has not started yet (the first one is about to).
+func TestShowingTheUIChecksAgain(t *testing.T) {
+	a, _, _ := newTestApp(t)
+	d := a.newDesktop(context.Background())
+	kicked := func() bool {
+		select {
+		case <-d.kick:
+			return true
+		default:
+			return false
+		}
+	}
+	d.WindowShown(true)
+	if kicked() {
+		t.Fatal("ticked before the first tick")
+	}
+	d.in.TickStarted = a.Now().Add(-time.Minute)
+	d.WindowShown(true)
+	if !kicked() {
+		t.Fatal("window shown: no tick")
+	}
+	d.PopupShown(true)
+	if !kicked() {
+		t.Fatal("popup opened: no tick")
+	}
+	d.in.TickStarted = a.Now().Add(-5 * time.Second)
+	d.PopupShown(true)
+	if kicked() {
+		t.Fatal("ticked again 5s after a tick")
+	}
+	d.in.TickStarted, d.in.Ticking = a.Now().Add(-time.Minute), true
+	d.WindowShown(true)
+	d.WindowShown(false)
+	if kicked() {
+		t.Fatal("ticked while a tick runs, or when hidden")
+	}
+}
+
+// On macOS, run by its LaunchAgent, a restart exits for launchd to start the
+// app again (a fresh process keeps its menu-bar place); a restart the user
+// asked for leaves app.showonstart, so that start shows the app.
+func TestRelaunchThroughLaunchd(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd is macOS")
+	}
+	a, _, _ := newTestApp(t)
+	os.MkdirAll(a.Home, 0o700)
+	t.Setenv("XPC_SERVICE_NAME", autostart.AgentLabel)
+	if err := a.reexecApp(true); !errors.Is(err, ErrRelaunch) || fileExists(paths.AppShowOnStart(a.Home)) {
+		t.Fatalf("minimized relaunch: %v, marker %v", err, fileExists(paths.AppShowOnStart(a.Home)))
+	}
+	if err := a.reexecApp(false); !errors.Is(err, ErrRelaunch) || !fileExists(paths.AppShowOnStart(a.Home)) {
+		t.Fatalf("shown relaunch: %v, marker %v", err, fileExists(paths.AppShowOnStart(a.Home)))
+	}
+}
+
+// Tray only, a start the user asked to see (app.showonstart) opens the
+// popup once the icon exists; any other start, or window mode, does not.
+func TestReadyShowsTrayOnlyApp(t *testing.T) {
+	for _, c := range []struct {
+		show, trayOnly bool
+		shows          int
+	}{{true, true, 1}, {true, false, 0}, {false, true, 0}} {
+		a, _, _ := newTestApp(t)
+		d := a.newDesktop(context.Background())
+		d.showOnStart, d.trayOnly = c.show, c.trayOnly
+		ui := newRecUI()
+		d.Ready(ui)
+		if ui.shows != c.shows || d.showOnStart {
+			t.Errorf("show %v trayOnly %v: %d shows (want %d), flag left %v", c.show, c.trayOnly, ui.shows, c.shows, d.showOnStart)
+		}
+	}
+}
+
 func TestDesktopRestartRequest(t *testing.T) {
 	a, _, _ := newTestApp(t)
 	d := a.newDesktop(context.Background())
@@ -561,17 +636,14 @@ func TestDesktopPin(t *testing.T) {
 	done, dp := startApp(t, a, ui, fast)
 	d := *dp
 	waitFor(t, "the first tick", func() bool { return !lastTick().IsZero() })
-	if ui.shownPanel().Shown || ui.line("pin") != "Pin to screen" {
-		t.Fatalf("panel %+v, pin item %q", ui.shownPanel(), ui.line("pin"))
+	if ui.shownPanel().Shown {
+		t.Fatalf("panel %+v", ui.shownPanel())
 	}
 
 	first := lastTick()
 	d.Click(tray.ActPin)
 	waitFor(t, "the panel", func() bool { p := ui.shownPanel(); return p.Shown && len(p.Lines) > 0 })
 	waitFor(t, "a tick on pinning", func() bool { return lastTick().After(first) })
-	if got := ui.line("pin"); got != "Unpin" {
-		t.Fatalf("pin item %q", got)
-	}
 	p := ui.shownPanel()
 	if len(p.Lines) != 5 || p.Lines[0].Text != "● tokenmaxr · STUDIO" || p.Lines[0].Kind != tray.LineOK || p.Lines[1].Kind != tray.LineDim || !strings.HasPrefix(p.Lines[2].Text, "GitHub: not signed in") || p.Lines[3].Kind != tray.LineRule || !strings.HasPrefix(p.Lines[4].Text, "Claude   ") {
 		t.Fatalf("panel lines %+v", p.Lines)
@@ -606,7 +678,7 @@ func TestDesktopPin(t *testing.T) {
 
 	// The × unpins: closed, remembered, and back to the slow interval.
 	d.Click(tray.ActUnpin)
-	waitFor(t, "the panel closed", func() bool { return !ui.shownPanel().Shown && ui.line("pin") == "Pin to screen" })
+	waitFor(t, "the panel closed", func() bool { return !ui.shownPanel().Shown })
 	waitFor(t, "the unpin saved", func() bool { return !savedPanel().Pinned && savedPanel().Placed })
 	time.Sleep(300 * time.Millisecond) // a pinned-interval tick may still be due
 	before := lastTick()
@@ -636,7 +708,7 @@ func TestDesktopPopup(t *testing.T) {
 	waitFor(t, "the popup rows, idle", func() bool {
 		rows := ui.popupRows()
 		return len(rows) > 4 && rows[len(rows)-1].Text == "dev build" && rows[len(rows)-1].Kind == tray.LineDim &&
-			rows[len(rows)-2].Text == "Quit" && rows[len(rows)-5].Text == "Sync now" &&
+			rows[len(rows)-2].Text == "Quit" && strings.HasPrefix(rows[1].Text, "Up to date") &&
 			rows[0].Text == "● tokenmaxr · STUDIO" && rows[0].Kind == tray.LineOK
 	})
 	var acts []tray.Action
@@ -645,7 +717,7 @@ func TestDesktopPopup(t *testing.T) {
 			acts = append(acts, l.Action)
 		}
 	}
-	if want := []tray.Action{tray.ActDashboard, tray.ActPin, tray.ActSyncNow, tray.ActSettings, tray.ActOpenLog, tray.ActQuit}; !slices.Equal(acts, want) {
+	if want := []tray.Action{tray.ActDashboard, tray.ActSettings, tray.ActOpenLog, tray.ActQuit}; !slices.Equal(acts, want) {
 		t.Fatalf("popup actions %v, want %v", acts, want)
 	}
 
@@ -759,7 +831,10 @@ func TestDesktopLiveUploadProgress(t *testing.T) {
 	check(second)
 	release(1)
 	waitFor(t, "idle after upload", func() bool {
-		return ui.line("machine") == "● STUDIO" && ui.line("sync") == "Sync now"
+		ui.mu.Lock()
+		tip := ui.tip
+		ui.mu.Unlock()
+		return ui.line("machine") == "● STUDIO" && strings.Contains(tip, "Up to date")
 	})
 	d.stop()
 	if err := <-done; err != nil {

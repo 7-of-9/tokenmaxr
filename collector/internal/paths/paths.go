@@ -123,6 +123,11 @@ func AppSignal(home, verb string) string { return filepath.Join(home, "app."+ver
 func AppStopped(home string) string      { return filepath.Join(home, "app.stopped") }
 func AppView(home string) string         { return filepath.Join(home, "app.view.txt") }
 
+// AppShowOnStart asks the next start to show the app (not minimized): left
+// by a restart that launchd performs (macOS), which always starts it
+// minimized.
+func AppShowOnStart(home string) string { return filepath.Join(home, "app.showonstart") }
+
 // AppExeName is the binary the app runs as: the windowsgui build on
 // Windows (no console window), the one binary on macOS.
 func AppExeName() string { return ExeName(runtime.GOOS == "windows") }

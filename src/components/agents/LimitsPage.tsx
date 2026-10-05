@@ -277,14 +277,14 @@ const LimitsPage = () => {
   )
 
   return (
-    <TokensShell crumbs={crumbs} className="agents-gh limits-page" pinned>
+    <TokensShell crumbs={crumbs} className="agents-gh limits-page">
       {mock && (
         <div className="agents-testdata" role="status">
           Test data: every account on this page is synthetic, for previewing the layout. None of it is real.
         </div>
       )}
 
-      <div className="agents-panel agents-sheet">
+      <div className="agents-sheet">
         <div className="agents-sheet__scroll">
           {(load.status === 'loading' || (refreshing && !items)) && <LoadingIndicator label={owner.status === 'checking' ? 'Checking your sign-in…' : 'Loading weekly quota…'} />}
 

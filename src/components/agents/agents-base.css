@@ -207,43 +207,11 @@
   }
 }
 
-/* A pinned page (/tokens, /agents) never scrolls: the sheet fills the space between the header and the footer
-   and stays put, and only the sheet's inside scrolls, clipped to its rounded border. */
-.tokens-shell--pinned {
-  overflow: hidden;
-}
+/* The token pages have no outer sheet (owner direction 2026-10-05: "lose the outermost panels on all pages - they
+   just impede easy scrolling", on d0m1.com and the GitHub Pages dashboard alike): the page scrolls as a whole and
+   the tiles inside keep their panels. */
 
-.tokens-shell--pinned .agents-page {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
-}
-
-.tokens-shell--pinned .agents-page .agents-sheet {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.agents-sheet__scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 24px 24px 28px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: none;
-}
-
-.agents-sheet__scroll::-webkit-scrollbar {
-  display: none;
-}
-
-.tokens-shell--pinned /* Country flags (Flag.tsx): used by the Overview feed and Detail, so sized here rather than in either. */
+/* Country flags (Flag.tsx): used by the Overview feed and Detail, so sized here rather than in either. */
 .agents-flag {
   display: block;
   flex: none;
@@ -869,10 +837,6 @@
     margin-top: 1.5rem;
     padding: 1rem 0.875rem 0.875rem;
     border-radius: 14px;
-  }
-
-  .agents-sheet__scroll {
-    padding: 14px 12px 18px;
   }
 
   .agents-title {

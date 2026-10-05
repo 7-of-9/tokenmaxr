@@ -7,6 +7,7 @@ import { HashRouter } from 'react-router-dom'
 import Dashboard from './Dashboard'
 import { githubSource } from './githubSource'
 import { consumeUnlockFragment, createOwnerStore, createUnlockHandoff, indexedDbVault, memoryVault, ownerStorageName } from './owner'
+import { storedViewToggle } from './site'
 // d0m1.com's site-wide styles, which its token pages sit on; pages.css adds the two faces they use.
 import '../../src/index.css'
 import '../../src/App.css'
@@ -46,6 +47,8 @@ window.addEventListener('popstate', takeUnlock)
 window.addEventListener('hashchange', takeUnlock)
 
 const source = githubSource({ ownerKey: owner.ready })
+// Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
+const view = storedViewToggle(storage, `${name}:signed-out`, window)
 
 // The earlier dashboard kept its period in the hash (#7, #30, #90, #365, #0). The router owns the hash now
 // (a hash router needs no server fallback on Pages): carry the nearest period over.
@@ -57,7 +60,7 @@ if (!window.location.hash.startsWith('#/')) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
-      <Dashboard source={source} owner={owner} handoff={handoff} />
+      <Dashboard source={source} owner={owner} handoff={handoff} view={view} />
     </HashRouter>
   </StrictMode>,
 )

@@ -173,7 +173,7 @@ func TestPanel(t *testing.T) {
 		{"ok with providers", func(*Input) {}, []PanelLine{
 			{Text: "● tokenmaxr · STUDIO", Kind: LineOK, HiEnd: 1},
 			{Text: "Up to date", Kind: LineDim},
-			{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim},
+			{Text: "GitHub: not signed in · Settings… · server d0m1.com", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}, {From: 43, To: 51, Action: ActDashboard}}},
 			{Kind: LineRule},
 			{Text: "Grok     30s ago        +10  │   24h   900   30d   900", Kind: LineText, Hi: 24, HiEnd: 27, Age: 9, AgeEnd: 16},
 			{Text: "Claude   2 min ago   +67.5K  │   24h 20.1B   30d 13.4B", Kind: LineText, Hi: 21, HiEnd: 27, Age: 9, AgeEnd: 18},
@@ -182,7 +182,7 @@ func TestPanel(t *testing.T) {
 		{"error, nothing seen", func(in *Input) { in.Providers, in.Enrolled = nil, false }, []PanelLine{
 			{Text: "● tokenmaxr · STUDIO", Kind: LineError, HiEnd: 1},
 			{Text: "Error: not set up", Kind: LineDim},
-			{Text: "GitHub: not signed in · Settings…", Kind: LineDim},
+			{Text: "GitHub: not signed in · Settings…", Kind: LineDim, Links: [2]Link{{From: 24, To: 33, Action: ActSettings}}},
 		}},
 	}
 	for _, c := range cases {
@@ -242,7 +242,7 @@ func TestMenu(t *testing.T) {
 	for _, it := range items {
 		keys = append(keys, it.Key)
 	}
-	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard github-dashboard pin sync settings log quit"
+	wantKeys := "machine sep-providers provider:cursor provider:anthropic provider:openai provider:xai provider:google sep-actions dashboard github-dashboard settings log quit"
 	if got := strings.Join(keys, " "); got != wantKeys {
 		t.Fatalf("keys\n got %s\nwant %s", got, wantKeys)
 	}
@@ -256,17 +256,13 @@ func TestMenu(t *testing.T) {
 	if !by["provider:anthropic"].Hidden || by["sep-providers"].Hidden {
 		t.Fatal("unseen provider shown or separator hidden")
 	}
-	if p := by["pin"]; p.Title != "Pin to screen" || p.Action != ActPin {
-		t.Errorf("pin %+v", p)
-	}
-	for key, act := range map[string]Action{"dashboard": ActDashboard, "pin": ActPin, "sync": ActSyncNow, "log": ActOpenLog, "quit": ActQuit} {
+	for key, act := range map[string]Action{"dashboard": ActDashboard, "settings": ActSettings, "log": ActOpenLog, "quit": ActQuit} {
 		if by[key].Action != act || by[key].Disabled {
 			t.Errorf("%s: %+v", key, by[key])
 		}
 	}
 
-	// Same keys with nothing seen; a running tick greys Sync now; pinned,
-	// the item unpins.
+	// Same keys with nothing seen, ticking or pinned: no Sync or Pin item.
 	in.Providers, in.Ticking, in.TickStarted, in.Pinned = nil, true, now, true
 	items = Menu(Evaluate(in))
 	if len(items) != len(keys) {
@@ -276,10 +272,8 @@ func TestMenu(t *testing.T) {
 		switch {
 		case it.Key == "sep-providers" && !it.Hidden:
 			t.Error("separator shown with no providers")
-		case it.Key == "sync" && !it.Hidden:
-			t.Errorf("sync while ticking: %+v", it)
-		case it.Key == "pin" && (it.Title != "Unpin" || it.Action != ActUnpin):
-			t.Errorf("pin while pinned: %+v", it)
+		case it.Action == ActSyncNow || it.Action == ActPin || it.Action == ActUnpin:
+			t.Errorf("removed item is back: %+v", it)
 		}
 	}
 }

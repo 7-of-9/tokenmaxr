@@ -12,7 +12,7 @@ const AgentsPage = () => {
   const { home } = useTokensSite()
   const view = searchParams.get('view') === 'detail' ? 'detail' : 'overview'
   return (
-    <TokensShell crumbs={[{ label: 'tokens', to: home }]} className={`agents-gh agents-page--${view}`} pinned>
+    <TokensShell crumbs={[{ label: 'tokens', to: home }]} className={`agents-gh agents-page--${view}`}>
       <TokensView />
     </TokensShell>
   )

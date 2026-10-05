@@ -116,14 +116,19 @@ address).
    instead; that link does stay in that browser's history.)
 2. The dashboard takes the key out of the address bar at once, turns it into
    a WebCrypto key that cannot be read back out (non-extractable), keeps that
-   in this browser's IndexedDB for this dashboard, and shows **Agents** in the
-   header and **Lock** where d0m1.com has Sign out.
+   in this browser's IndexedDB for this dashboard, and shows **Agents** and
+   **Sign out** in the header, as d0m1.com does.
 3. From then on the browser fetches each machine's `owner.json` and decrypts
    it locally (WebCrypto, AES-256-GCM). The key is never sent anywhere: no
    request carries it, and fragments (`#...`) are never sent to a server.
    The Agents page's choices (which accounts are tracked, by email) are kept
-   encrypted with the same key. **Lock** forgets the key and those choices in
-   this browser, and in its other tabs of this dashboard.
+   encrypted with the same key.
+4. **Sign out** shows the public view (what any visitor sees) and **Sign in**
+   brings yours back, in this browser and its other tabs of this dashboard.
+   Signing out keeps the key, so signing in takes one click; in a browser
+   never unlocked, **Sign in** opens the Agents page, which says how to
+   unlock it. To remove the key from a browser, clear this site's data
+   (the browser's site settings for `<you>.github.io`).
 
 The key is derived from the fleet key (`TOKENMAXR_FLEET_KEY`):
 HMAC-SHA256(fleet key, `tokenmaxr dashboard owner v1`). The collectors encrypt
@@ -140,7 +145,7 @@ What the browser keeps, and who else could reach it:
 - **The unlock link stays in the browser's history.** Taking the key out of
   the address bar does not remove the visit the browser has already recorded,
   and a browser that syncs its history copies the link to your other devices
-  and offers it as an address-bar suggestion. Lock does not remove it either.
+  and offers it as an address-bar suggestion. Sign out does not remove it either.
   After unlocking, delete that history entry (search history for `unlock=`),
   or unlock in a browser profile that does not sync history.
 - **Every Pages site of your account shares one origin** (`<you>.github.io`),
@@ -150,17 +155,18 @@ What the browser keeps, and who else could reach it:
   unlocked. Because the key is non-extractable, it cannot copy the key out to
   use after you lock. To keep the dashboard on an origin of its own, give
   this repository's Pages a custom domain; otherwise unlock only in a
-  browser profile that does not visit your other Pages sites, and Lock when
-  done.
+  browser profile that does not visit your other Pages sites, and clear this
+  site's data when done (Sign out keeps the key).
 
 ## Differences from d0m1.com/tokens
 
-The pages, shell and styles are d0m1.com's own. What differs on purpose: the
-breadcrumb starts with this dashboard's title (long titles are cut short)
-where d0m1.com has "d0m1", and `<` does nothing on the first page (there is
-no home page above it); the owner gets in with the unlock link and **Lock**
-instead of Sign in and Sign out; there is no Prompts page (prompt text is
-never published); and
+The pages, shell and styles are d0m1.com's own, without an outer panel on
+either site. What differs on purpose: the breadcrumb starts with the GitHub
+user (`<you>` of `<you>.github.io`; elsewhere the dashboard's title, cut short
+when long) where d0m1.com has "d0m1", and `<` does nothing on the first page
+(there is no home page above it); the owner gets in with the unlock link
+rather than a GitHub sign-in (Sign out and Sign in then toggle the public
+view); there is no Prompts page (prompt text is never published); and
 the page sits on plain black, without d0m1.com's background video, theme
 controls, page-slide transitions or site footer.
 

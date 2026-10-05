@@ -128,14 +128,21 @@ func (w *macWindow) redraw(front bool) {
 	w.lines, w.m, w.created = lines, m, true
 	w.mu.Unlock()
 	showMainNative(text, kinds, spans, m, wd, ht, front)
-	if front {
-		w.setVisible(true)
+	if front && !w.setVisible(true) {
+		// Already on screen and brought to the front (the Dock icon, a
+		// second launch): the app checks again whenever its UI is shown.
+		w.mu.Lock()
+		h := w.h
+		w.mu.Unlock()
+		if h.Shown != nil {
+			go h.Shown(true)
+		}
 	}
 }
 
-// setVisible records whether the window is on screen and tells the app
-// when that changes.
-func (w *macWindow) setVisible(v bool) {
+// setVisible records whether the window is on screen, tells the app when
+// that changes and reports whether it did.
+func (w *macWindow) setVisible(v bool) bool {
 	w.mu.Lock()
 	changed := w.visible != v
 	w.visible = v
@@ -147,6 +154,7 @@ func (w *macWindow) setVisible(v bool) {
 	if changed && h.Shown != nil {
 		go h.Shown(v)
 	}
+	return changed
 }
 
 func (w *macWindow) stopTimersLocked() {
@@ -217,13 +225,13 @@ func (w *macWindow) do(act tray.Action) {
 
 // windowHover highlights the action row at y (-1: none) and reports
 // whether the row is clickable (the pointer becomes a hand).
-func windowHover(y int) int {
+func windowHover(x, y int) int {
 	w := &macWin
 	w.mu.Lock()
 	sel, clickable := tray.ActNone, false
 	if y >= 0 {
 		sel = w.m.HoverAt(w.lines, y)
-		clickable = w.m.ActionAt(w.lines, y) != tray.ActNone
+		clickable = w.m.ClickAt(w.lines, x, y) != tray.ActNone
 	}
 	changed := tray.HoverPopup(&w.st, sel)
 	w.mu.Unlock()
@@ -236,10 +244,10 @@ func windowHover(y int) int {
 	return 0
 }
 
-func windowClick(y int) {
+func windowClick(x, y int) {
 	w := &macWin
 	w.mu.Lock()
-	act := w.m.ActionAt(w.lines, y)
+	act := w.m.ClickAt(w.lines, x, y)
 	w.mu.Unlock()
 	w.do(act)
 }

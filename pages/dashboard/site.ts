@@ -1,17 +1,84 @@
 // The GitHub Pages dashboard as a TokensSite (src/components/agents/site.ts): the same shell and pages as
-// d0m1.com/tokens, with the dashboard's title where d0m1.com says "d0m1", the pages on the hash router (#/ and
-// #/agents for /tokens and /tokens/agents), and the owner let in by the key unlocking left in this browser (owner.ts:
-// handed over by tokenmaxr's settings page, or a copied link) rather than by a sign-in. The Agents page's choices are
-// kept encrypted with that key (the origin is shared with every Pages site of the user). There is no Prompts archive
-// here: prompt text is never published.
+// d0m1.com/tokens, with the GitHub user (or the dashboard's title) where d0m1.com says "d0m1", the pages on the hash
+// router (#/ and #/agents for /tokens and /tokens/agents), and the owner let in by the key unlocking left in this
+// browser (owner.ts: handed over by tokenmaxr's settings page, or a copied link). Sign out and Sign in toggle between
+// the public view and the owner's, keeping the key. The Agents page's choices are kept encrypted with that key (the
+// origin is shared with every Pages site of the user). There is no Prompts archive here: prompt text is never
+// published.
 import { createElement, useSyncExternalStore } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import type { Owner, TokensSite } from '../../src/components/agents/site.ts'
 import type { HandoffStatus, OwnerStore } from './owner.ts'
 
-const LOCKED: Owner = { status: 'visitor', key: 'locked', controls: false }
+// A visitor (or the owner signed out) sees the public pages, and Sign in in the header.
+const SIGNED_OUT: Owner = { status: 'visitor', key: 'locked', controls: true }
 const LOADING: Owner = { status: 'checking', key: 'checking', controls: false }
 const MOCK: Owner = { status: 'mock', key: 'mock', controls: false }
+
+/** The GitHub user a Pages site belongs to (https://<user>.github.io/…), or null on another host. */
+export function githubUser(hostname: string): string | null {
+  const host = hostname.toLowerCase()
+  if (!host.endsWith('.github.io')) return null
+  const user = host.slice(0, -'.github.io'.length)
+  return user && !user.includes('.') ? user : null
+}
+
+/**
+ * Sign out shows the public view and keeps the owner key, so Sign in is one click back (owner direction 2026-10-05:
+ * "toggle the GH page from true public/anon version to my personal logged-in version"). Kept per dashboard in this
+ * browser; other tabs follow.
+ */
+export interface ViewToggle {
+  signedOut(): boolean
+  setSignedOut(signedOut: boolean): void
+  subscribe(listener: () => void): () => void
+}
+
+export function storedViewToggle(storage: Storage | null, key: string, events: Pick<Window, 'addEventListener' | 'removeEventListener'> | null): ViewToggle {
+  const listeners = new Set<() => void>()
+  let memory = false
+  const read = () => {
+    try {
+      return storage ? storage.getItem(key) === '1' : memory
+    } catch {
+      return memory
+    }
+  }
+  let current = read()
+  const notify = () => { for (const listener of [...listeners]) listener() }
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== key && event.key !== null) return
+    const next = read()
+    if (next !== current) {
+      current = next
+      notify()
+    }
+  }
+  return {
+    signedOut: () => current,
+    setSignedOut(signedOut) {
+      memory = signedOut
+      try {
+        if (signedOut) storage?.setItem(key, '1')
+        else storage?.removeItem(key)
+      } catch {
+        // Storage refused: this tab only.
+      }
+      if (signedOut !== current) {
+        current = signedOut
+        notify()
+      }
+    },
+    subscribe(listener) {
+      if (listeners.size === 0) events?.addEventListener('storage', onStorage as EventListener)
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size === 0) events?.removeEventListener('storage', onStorage as EventListener)
+      }
+    },
+  }
+}
 
 /** Until data/index.json names it: the repository (https://<user>.github.io/<repository>/), else "tokens". */
 export function defaultTitle(pathname: string): string {
@@ -32,22 +99,40 @@ function agentsGate(handoff: HandoffStatus) {
     description: 'Only the owner can read the plan limits: the accounts, organisations and plans behind them are published encrypted.',
     hint: handoff === 'waiting' ? 'Waiting for tokenmaxr’s settings to hand over the key.'
       : handoff === 'failed' ? 'Open this from tokenmaxr’s settings to unlock.'
-        : 'Open this dashboard with “Open my dashboard (unlocked)” on your collector’s Settings page. It unlocks this browser; Lock in the header forgets the key.',
+        : 'Open this dashboard with “Open my dashboard (unlocked)” on your collector’s Settings page. It unlocks this browser; Sign out in the header shows the public view, and Sign in brings yours back.',
   }
 }
 
-export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStatus = 'idle'): TokensSite {
-  const Controls = () => createElement('button', { type: 'button', onClick: () => store.lock(), title: 'Forget the owner key in this browser' }, 'Lock')
+const noSubscribe = () => () => {}
+const notSignedOut = () => false
+
+export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStatus = 'idle', view: ViewToggle | null = null, user: string | null = null): TokensSite {
+  // Sign out keeps the key (view.setSignedOut); Sign in brings the owner's view back, or, in a browser the key has
+  // never unlocked, opens the Agents page, which says how to unlock it from tokenmaxr.
+  const Controls = () => {
+    const state = useSyncExternalStore(store.subscribe, store.state)
+    const signedOut = useSyncExternalStore(view?.subscribe ?? noSubscribe, view?.signedOut ?? notSignedOut)
+    const navigate = useNavigate()
+    if (state.status === 'unlocked' && !signedOut) {
+      return createElement('button', { type: 'button', onClick: () => view?.setSignedOut(true), title: 'Show the public view (this browser keeps the key: Sign in brings yours back)' }, 'Sign out')
+    }
+    const signIn = () => {
+      if (state.status === 'unlocked') view?.setSignedOut(false)
+      else navigate('/agents')
+    }
+    return createElement('button', { type: 'button', onClick: signIn, title: state.status === 'unlocked' ? 'Back to your view' : 'Unlock this browser from tokenmaxr' }, 'Sign in')
+  }
   return {
-    root: { label: title, to: '/' },
+    root: { label: user ?? title, to: '/' },
     home: '/',
     ownerPages: [{ label: 'Agents', to: '/agents' }],
     useOwner() {
       const { search } = useLocation()
       const state = useSyncExternalStore(store.subscribe, store.state)
+      const signedOut = useSyncExternalStore(view?.subscribe ?? noSubscribe, view?.signedOut ?? notSignedOut)
       if (new URLSearchParams(search).get('mock') === '1') return MOCK
       if (state.status === 'loading') return LOADING
-      return state.status === 'unlocked' ? { status: 'owner', key: `unlocked:${state.version}`, controls: true } : LOCKED
+      return state.status === 'unlocked' && !signedOut ? { status: 'owner', key: `unlocked:${state.version}`, controls: true } : SIGNED_OUT
     },
     Controls,
     agentsGate: agentsGate(handoff),

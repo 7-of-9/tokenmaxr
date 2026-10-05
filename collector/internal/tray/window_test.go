@@ -40,13 +40,13 @@ func TestWindowRows(t *testing.T) {
 			acts = append(acts, l.Action)
 		}
 	}
-	want := []Action{ActDashboard, ActPin, ActSyncNow, ActSettings, ActOpenLog, ActQuit}
+	want := []Action{ActDashboard, ActSettings, ActOpenLog, ActQuit}
 	if !slices.Equal(acts, want) {
 		t.Fatalf("window actions %v, want %v", acts, want)
 	}
-	// Pinned, the window offers Unpin, like the popup.
+	// Pinned, no Unpin row either (the panel's own × closes it).
 	pinned := Window(Evaluate(pinnedInput()))
-	if !slices.ContainsFunc(pinned, func(l PanelLine) bool { return l.Action == ActUnpin && l.Text == "Unpin" }) {
+	if slices.ContainsFunc(pinned, func(l PanelLine) bool { return l.Action == ActUnpin || l.Action == ActPin }) {
 		t.Fatalf("pinned window rows:\n%s", SheetText(pinned, "  "))
 	}
 	if WindowTitle != "tokenmaxr" {

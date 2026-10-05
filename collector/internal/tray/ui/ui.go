@@ -48,8 +48,8 @@ type Handler struct {
 	// on the taskbar (macOS: hidden, with its Dock icon).
 	Window    bool
 	Minimized bool
-	// Shown runs when the main window comes on screen (true) or is
-	// minimized or hidden, on its own goroutine.
+	// Shown runs when the main window comes on screen or is brought to the
+	// front (true), or is minimized or hidden, on its own goroutine.
 	Shown func(visible bool)
 }
 
@@ -146,10 +146,14 @@ func (r *renderer) SetWindow(lines []tray.PanelLine) {
 }
 
 // ShowWindow restores the main window and brings it to the front.
+// ShowWindow brings the main window to the front; tray only, it opens the
+// popup instead (a second launch, Spotlight, has nothing else to show).
 func (r *renderer) ShowWindow() {
 	if r.h.Window {
 		showMainWindow()
+		return
 	}
+	revealPopup(r.h)
 }
 
 func (r *renderer) Confirm(question string) bool { return confirm(question) }

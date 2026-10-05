@@ -266,6 +266,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = a.Uninstall(app.UninstallOptions{Purge: *purge})
 	}
 	if err != nil {
+		if errors.Is(err, app.ErrRelaunch) {
+			return 1 // launchd starts the app again (KeepAlive)
+		}
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stderr, "interrupted")
 			return 130

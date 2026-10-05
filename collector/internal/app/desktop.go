@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/7-of-9/tokenmaxr/collector/internal/autostart"
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
 	"github.com/7-of-9/tokenmaxr/collector/internal/instance"
 	"github.com/7-of-9/tokenmaxr/collector/internal/lock"
@@ -105,9 +107,12 @@ type Desktop struct {
 	// trayOnly is config.json's trayOnly as the app started: no main
 	// window (a change restarts the app). minimized starts the window
 	// minimized; window is set while it is on screen (not minimized).
-	trayOnly  bool
-	minimized bool
-	window    bool
+	trayOnly bool
+	// showOnStart: a restart the user asked for (relaunch); tray only, the
+	// popup opens once the icon exists (the window shows by itself).
+	showOnStart bool
+	minimized   bool
+	window      bool
 	// hasUI: the app shows a UI (not headless), so the settings page may
 	// switch its mode, which restarts it.
 	hasUI bool
@@ -168,6 +173,11 @@ func (a *App) Desktop(ctx context.Context, o DesktopOptions) error {
 	a.Log.Printf("app: started (%s)", a.Version)
 
 	d := a.newDesktop(ctx)
+	// A restart through launchd (relaunch) starts minimized; this marker
+	// says the user is waiting to see the app.
+	if err := os.Remove(paths.AppShowOnStart(a.Home)); err == nil {
+		o.Minimized, o.Watchdog, d.showOnStart = false, false, true
+	}
 	d.minimized, d.hasUI = o.Minimized || o.Watchdog, o.UI != nil
 	if cfg, err := store.LoadConfig(a.Home); err == nil {
 		if cfg.Panel != nil {
@@ -230,12 +240,19 @@ func (d *Desktop) Ready(u tray.UI) {
 	d.mu.Lock()
 	d.ui, d.ready = u, true
 	stopping := d.stopping
+	// Tray only, a restart the user asked for opens the popup: there is no
+	// window to show where the app went.
+	show := d.showOnStart && d.trayOnly
+	d.showOnStart = false
 	d.mu.Unlock()
 	if stopping {
 		u.Quit()
 		return
 	}
 	d.Refresh()
+	if show {
+		u.ShowWindow()
+	}
 }
 
 // Refresh redraws soon (the menu is about to open, or new numbers).
@@ -310,26 +327,48 @@ func (d *Desktop) Pinned() bool {
 
 // PopupShown records that the click popup opened or closed
 // (ui.Handler.Popup): while it is open the view redraws every second, so
-// its relative times move.
+// its relative times move. Opening it checks again (refreshShown).
 func (d *Desktop) PopupShown(open bool) {
 	d.mu.Lock()
 	d.popup = open
 	d.mu.Unlock()
 	if open {
-		d.Refresh()
+		d.refreshShown()
 	}
 }
 
-// WindowShown records that the main window was restored (true) or
-// minimized or hidden (ui.Handler.Shown): while it is on screen the view
-// redraws every second, like the popup's.
+// WindowShown records that the main window was restored or brought to the
+// front (true), or minimized or hidden (ui.Handler.Shown): while it is on
+// screen the view redraws every second, like the popup's. Showing it checks
+// again (refreshShown).
 func (d *Desktop) WindowShown(visible bool) {
 	d.mu.Lock()
 	d.window = visible
 	d.mu.Unlock()
 	if visible {
-		d.Refresh()
+		d.refreshShown()
 	}
+}
+
+// showSyncGap: a UI coming on screen ticks unless a tick started this
+// recently.
+const showSyncGap = 20 * time.Second
+
+// refreshShown checks again when the UI comes on screen (owner direction
+// 2026-10-05: "make it check/refresh status whenever the ui is shown"): a
+// tick now, so a status from before a sleep (GitHub "unreachable" from a
+// tick that ran before the network was back) does not stay up until the
+// next tick. A tick that runs, just started, or is about to start (the
+// first one) is enough: the view only redraws.
+func (d *Desktop) refreshShown() {
+	d.mu.Lock()
+	fresh := d.in.Ticking || d.in.TickStarted.IsZero() || d.a.Now().Sub(d.in.TickStarted) < showSyncGap
+	d.mu.Unlock()
+	if fresh {
+		d.Refresh()
+		return
+	}
+	d.Sync()
 }
 
 // WindowMode reports whether the app has its main window (a taskbar
@@ -801,11 +840,26 @@ func (a *App) appBinary() (string, error) {
 	return self, nil
 }
 
+// ErrRelaunch: the app exits for launchd to start it again (macOS, run by its
+// LaunchAgent, whose KeepAlive restarts an unsuccessful exit). A fresh
+// process gets its menu-bar item's saved place back; one restarted in place
+// came back hidden past a full menu bar.
+var ErrRelaunch = errors.New("relaunch through launchd")
+
 // reexecApp starts the app again on the current binary, with the same
-// arguments (minimized, or not, as asked): on macOS in place (same pid, so
-// launchd keeps tracking it), on Windows as a detached new process once this
+// arguments (minimized, or not, as asked): on macOS through launchd when it
+// runs the app (ErrRelaunch; app.showonstart asks for the app to be shown),
+// else in place (same pid); on Windows as a detached new process once this
 // one has let go of app.lock.
 func (a *App) reexecApp(minimized bool) error {
+	if runtime.GOOS == "darwin" && os.Getenv("XPC_SERVICE_NAME") == autostart.AgentLabel {
+		if !minimized {
+			if err := os.WriteFile(paths.AppShowOnStart(a.Home), nil, 0o600); err != nil {
+				a.Log.Printf("app: relaunch: %v", err)
+			}
+		}
+		return ErrRelaunch
+	}
 	exe, err := a.appBinary()
 	if err != nil {
 		return err

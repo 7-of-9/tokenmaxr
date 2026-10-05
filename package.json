@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build:pages": "vite build --config vite.pages.config.ts && node scripts/sync-pages-site.mjs",
-    "check:pages": "node scripts/sync-pages-site.mjs --check && node --test scripts/sync-pages-site.test.mjs && tsc -p pages/dashboard/tsconfig.json && node --experimental-strip-types --no-warnings pages/dashboard/githubSource.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/accountUsage.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/owner.test.ts",
+    "check:pages": "node scripts/sync-pages-site.mjs --check && node --test scripts/sync-pages-site.test.mjs && tsc -p pages/dashboard/tsconfig.json && node --experimental-strip-types --no-warnings pages/dashboard/githubSource.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/accountUsage.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/owner.test.ts && node --experimental-strip-types --no-warnings pages/dashboard/site.test.ts",
     "test:dashboard": "node -e \"const fs=require('fs'),cp=require('child_process');for(const f of fs.readdirSync('src/components/agents').filter(f=>f.endsWith('.test.ts')).sort()){cp.execFileSync(process.execPath,['--experimental-strip-types','--no-warnings','src/components/agents/'+f],{stdio:'inherit'})}\""
   },
   "dependencies": {

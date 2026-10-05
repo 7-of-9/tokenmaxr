@@ -167,7 +167,7 @@ const TokensView = () => {
 
       {/* One green sheet over the site background, laid out like a GitHub profile: the graph and its activity feed
           in the content column, the year list beside them. The sheet stays put; only its inside scrolls. */}
-      <div className="agents-panel agents-sheet">
+      <div className="agents-sheet">
         <div className="agents-sheet__scroll">
           <div className="agents-layout">
             <div className="agents-main">

@@ -318,7 +318,7 @@ func windowProc(hwnd, m, wp, lp uintptr) uintptr {
 			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 			pScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
 			cur := uintptr(idcArrow)
-			if w.m.ActionAt(w.drawn, int(pt.Y)) != tray.ActNone {
+			if w.m.ClickAt(w.drawn, int(pt.X), int(pt.Y)) != tray.ActNone {
 				cur = idcHand
 			}
 			c, _, _ := pLoadCursorW.Call(0, cur)
@@ -326,7 +326,7 @@ func windowProc(hwnd, m, wp, lp uintptr) uintptr {
 			return 1
 		}
 	case wmLButtonUp, wmRButtonUp:
-		w.do(hwnd, w.m.ActionAt(w.drawn, int(int16(lp>>16))))
+		w.do(hwnd, w.m.ClickAt(w.drawn, int(int16(lp)), int(int16(lp>>16))))
 		return 0
 	case wmKeyDown:
 		w.mu.Lock()

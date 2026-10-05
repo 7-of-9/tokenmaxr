@@ -95,6 +95,17 @@ func setPopup(lines []tray.PanelLine, h Handler) {
 
 // popupTap is a click on the tray icon (on systray's thread): it opens the
 // popup, or closes it if it is open.
+// revealPopup opens the popup unless it is showing (tray only, a second
+// launch).
+func revealPopup(h Handler) {
+	pop.mu.Lock()
+	open := pop.running && pop.want
+	pop.mu.Unlock()
+	if !open {
+		popupTap(h)
+	}
+}
+
 func popupTap(h Handler) {
 	anchor, by := trayAnchor()
 	p := pop
@@ -241,7 +252,7 @@ func popupProc(hwnd, m, wp, lp uintptr) uintptr {
 			pGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
 			pScreenToClient.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
 			cur := uintptr(idcArrow)
-			if p.inClose(pt.X, pt.Y) || p.m.ActionAt(p.drawn, int(pt.Y)) != tray.ActNone {
+			if p.inClose(pt.X, pt.Y) || p.m.ClickAt(p.drawn, int(pt.X), int(pt.Y)) != tray.ActNone {
 				cur = idcHand
 			}
 			c, _, _ := pLoadCursorW.Call(0, cur)
@@ -254,7 +265,7 @@ func popupProc(hwnd, m, wp, lp uintptr) uintptr {
 			p.close(hwnd, "the ×")
 			return 0
 		}
-		p.do(hwnd, p.m.ActionAt(p.drawn, int(y)))
+		p.do(hwnd, p.m.ClickAt(p.drawn, int(x), int(y)))
 		return 0
 	case wmKeyDown:
 		p.mu.Lock()

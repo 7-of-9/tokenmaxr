@@ -35,7 +35,9 @@ const (
 // more than an hour old, so those two spans are gray at a lighter weight
 // instead, and the +value is not the accent green.
 // Action is what clicking the line does in the popup (ActNone: nothing);
-// Selected marks the row under the mouse or keyboard.
+// Selected marks the row under the mouse or keyboard. Links are spans that
+// act on their own click (Metrics.LinkAt), drawn as links: the account
+// line's repository, server host and Settings….
 type PanelLine struct {
 	Text        string
 	Kind        LineKind
@@ -44,6 +46,13 @@ type PanelLine struct {
 	Selected    bool
 	Quiet       bool
 	Age, AgeEnd int
+	Links       [2]Link
+}
+
+// Link is a clickable span of a line: runes From..To run Action.
+type Link struct {
+	From, To int
+	Action   Action
 }
 
 // PanelState is what the renderer shows for the pinned panel.
@@ -90,7 +99,7 @@ func Panel(v View) []PanelLine {
 		out = append(out, PanelLine{Text: status, Kind: LineDim})
 	}
 	if v.Account != "" {
-		out = append(out, PanelLine{Text: v.Account, Kind: LineDim})
+		out = append(out, PanelLine{Text: v.Account, Kind: LineDim, Links: accountLinks(v)})
 	}
 	if len(v.Providers) > 0 {
 		out = append(out, PanelLine{Kind: LineRule})
@@ -110,6 +119,45 @@ func Panel(v View) []PanelLine {
 		}
 	}
 	return out
+}
+
+// accountLinks make the account line's names open what they name, one click
+// from the UI (owner direction 2026-10-05): the repository after "→ " the
+// GitHub dashboard, the host after "server " the server's dashboard, and
+// "Settings…" (GitHub not signed in) the settings page.
+func accountLinks(v View) [2]Link {
+	var links [2]Link
+	n := 0
+	add := func(from, to int, act Action) {
+		if act != ActNone && from >= 0 && to > from && n < len(links) {
+			links[n] = Link{From: from, To: to, Action: act}
+			n++
+		}
+	}
+	text := v.Account
+	end := utf8.RuneCountInString(text)
+	server := runeIndex(text, " · server ")
+	if i := runeIndex(text, "→ "); i >= 0 {
+		to := end
+		if server > i {
+			to = server
+		}
+		// Published to both, GitHub has its own dashboard; to GitHub only, it is the dashboard.
+		act := ActNone
+		switch {
+		case v.GitHubDashboard != "":
+			act = ActGitHubDashboard
+		case server < 0 && v.Dashboard != "":
+			act = ActDashboard
+		}
+		add(i+2, to, act)
+	} else if i := runeIndex(text, "Settings…"); i >= 0 {
+		add(i, i+utf8.RuneCountInString("Settings…"), ActSettings)
+	}
+	if server >= 0 && v.Dashboard != "" {
+		add(server+utf8.RuneCountInString(" · server "), end, ActDashboard)
+	}
+	return links
 }
 
 // runeIndex is the rune offset of sub in s, or -1.
