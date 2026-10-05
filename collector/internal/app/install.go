@@ -271,6 +271,16 @@ func (a *App) Install(ctx context.Context, o InstallOptions) error {
 				a.printf("start menu: could not remove the entry (%v)\n", err)
 			}
 		}
+		// macOS: Spotlight finds the app by name in either app mode.
+		if cfg.App {
+			if p, _, err := a.addApplications(); err != nil {
+				a.printf("applications: could not add the app (%v)\n", err)
+			} else if p != "" {
+				a.printf("applications: %s\n", p)
+			}
+		} else if _, err := a.removeApplications(); err != nil {
+			a.printf("applications: could not remove the app (%v)\n", err)
+		}
 		if hint, err := a.pathAdd(paths.Bin(a.Home)); err != nil {
 			a.printf("PATH: could not update (%v)\n", err)
 		} else if hint != "" {
@@ -519,6 +529,11 @@ func (a *App) Uninstall(o UninstallOptions) error {
 		errs = append(errs, err)
 	} else if removed {
 		a.printf("start menu entry removed\n")
+	}
+	if removed, err := a.removeApplications(); err != nil {
+		errs = append(errs, err)
+	} else if removed {
+		a.printf("applications entry removed\n")
 	}
 	if instance.Running(a.Home) {
 		if instance.Stop(a.Home, appStopWait) {

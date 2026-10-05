@@ -27,10 +27,12 @@ func (c Color) RGBA() color.NRGBA {
 }
 
 // Inset is the margin around the dot as a fraction of the canvas: Windows
-// nearly fills its notification-area slot; the macOS menu bar wants air.
+// nearly fills its notification-area slot; the macOS menu bar wants air;
+// the Dock tile (and tokenmaxr.app's icon) sits between them.
 const (
 	WindowsInset = 1.5 / 16
 	MenuBarInset = 3.0 / 16
+	DockInset    = 2.0 / 16
 )
 
 // DrawIcon renders the dot at size × size pixels.

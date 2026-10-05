@@ -72,6 +72,9 @@ type App struct {
 	// StartMenu makes the Windows Start-menu entry (tests pass fakes); nil
 	// uses the shell's, for the default home only.
 	StartMenu StartMenu
+	// ApplicationsDirs is where the macOS Applications entry goes (tests);
+	// nil is /Applications (or ~/Applications), for the default home only.
+	ApplicationsDirs []string
 	// InApp is set while this process is the desktop app.
 	InApp bool
 	// OpenURL opens the browser for a first install's link (tests); nil is

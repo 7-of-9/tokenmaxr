@@ -796,7 +796,7 @@ func replyTerminate() bool { return C.d0m1ReplyTerminate() != 0 }
 
 // setDockIcon draws the Dock icon in c.
 func setDockIcon(c tray.Color) {
-	b := tray.IconPNG(c, 256, dockInset)
+	b := tray.IconPNG(c, 256, tray.DockInset)
 	C.d0m1SetDockIcon(unsafe.Pointer(&b[0]), C.int(len(b)))
 }
 

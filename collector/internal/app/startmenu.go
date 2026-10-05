@@ -142,9 +142,10 @@ func (a *App) removeStartMenu() (bool, error) {
 
 // upgradeDesktopEntries brings an install made by an earlier version up to
 // this one's desktop entries when the app starts (self-update replaces the
-// binary, not the entries): the login item starts the app minimized, and
-// in window mode the Start-menu entry is made, once (startMenuMark: one the
-// user deleted stays deleted). Each is touched only when this install
+// binary, not the entries): the login item starts the app minimized, the
+// macOS Applications entry exists and runs this binary, and in window mode
+// the Start-menu entry is made, once (startMenuMark: one the user deleted
+// stays deleted). Each is touched only when this install
 // registered autostart for the app.
 func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 	if !cfg.Autostart || !cfg.App {
@@ -156,6 +157,11 @@ func (a *App) upgradeDesktopEntries(cfg *store.Config) {
 		} else if up {
 			a.Log.Printf("app: login item now starts the app minimized")
 		}
+	}
+	if p, changed, err := a.addApplications(); err != nil {
+		a.Log.Printf("app: applications entry: %v", err)
+	} else if changed {
+		a.Log.Printf("app: applications entry written: %s", p)
 	}
 	if cfg.TrayOnly || runtime.GOOS != "windows" {
 		return

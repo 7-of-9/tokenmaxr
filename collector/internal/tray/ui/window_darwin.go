@@ -23,9 +23,6 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
 )
 
-// dockInset is the margin around the dot in the Dock tile.
-const dockInset = 2.0 / 16
-
 // macWindow is the one main window.
 type macWindow struct {
 	mu      sync.Mutex
