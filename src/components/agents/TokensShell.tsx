@@ -23,14 +23,15 @@ interface TokensShellProps {
  * The /projects frame for the token pages: the same fixed "< d0m1 / …" header (GalleryPage's own classes),
  * the same full-width scrolling page over the untouched background, and the site footer. One shell for both
  * sites: the TokensSite in context (site.ts) gives the breadcrumb's root, the owner's pages and the sign-in
- * (d0m1.com) or lock (the GitHub Pages dashboard) controls.
+ * (d0m1.com) or lock (the GitHub Pages dashboard) controls. A site with a Header of its own (the GitHub Pages
+ * dashboard's GitHub-style bar) shows it in place of the "< d0m1 / …" bar.
  */
 const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => {
   const navigate = useNavigate()
   const location = useLocation()
   const site = useTokensSite()
   const owner = site.useOwner()
-  const { home, Controls } = site
+  const { home, Controls, Header } = site
   const tokenRoute = location.pathname === home || location.pathname.startsWith(home.endsWith('/') ? home : `${home}/`)
   const showPrivatePages = owner.status === 'owner'
   const headerCrumbs = tokenRoute && showPrivatePages ? [{ label: 'tokens', to: home }] : crumbs
@@ -64,56 +65,58 @@ const TokensShell = ({ crumbs, className = '', children }: TokensShellProps) => 
 
   return (
     <div className="gallery-page tokens-shell">
-      <div className={`gallery-header header-visible${owner.controls ? ' tokens-header--auth' : ''}`}>
-        <button type="button" className="back-button" onClick={() => back()} aria-label="Back">
-          &lt;
-        </button>
-        <nav className="gallery-title" aria-label="Breadcrumb">
-          {site.root.href ? (
-            <a className="gallery-d0m1" href={site.root.href}>
-              {site.root.label}
-            </a>
-          ) : (
-            <Link className="gallery-d0m1" to={site.root.to}>
-              {site.root.label}
-            </Link>
-          )}
-          <span className="gallery-path-display">
-            <span className="path-component root">/</span>
-            {headerCrumbs.map((crumb, index) => {
-              const last = index === headerCrumbs.length - 1
-              const current = last && !(tokenRoute && showPrivatePages && location.pathname !== home)
-              return (
-                <Fragment key={crumb.label}>
-                  {crumb.to && (!last || (tokenRoute && showPrivatePages)) ? (
-                    <Link className="path-component" to={crumb.to} aria-current={current ? 'page' : undefined}>
-                      {crumb.label}
-                    </Link>
-                  ) : (
-                    <span className={`path-component${last ? ' last' : ''}`} aria-current={current ? 'page' : undefined}>
-                      {crumb.label}
-                    </span>
-                  )}
-                  {!last && <span className="path-separator">/</span>}
-                </Fragment>
-              )
-            })}
-          </span>
-          {showPrivatePages && (
-            <span className={`tokens-private-pages${tokenRoute ? '' : ' tokens-private-pages--aside'}`}>
-              {tokenRoute && <span className="tokens-private-pages__separator" aria-hidden="true">/</span>}
-              {site.ownerPages.map(page => (
-                <Link key={page.to} to={page.to} aria-current={location.pathname === page.to ? 'page' : undefined}>{page.label}</Link>
-              ))}
+      {Header ? <Header owner={owner} /> : (
+        <div className={`gallery-header header-visible${owner.controls ? ' tokens-header--auth' : ''}`}>
+          <button type="button" className="back-button" onClick={() => back()} aria-label="Back">
+            &lt;
+          </button>
+          <nav className="gallery-title" aria-label="Breadcrumb">
+            {site.root.href ? (
+              <a className="gallery-d0m1" href={site.root.href}>
+                {site.root.label}
+              </a>
+            ) : (
+              <Link className="gallery-d0m1" to={site.root.to}>
+                {site.root.label}
+              </Link>
+            )}
+            <span className="gallery-path-display">
+              <span className="path-component root">/</span>
+              {headerCrumbs.map((crumb, index) => {
+                const last = index === headerCrumbs.length - 1
+                const current = last && !(tokenRoute && showPrivatePages && location.pathname !== home)
+                return (
+                  <Fragment key={crumb.label}>
+                    {crumb.to && (!last || (tokenRoute && showPrivatePages)) ? (
+                      <Link className="path-component" to={crumb.to} aria-current={current ? 'page' : undefined}>
+                        {crumb.label}
+                      </Link>
+                    ) : (
+                      <span className={`path-component${last ? ' last' : ''}`} aria-current={current ? 'page' : undefined}>
+                        {crumb.label}
+                      </span>
+                    )}
+                    {!last && <span className="path-separator">/</span>}
+                  </Fragment>
+                )
+              })}
             </span>
+            {showPrivatePages && (
+              <span className={`tokens-private-pages${tokenRoute ? '' : ' tokens-private-pages--aside'}`}>
+                {tokenRoute && <span className="tokens-private-pages__separator" aria-hidden="true">/</span>}
+                {site.ownerPages.map(page => (
+                  <Link key={page.to} to={page.to} aria-current={location.pathname === page.to ? 'page' : undefined}>{page.label}</Link>
+                ))}
+              </span>
+            )}
+          </nav>
+          {owner.controls && (
+            <div className="tokens-auth">
+              <Controls owner={owner} />
+            </div>
           )}
-        </nav>
-        {owner.controls && (
-          <div className="tokens-auth">
-            <Controls owner={owner} />
-          </div>
-        )}
-      </div>
+        </div>
+      )}
       <main className={`agents-page ${className}`.trim()}>{children}</main>
       <Footer />
     </div>

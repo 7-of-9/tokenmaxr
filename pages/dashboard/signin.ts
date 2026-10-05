@@ -86,17 +86,18 @@ export function pagesRepository(hostname: string, pathname: string): string | nu
   return parseRepository(`${user}/${first && !first.includes('.') ? first : host}`)
 }
 
-/** The dashboard's settings in tokenmaxr.json (served beside the page): the background and the repository. */
+/**
+ * The dashboard's settings in tokenmaxr.json (served beside the page): the repository. ("background", which once
+ * turned on d0m1.com's animated background, is ignored: the dashboard looks like a page of GitHub's, plain.)
+ */
 export interface DashboardConfig {
-  /** d0m1.com's animated background (streamed from cdn.d0m1.com) and its controls; off unless "background": true. */
-  background: boolean
   /** "owner/name": needed on a custom domain, where the address does not say. */
   repository: string | null
 }
 
 export function parseDashboardConfig(value: unknown): DashboardConfig {
   const config = isRecord(value) ? value : {}
-  return { background: config.background === true, repository: parseRepository(config.repository) }
+  return { repository: parseRepository(config.repository) }
 }
 
 // ---- The device flow, through the relay ----

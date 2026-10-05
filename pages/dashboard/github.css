@@ -1,0 +1,649 @@
+/* The GitHub Pages dashboard dressed as a page of GitHub's (owner direction 2026-10-05: "render it NEUTRALLY, so a
+   github-like top banner, no background at all; idea is to make it look as much as possible like a part of GH").
+   Everything here is under html.pages-github, which only the dashboard's index.html sets, so d0m1.com's token pages
+   (the same components and stylesheets) are untouched. GitHub's Primer colours, light or dark as the viewer's system
+   is, the system font, GitHub's header (GithubHeader.tsx) and boxes; no background media, no glow, no display faces. */
+
+/* ---- Primer tokens: light, then dark ---- */
+html.pages-github {
+  --pg-font: -apple-system, blinkmacsystemfont, 'Segoe UI', 'Noto Sans', helvetica, arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  --pg-mono: ui-monospace, sfmono-regular, 'SF Mono', menlo, consolas, 'Liberation Mono', monospace;
+  --pg-canvas: #ffffff;
+  --pg-canvas-subtle: #f6f8fa;
+  --pg-fg: #1f2328;
+  --pg-muted: #59636e;
+  --pg-border: #d1d9e0;
+  --pg-border-muted: rgba(209, 217, 224, 0.7);
+  --pg-accent: #0969da;
+  --pg-accent-emphasis: #0969da;
+  --pg-success: #1a7f37;
+  --pg-control: #f6f8fa;
+  --pg-control-hover: #eff2f5;
+  --pg-track: #e6eaef;
+  --pg-track-hover: #dde2e8;
+  --pg-knob: #ffffff;
+  --pg-knob-border: #818b98;
+  --pg-transparent-hover: rgba(129, 139, 152, 0.15);
+  --pg-btn-primary: #1f883d;
+  --pg-btn-primary-hover: #1c8139;
+  --pg-btn-primary-border: rgba(31, 35, 40, 0.15);
+  --pg-bar-lead: #1f883d;
+  --pg-bar: #aceebb;
+  --pg-attention-bg: #fff8c5;
+  --pg-attention-border: rgba(212, 167, 44, 0.4);
+  --pg-attention-fg: #9a6700;
+  --pg-danger-bg: #ffebe9;
+  --pg-danger-border: rgba(255, 129, 130, 0.4);
+  --pg-danger-fg: #d1242f;
+  --pg-tooltip: #25292e;
+  --pg-cell-line: rgba(31, 35, 40, 0.05);
+  --pg-cell-active: rgba(31, 35, 40, 0.6);
+  --pg-chart-grid: rgba(209, 217, 224, 0.9);
+  --pg-chart-hover: rgba(31, 35, 40, 0.05);
+  --pg-scrollbar: rgba(31, 35, 40, 0.25);
+  --pg-underline: #fd8c73;
+  /* GitHub's header bar, dark in both schemes. */
+  --pg-header-bg: #25292e;
+  --pg-header-border: transparent;
+  --pg-header-fg: #ffffff;
+  --pg-header-muted: rgba(255, 255, 255, 0.7);
+  --pg-header-hover: rgba(255, 255, 255, 0.12);
+  --pg-header-btn-border: rgba(255, 255, 255, 0.7);
+  /* Primer's dark-scheme accent: the focus ring has to show on the dark bar. */
+  --pg-header-focus: #4493f8;
+  /* The contribution graph's greens. */
+  --pages-heat-0: #eff2f5;
+  --pages-heat-1: #aceebb;
+  --pages-heat-2: #4ac26b;
+  --pages-heat-3: #2da44e;
+  --pages-heat-4: #116329;
+  --pg-heat-inferred: rgba(26, 127, 55, 0.7);
+  --pg-meter-ink: 60%;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  html.pages-github {
+    --pg-canvas: #0d1117;
+    --pg-canvas-subtle: #151b23;
+    --pg-fg: #f0f6fc;
+    --pg-muted: #9198a1;
+    --pg-border: #3d444d;
+    --pg-border-muted: rgba(61, 68, 77, 0.7);
+    --pg-accent: #4493f8;
+    --pg-accent-emphasis: #1f6feb;
+    --pg-success: #3fb950;
+    --pg-control: #212830;
+    --pg-control-hover: #262c36;
+    --pg-track: #262c36;
+    --pg-track-hover: #2f3742;
+    --pg-knob: #0d1117;
+    --pg-knob-border: #3d444d;
+    --pg-transparent-hover: rgba(101, 108, 118, 0.2);
+    --pg-btn-primary: #238636;
+    --pg-btn-primary-hover: #29903b;
+    --pg-btn-primary-border: rgba(240, 246, 252, 0.1);
+    --pg-bar-lead: #2ea043;
+    --pg-bar: #9be9a8;
+    --pg-attention-bg: rgba(187, 128, 9, 0.15);
+    --pg-attention-border: rgba(187, 128, 9, 0.4);
+    --pg-attention-fg: #d29922;
+    --pg-danger-bg: rgba(248, 81, 73, 0.1);
+    --pg-danger-border: rgba(248, 81, 73, 0.4);
+    --pg-danger-fg: #ff7b72;
+    --pg-tooltip: #3d444d;
+    --pg-cell-line: rgba(255, 255, 255, 0.05);
+    --pg-cell-active: rgba(240, 246, 252, 0.7);
+    --pg-chart-grid: rgba(61, 68, 77, 0.7);
+    --pg-chart-hover: rgba(240, 246, 252, 0.06);
+    --pg-scrollbar: rgba(255, 255, 255, 0.2);
+    --pg-underline: #f78166;
+    --pg-header-bg: #151b23;
+    --pg-header-border: #3d444d;
+    --pages-heat-0: #151b23;
+    --pages-heat-1: #033a16;
+    --pages-heat-2: #196c2e;
+    --pages-heat-3: #2ea043;
+    --pages-heat-4: #56d364;
+    --pg-heat-inferred: rgba(86, 211, 100, 0.75);
+    --pg-meter-ink: 100%;
+
+    color-scheme: dark;
+  }
+}
+
+/* ---- The page: GitHub's canvas, no background (d0m1.com's sheets paint every layer black, !important) ---- */
+html.pages-github,
+html.pages-github body,
+html.pages-github #root,
+html.pages-github .App {
+  background: var(--pg-canvas) !important;
+  color: var(--pg-fg);
+  font-family: var(--pg-font);
+}
+
+/* The page scrolls in the shell (GalleryPage.css): under GitHub's header, which scrolls away with it as on GitHub,
+   with the scrollbar GitHub pages have (d0m1.com hides them). */
+.pages-github .tokens-shell {
+  --header-height: 0px;
+
+  padding-top: 0;
+  background: var(--pg-canvas);
+  scrollbar-color: var(--pg-scrollbar) transparent;
+}
+
+/* ---- GitHub's header bar (GithubHeader.tsx) ---- */
+.pages-gh-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: 16px 32px;
+  border-bottom: 1px solid var(--pg-header-border);
+  background: var(--pg-header-bg);
+  color: var(--pg-header-fg);
+  font-family: var(--pg-font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pages-gh-header a {
+  color: var(--pg-header-fg);
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.pages-gh-header a:focus-visible,
+.pages-gh-header button:focus-visible {
+  box-shadow: 0 0 0 2px var(--pg-header-focus);
+}
+
+.pages-gh-tabs a:focus-visible {
+  box-shadow: 0 0 0 2px var(--pg-accent-emphasis);
+}
+
+.pages-gh-header__mark {
+  display: flex;
+  flex: none;
+  border-radius: 50%;
+}
+
+.pages-gh-header__mark:hover {
+  color: var(--pg-header-muted);
+}
+
+.pages-gh-header__crumbs {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pages-gh-header__owner,
+.pages-gh-header__repo {
+  overflow: hidden;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pages-gh-header__owner {
+  flex: 0 1 auto;
+}
+
+.pages-gh-header__repo {
+  flex: 0 1 auto;
+}
+
+.pages-github .pages-gh-header .pages-gh-header__repo {
+  font-weight: 600;
+}
+
+.pages-gh-header__owner:hover,
+.pages-gh-header__repo:hover {
+  background: var(--pg-header-hover);
+}
+
+.pages-gh-header__separator {
+  flex: none;
+  color: var(--pg-header-muted);
+}
+
+.pages-gh-header__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Sign in / Sign out (site.ts Controls): GitHub's outlined header button. */
+.pages-github .pages-gh-header__actions button,
+.pages-github .pages-gh-header__actions a {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--pg-header-btn-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--pg-header-fg);
+  font-family: var(--pg-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 30px;
+  white-space: nowrap;
+  transition: none;
+}
+
+.pages-github .pages-gh-header__actions button:hover,
+.pages-github .pages-gh-header__actions a:hover {
+  border-color: var(--pg-header-fg);
+  background: var(--pg-header-hover);
+  color: var(--pg-header-fg);
+}
+
+/* ---- The repository's tabs: Primer's UnderlineNav ---- */
+.pages-gh-tabs {
+  flex: none;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--pg-border-muted);
+  background: var(--pg-canvas);
+  font-family: var(--pg-font);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pages-gh-tabs ul {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pages-gh-tabs a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--pg-fg);
+  font-weight: 400;
+  text-decoration: none;
+}
+
+.pages-gh-tabs a:hover {
+  background: var(--pg-transparent-hover);
+  color: var(--pg-fg);
+}
+
+.pages-gh-tabs svg {
+  color: var(--pg-muted);
+}
+
+.pages-gh-tabs a[aria-current='page'] {
+  font-weight: 600;
+}
+
+.pages-gh-tabs a[aria-current='page']::after {
+  position: absolute;
+  right: 0;
+  bottom: -9px;
+  left: 0;
+  height: 2px;
+  border-radius: 6px;
+  background: var(--pg-underline);
+  content: '';
+}
+
+/* The bold label's width is kept, so choosing a tab never moves the others. */
+.pages-gh-tabs span[data-content]::before {
+  display: block;
+  height: 0;
+  overflow: hidden;
+  font-weight: 600;
+  visibility: hidden;
+  content: attr(data-content);
+}
+
+@media (max-width: 640px) {
+  .pages-gh-header {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .pages-gh-tabs {
+    padding: 0 16px;
+  }
+}
+
+/* ---- The pages: agents-base.css's tokens, as Primer has them ---- */
+.pages-github .agents-page,
+.pages-github .agents-tooltip {
+  --gh-font: var(--pg-font);
+  --gh-mono: var(--pg-mono);
+  --gh-fg: var(--pg-fg);
+  --gh-muted: var(--pg-muted);
+  --gh-border: var(--pg-border);
+  --gh-subtle: var(--pg-canvas-subtle);
+  --gh-control: var(--pg-control);
+  --gh-control-hover: var(--pg-control-hover);
+  --gh-control-active: var(--pg-track-hover);
+  --gh-green: var(--pg-bar-lead);
+  --gh-green-fg: var(--pg-success);
+  --gh-green-btn: var(--pg-btn-primary);
+  --gh-green-light: var(--pg-bar);
+  --ag-panel: var(--pg-canvas);
+  --ag-surface: var(--pg-canvas);
+  --ag-line: var(--pg-border-muted);
+  --ag-line-strong: var(--pg-border);
+  --ag-ink: var(--pg-fg);
+  --ag-ink-2: var(--pg-muted);
+  --ag-muted: var(--pg-muted);
+  --ag-accent: var(--pg-accent);
+  --ag-title: var(--pg-fg);
+  --ag-title-glow: none;
+  --ag-num: var(--pg-font);
+  --ag-display: var(--pg-font);
+  --ag-focus: 0 0 0 2px var(--pg-accent-emphasis);
+}
+
+.pages-github .agents-page {
+  padding-top: 24px;
+  font-family: var(--pg-font);
+}
+
+.pages-github .limits-page {
+  --lim-go: var(--pg-success);
+  --lim-warn: var(--pg-attention-fg);
+  --lim-stop: var(--pg-danger-fg);
+}
+
+/* Links in GitHub's blue. */
+.pages-github .agents-page a {
+  color: var(--pg-accent);
+  text-decoration: none;
+}
+
+.pages-github .agents-page a:hover {
+  text-decoration: underline;
+}
+
+.pages-github .agents-page .gh-link-btn,
+.pages-github .agents-page .agents-more,
+.pages-github .agents-page .gh-more {
+  color: var(--pg-accent);
+}
+
+/* Boxes: a 1 px border and 6 px corners on the page colour (in place of d0m1.com's glowing tiles). */
+.pages-github .agents-panel,
+.pages-github .agents-tile {
+  border: 1px solid var(--pg-border);
+  border-radius: 6px;
+  background: var(--pg-canvas);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.pages-github .agents-panel h2,
+.pages-github .agents-tile h2 {
+  font-size: 20px;
+  font-weight: 600;
+  text-shadow: none;
+}
+
+.pages-github .limits-box {
+  border-radius: 6px;
+  background: var(--pg-canvas);
+}
+
+.pages-github .limits-unmetered {
+  border-color: var(--pg-border);
+  border-radius: 6px;
+}
+
+/* Buttons: Primer's default and primary. */
+.pages-github .agents-page .agents-btn {
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--pg-border);
+  border-radius: 6px;
+  background: var(--pg-control);
+  color: var(--pg-fg);
+  font-family: var(--pg-font);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.pages-github .agents-page .agents-btn:hover {
+  border-color: var(--pg-border);
+  background: var(--pg-control-hover);
+  color: var(--pg-fg);
+  text-decoration: none;
+}
+
+.pages-github .agents-page .agents-btn--primary,
+.pages-github .agents-page .agents-btn--primary:hover {
+  border-color: var(--pg-btn-primary-border);
+  background: var(--pg-btn-primary);
+  color: #ffffff;
+}
+
+.pages-github .agents-page .agents-btn--primary:hover {
+  background: var(--pg-btn-primary-hover);
+}
+
+.pages-github .agents-page .agents-input,
+.pages-github .agents-page .agents-machine {
+  border-color: var(--pg-border);
+  background: var(--pg-canvas);
+  color: var(--pg-fg);
+}
+
+/* Overview / Detail and the filters: Primer's SegmentedControl. */
+.pages-github .agents-seg {
+  background: var(--pg-track);
+}
+
+.pages-github .agents-page .agents-seg__btn:hover {
+  border-color: transparent;
+  background: var(--pg-track-hover);
+}
+
+.pages-github .agents-page .agents-seg__btn[aria-pressed='true'],
+.pages-github .agents-page .agents-seg__btn[aria-pressed='true']:hover {
+  border-color: var(--pg-knob-border);
+  background: var(--pg-knob);
+}
+
+/* The period list: GitHub's year list, the chosen period in the accent blue. */
+.pages-github .agents-page .agents-years__btn:hover {
+  background: var(--pg-transparent-hover);
+}
+
+.pages-github .agents-page .agents-years__btn[aria-pressed='true'] {
+  background: var(--pg-accent-emphasis);
+  color: #ffffff;
+}
+
+/* The header scrolls away here, so the period list sticks to the top of the page. */
+.pages-github .agents-years {
+  top: 16px;
+}
+
+.pages-github .agents-page .gh-more:hover {
+  border-color: var(--pg-border);
+}
+
+/* The contribution graph in GitHub's greens, light or dark. */
+.pages-github .agents-heat__cell {
+  stroke: var(--pg-cell-line);
+}
+
+.pages-github .agents-heat__cell--l0 {
+  fill: var(--pages-heat-0);
+}
+
+.pages-github .agents-heat__cell--l1 {
+  fill: var(--pages-heat-1);
+}
+
+.pages-github .agents-heat__cell--l2 {
+  fill: var(--pages-heat-2);
+}
+
+.pages-github .agents-heat__cell--l3 {
+  fill: var(--pages-heat-3);
+}
+
+.pages-github .agents-heat__cell--l4 {
+  fill: var(--pages-heat-4);
+}
+
+.pages-github .agents-heat__cell--inferred {
+  stroke: var(--pg-heat-inferred);
+}
+
+.pages-github .agents-heat__day:hover .agents-heat__cell,
+.pages-github .agents-heat__day.is-active .agents-heat__cell {
+  stroke: var(--pg-cell-active);
+}
+
+.pages-github .agents-heat__day:focus-visible .agents-heat__cell {
+  stroke: var(--pg-accent-emphasis);
+}
+
+.pages-github .agents-heat__scroll {
+  scrollbar-color: var(--pg-scrollbar) transparent;
+}
+
+.pages-github .agents-heat__scroll::-webkit-scrollbar-thumb {
+  background: var(--pg-scrollbar);
+}
+
+/* The Detail calendar (its colours come from site.ts PAGES_HEAT_LEVELS): dark figures on the light greens, white on
+   the darkest. */
+.pages-github .agents-calendar__swatch {
+  border-color: var(--pg-cell-line);
+  background: var(--pages-heat-0);
+}
+
+.pages-github .agents-calendar__swatch.is-untracked,
+.pages-github .agents-page .agents-calendar__day.is-untracked {
+  border-color: var(--pages-heat-3);
+}
+
+.pages-github .agents-page .agents-calendar__day.is-bright {
+  color: #06150a;
+}
+
+@media (prefers-color-scheme: light) {
+  .pages-github .agents-page .agents-calendar__day[style*='--pages-heat-4'] {
+    color: #ffffff;
+  }
+}
+
+.pages-github .agents-page .agents-calendar__day:focus-visible {
+  outline-color: var(--pg-accent-emphasis);
+}
+
+/* The Detail charts. */
+.pages-github .agents-chart__grid {
+  stroke: var(--pg-chart-grid);
+}
+
+.pages-github .agents-chart__hover {
+  fill: var(--pg-chart-hover);
+}
+
+.pages-github .agents-cost td {
+  border-bottom-color: var(--pg-chart-grid);
+}
+
+/* The activity feed's badges sit on the page colour. */
+.pages-github .gh-timeline__badge {
+  border-color: var(--pg-canvas);
+}
+
+.pages-github .agents-page .agents-foot a {
+  color: var(--pg-muted);
+}
+
+.pages-github .agents-page .agents-foot a:hover {
+  color: var(--pg-accent);
+}
+
+/* The quota meters' figures keep their colour, darkened on white so they stay readable. */
+.pages-github .limits-bar__pct {
+  color: color-mix(in srgb, var(--meter-color) var(--pg-meter-ink), #000000);
+}
+
+.pages-github .limits-reset__countdown {
+  color: color-mix(in srgb, var(--reset-color) var(--pg-meter-ink), #000000);
+}
+
+/* Notices: Primer's attention flash; the ?mock=1 banner too. */
+.pages-github .agents-notice {
+  border-color: var(--pg-attention-border);
+  border-radius: 6px;
+  background: var(--pg-attention-bg);
+}
+
+.pages-github .agents-testdata {
+  border-color: var(--pg-attention-border);
+  border-radius: 6px;
+  background: var(--pg-attention-bg);
+  color: var(--pg-attention-fg);
+  font-family: var(--pg-font);
+  letter-spacing: normal;
+}
+
+/* Tooltips: GitHub's (#25292e on light pages, #3d444d on dark). */
+.pages-github .agents-tooltip {
+  background: var(--pg-tooltip);
+}
+
+/* Loading: Primer's spinner colours. */
+.pages-github .site-loading__spinner {
+  border-color: var(--pg-border);
+  border-top-color: var(--pg-accent-emphasis);
+}
+
+/* The Agents page's GitHub sign-in (SignInPanel.tsx, signin.css). */
+.pages-github .gh-signin__code {
+  border-color: var(--pg-border);
+  border-radius: 6px;
+  background: var(--pg-canvas-subtle);
+  color: var(--pg-fg);
+  font-family: var(--pg-mono);
+}
+
+.pages-github .gh-signin a {
+  color: var(--pg-accent);
+}
+
+.pages-github .gh-signin__done {
+  color: var(--pg-success);
+}
+
+.pages-github .gh-signin__error {
+  border-color: var(--pg-danger-border);
+  border-radius: 6px;
+  background: var(--pg-danger-bg);
+  color: var(--pg-danger-fg);
+}

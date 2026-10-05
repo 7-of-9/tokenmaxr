@@ -286,7 +286,7 @@ const LimitsPage = () => {
         </div>
       )}
 
-      <div className="agents-sheet">
+      <div className={`${site.sheet ? 'agents-panel ' : ''}agents-sheet`}>
         <div className="agents-sheet__scroll">
           {(load.status === 'loading' || (refreshing && !items)) && <LoadingIndicator label={owner.status === 'checking' ? 'Checking your sign-in…' : 'Loading weekly quota…'} />}
 

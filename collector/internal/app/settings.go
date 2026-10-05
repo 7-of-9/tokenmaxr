@@ -293,6 +293,9 @@ type settingsState struct {
 		LastPublish     string `json:"lastPublish,omitempty"`
 		LastError       string `json:"lastError,omitempty"`
 		PagesURL        string `json:"pagesUrl,omitempty"`
+		// RenamedFrom: the repository's name before a rename (or transfer)
+		// on GitHub this machine followed within the last week.
+		RenamedFrom string `json:"renamedFrom,omitempty"`
 		// CanUnlock: the dashboard and the fleet key are there, so Open
 		// dashboard signs it in (api/github/unlock).
 		CanUnlock bool   `json:"canUnlock"`
@@ -401,6 +404,9 @@ func (s *Settings) state() (settingsState, error) {
 		g.LastPublish, g.LastError, g.PagesURL = rfc(st.GitHub.LastPublish), st.GitHub.LastError, st.GitHub.PagesURL
 		g.FleetError = st.GitHub.Fleet.LastError
 		g.CanUnlock = g.On && dashboardURL(g.PagesURL) && sec.Key() != nil
+		if g.On {
+			g.RenamedFrom = renamedFrom(st, a.Now())
+		}
 	}
 	sv := &v.Server
 	sv.URL, sv.Default = cfg.Server(), store.DefaultEndpoint

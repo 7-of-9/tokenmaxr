@@ -40,7 +40,7 @@ export interface UsageSource {
 }
 
 /** The owner's public tokenmaxr dashboard on GitHub Pages: the same usage, published by the same collectors. */
-const D0M1_PUBLIC_DASHBOARD = 'https://7-of-9.github.io/tokenmaxr-usage/'
+const D0M1_PUBLIC_DASHBOARD = 'https://7-of-9.github.io/tokens/'
 
 /** d0m1.com's agents API. Requests stay relative: in development Vite proxies /api to `origin`. */
 export function apiSource(origin: string): UsageSource {

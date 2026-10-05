@@ -233,6 +233,13 @@ func (a *App) GitHubLogin(ctx context.Context, ui GitHubLoginUI, label string) (
 	}
 	st.GitHub.Published, st.GitHub.LastAttempt, st.GitHub.LastError = nil, time.Time{}, ""
 	st.GitHub.Site, st.GitHub.SiteChecked = "", time.Time{} // maybe another repository: check its dashboard
+	if !strings.EqualFold(st.GitHub.RepoName, res.Repo) {
+		// Another repository: no rename of the earlier one applies to it.
+		st.GitHub.RenamedFrom, st.GitHub.RenamedAt, st.GitHub.FormerPagesURL = "", time.Time{}, ""
+		st.GitHub.FormerNames = nil
+	}
+	st.GitHub.RepoID, st.GitHub.RepoName, st.GitHub.RepoChecked = g.Repo.ID, res.Repo, a.Now()
+	st.GitHub.RepoOutside = ""
 	if err := c.EnablePages(ctx, res.Repo); err != nil {
 		ui.Progress("Could not switch GitHub Pages on (" + err.Error() + "): enable it in the repository's Settings → Pages, source \"GitHub Actions\"")
 	}
@@ -345,11 +352,26 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	c := newGitHubClient(sec.GitHub.Token, a.Version)
-	sweep := cfg.GitHub.Repo + "@" + cfg.GitHub.BranchOrDefault()
-	if st.GitHub.QuotaSwept != sweep {
+	// A renamed or transferred repository is followed (github_rename.go):
+	// checked daily, and at once when GitHub redirected this publish or
+	// no longer finds the repository, which is then published again.
+	checked := repoCheckDue(cfg, st, now)
+	if checked {
+		a.checkRepo(ctx, c, cfg, st, now)
+	}
+	if st.GitHub.QuotaSwept != cfg.GitHub.Repo+"@"+cfg.GitHub.BranchOrDefault() {
 		files = append(files, sweepQuota(ctx, c, cfg, st, m.ID)...)
 	}
 	changed, err := ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
+	// Moved out of the installation's reach (RepoOutside): every publish
+	// is redirected and refused, and it is looked at again hourly.
+	outside := st.GitHub.RepoOutside != "" && now.Sub(st.GitHub.RepoChecked) < repoLearnEvery
+	if (c.Moved() || !checked && repoMoved(err)) && !outside {
+		if a.checkRepo(ctx, c, cfg, st, now) && err != nil {
+			changed, err = ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
+		}
+	}
+	sweep := cfg.GitHub.Repo + "@" + cfg.GitHub.BranchOrDefault()
 	if err != nil {
 		st.GitHub.LastError = publishErrorText(cfg, sec, err)
 		a.Log.Printf("github: publish: %s", st.GitHub.LastError)
@@ -400,7 +422,7 @@ func (a *App) linkDashboard(ctx context.Context, c *ghapi.Client, cfg *store.Con
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	res, err := ghpub.LinkDashboard(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), st.GitHub.PagesURL)
+	res, err := ghpub.LinkDashboard(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), st.GitHub.PagesURL, formerDashboards(st)...)
 	if err != nil {
 		a.Log.Printf("github: dashboard link: %v", err)
 		return

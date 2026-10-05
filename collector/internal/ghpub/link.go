@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/ghapi"
@@ -57,6 +58,79 @@ func WithDashboardLink(readme []byte, pagesURL string) []byte {
 		return []byte(text + "\n\n" + line + "\n")
 	}
 	return []byte(line + "\n\n" + text)
+}
+
+// PagesURLFor is the GitHub Pages address GitHub gives repository full
+// ("owner/name") without a custom domain: https://owner.github.io/name/, or
+// https://owner.github.io/ for the repository named owner.github.io.
+func PagesURLFor(full string) string {
+	owner, name, ok := strings.Cut(full, "/")
+	if !ok || owner == "" || name == "" {
+		return ""
+	}
+	host := strings.ToLower(owner) + ".github.io"
+	if strings.EqualFold(name, host) {
+		return "https://" + host + "/"
+	}
+	return "https://" + host + "/" + name + "/"
+}
+
+// sameURL compares dashboard addresses, ignoring case and a trailing slash.
+func sameURL(a, b string) bool {
+	return strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(a), "/"), strings.TrimSuffix(strings.TrimSpace(b), "/"))
+}
+
+// MoveDashboardLinks returns readme with every link to one of the former
+// dashboard addresses (with or without the trailing slash, and anything
+// after it) pointing at pagesURL instead; nil when it links none of them.
+// An address is only replaced whole: a longer name that starts with it
+// (".../usage-old") is another repository's.
+func MoveDashboardLinks(readme []byte, former []string, pagesURL string) []byte {
+	to := strings.TrimSuffix(pagesURL, "/")
+	text, changed := string(readme), false
+	for _, f := range former {
+		from := strings.TrimSuffix(strings.TrimSpace(f), "/")
+		if from == "" || to == "" || sameURL(from, to) {
+			continue
+		}
+		var out strings.Builder
+		rest := text
+		for {
+			i := strings.Index(rest, from)
+			if i < 0 {
+				out.WriteString(rest)
+				break
+			}
+			end := i + len(from)
+			out.WriteString(rest[:i])
+			if continues(rest[end:]) {
+				out.WriteString(from)
+			} else {
+				out.WriteString(to)
+				changed = true
+			}
+			rest = rest[end:]
+		}
+		text = out.String()
+	}
+	if !changed {
+		return nil
+	}
+	return []byte(text)
+}
+
+// continues reports whether what follows an address (s) continues its last
+// name: a name character, or a dot before one (a dot that ends a sentence
+// does not).
+func continues(s string) bool {
+	alnum := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' }
+	switch {
+	case s == "":
+		return false
+	case s[0] == '.':
+		return len(s) > 1 && (alnum(s[1]) || s[1] == '-' || s[1] == '_')
+	}
+	return alnum(s[0]) || s[0] == '-' || s[0] == '_'
 }
 
 // linkState is what MarkerFile's LinkKey says is done.
@@ -165,10 +239,23 @@ type LinkResult struct {
 // editing the README) is read again, never overwritten. An installation that
 // cannot edit the repository's settings (403 or 404) leaves the website
 // unrecorded (Pending) and still links the README.
-func LinkDashboard(ctx context.Context, c *ghapi.Client, repo, branch, pagesURL string) (LinkResult, error) {
+//
+// former are addresses the dashboard had before the repository was renamed
+// or transferred (GitHub Pages does not redirect them): a website that is
+// one of them is set to pagesURL, and the README's links to them point at
+// pagesURL, whatever the record says (the steps were done, at the old
+// address). Anything else the owner set stays. "linked": true, written by
+// the owner, keeps the collectors out of this too.
+func LinkDashboard(ctx context.Context, c *ghapi.Client, repo, branch, pagesURL string, former ...string) (LinkResult, error) {
 	var res LinkResult
 	if pagesURL == "" {
 		return res, errors.New("no dashboard address")
+	}
+	var moved []string
+	for _, f := range former {
+		if f != "" && !sameURL(f, pagesURL) && !slices.ContainsFunc(moved, func(m string) bool { return sameURL(m, f) }) {
+			moved = append(moved, f)
+		}
 	}
 	for attempt := 0; attempt < 3; attempt++ {
 		head, err := c.Head(ctx, repo, branch)
@@ -187,22 +274,28 @@ func LinkDashboard(ctx context.Context, c *ghapi.Client, repo, branch, pagesURL 
 			return res, err
 		}
 		var was linkState
+		relink := moved
 		for _, f := range fields {
 			if f.key == LinkKey {
 				was = parseLinked(f.raw)
+				if string(bytes.TrimSpace(f.raw)) == "true" {
+					relink = nil // the owner's: the collectors stay out
+				}
 			}
 		}
 		now := was
 		res.Pending = false
-		if !now.Website {
+		if !now.Website || len(relink) > 0 {
 			info, err := c.Repository(ctx, repo)
 			if err != nil {
 				return res, err
 			}
-			switch {
-			case strings.TrimSpace(info.Homepage) != "":
+			home := strings.TrimSpace(info.Homepage)
+			set := home == "" && !now.Website || home != "" && slices.ContainsFunc(relink, func(f string) bool { return sameURL(f, home) })
+			if home != "" && !set {
 				now.Website = true // the owner's, or set by this call's earlier attempt
-			default:
+			}
+			if set {
 				switch err := c.SetHomepage(ctx, repo, pagesURL); {
 				case err == nil:
 					now.Website, res.Website = true, true
@@ -213,24 +306,37 @@ func LinkDashboard(ctx context.Context, c *ghapi.Client, repo, branch, pagesURL 
 				}
 			}
 		}
-		var files []ghapi.File
-		if !now.Readme {
+		var readme []byte // the README to commit (nil: as it is)
+		if !now.Readme || len(relink) > 0 {
 			current, err := c.GetFileAt(ctx, repo, ReadmePath, head)
 			if err != nil {
 				return res, err
 			}
-			if next := WithDashboardLink(current, pagesURL); current != nil && next != nil {
-				files = append(files, ghapi.File{Path: ReadmePath, Content: next})
+			text := current
+			if next := MoveDashboardLinks(current, relink, pagesURL); next != nil {
+				text, readme = next, next
 			}
-			now.Readme = true
+			if !now.Readme {
+				if next := WithDashboardLink(text, pagesURL); current != nil && next != nil {
+					readme = next
+				}
+				now.Readme = true
+			}
 		}
-		if now == was {
+		if now == was && readme == nil {
 			return res, nil
 		}
-		files = append(files, ghapi.File{Path: MarkerFile, Content: withLinked(fields, now)})
+		var files []ghapi.File
 		msg := "tokenmaxr: record the dashboard link"
-		if len(files) > 1 {
+		if readme != nil {
+			files = append(files, ghapi.File{Path: ReadmePath, Content: readme})
 			msg = "README: link the dashboard"
+			if was.Readme {
+				msg = "README: the dashboard's new address"
+			}
+		}
+		if now != was {
+			files = append(files, ghapi.File{Path: MarkerFile, Content: withLinked(fields, now)})
 		}
 		_, err = c.CommitOn(ctx, repo, branch, head, msg, files)
 		if errors.Is(err, ghapi.ErrConflict) {
@@ -239,7 +345,7 @@ func LinkDashboard(ctx context.Context, c *ghapi.Client, repo, branch, pagesURL 
 		if err != nil {
 			return res, err
 		}
-		res.Readme = len(files) > 1
+		res.Readme = readme != nil
 		return res, nil
 	}
 	return res, ghapi.ErrConflict

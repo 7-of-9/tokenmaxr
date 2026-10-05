@@ -79,6 +79,21 @@ export interface TokensSite {
   onDenied?(status: 401 | 403): void
   /** Where the Agents page keeps its choices (default: LOCAL_PREFS). */
   prefs?: SitePrefs
+  /**
+   * A header of the site's own in place of the shell's "< d0m1 / …" bar (the GitHub Pages dashboard's GitHub-style
+   * bar). d0m1.com has none, so it keeps its bar.
+   */
+  Header?: ComponentType<{ owner: Owner }>
+  /**
+   * The Detail calendar's five heat colours, empty day first (default: heat.ts GH_LEVELS, GitHub's dark palette).
+   * Any CSS colour: the Pages dashboard gives var(--…) so they follow its light or dark scheme.
+   */
+  heatLevels?: readonly string[]
+  /**
+   * The token pages sit in one outer panel (d0m1.com, owner direction 2026-10-05: "for d0m1, show /tokens WITH the
+   * panel"); without it (the Pages dashboard) the tiles stand on the page. Either way the page scrolls as a whole.
+   */
+  sheet?: boolean
 }
 
 const OWNER_STATUS = { checking: 'checking', anon: 'visitor', 'no-auth': 'unavailable', mock: 'mock', 'signed-in': 'owner' } as const
@@ -97,6 +112,7 @@ function useD0m1Owner(): Owner {
 export const D0M1_SITE: TokensSite = {
   root: { label: 'd0m1', to: '/' },
   home: '/tokens',
+  sheet: true,
   ownerPages: [{ label: 'Prompts', to: '/tokens/prompts' }, { label: 'Agents', to: '/tokens/agents' }],
   useOwner: useD0m1Owner,
   Controls: AuthControls,

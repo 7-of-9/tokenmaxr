@@ -9,6 +9,7 @@ import { buildActivity } from './activity'
 import { dayCost, type DayCost } from './cost'
 import { usePriceMode, usePricingTable } from './pricing'
 import { useUsageSource } from './source'
+import { useTokensSite } from './site'
 import { useUsage } from './useUsage'
 import { usePromptCounts } from './usePromptCounts'
 import { applyPromptCounts } from './promptCounts'
@@ -65,6 +66,7 @@ const CollectorLink = ({ href, children }: { href: string; children: ReactNode }
 const TokensView = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const source = useUsageSource()
+  const site = useTokensSite()
   const mock = searchParams.get('mock') === '1'
   const machine = searchParams.get('machine') || 'all'
   const view: View = searchParams.get('view') === 'detail' ? 'detail' : 'overview'
@@ -167,7 +169,7 @@ const TokensView = () => {
 
       {/* Laid out like a GitHub profile over the site background: the graph and its activity feed in the content
           column, the year list beside them. No outer panel: the page scrolls as a whole. */}
-      <div className="agents-sheet">
+      <div className={`${site.sheet ? 'agents-panel ' : ''}agents-sheet`}>
         <div className="agents-sheet__scroll">
           <div className="agents-layout">
             <div className="agents-main">

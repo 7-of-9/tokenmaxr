@@ -1,5 +1,6 @@
 // The GitHub Pages dashboard as a TokensSite (src/components/agents/site.ts): the same shell and pages as
-// d0m1.com/tokens, with the GitHub user (or the dashboard's title) where d0m1.com says "d0m1", the pages on the hash
+// d0m1.com/tokens, under a GitHub-style header (GithubHeader.tsx, "<owner> / <repository>" where d0m1.com says
+// "< d0m1 / tokens") in GitHub's colours (github.css), the pages on the hash
 // router (#/ and #/agents for /tokens and /tokens/agents), and the owner signed in by the owner key this browser
 // keeps (owner.ts): from GitHub (signin.ts, the device flow on any device) or handed over by tokenmaxr's Settings.
 // Sign out and Sign in toggle between the public view and the owner's, keeping the key. The Agents page's choices
@@ -80,6 +81,30 @@ export function storedViewToggle(storage: Storage | null, key: string, events: P
   }
 }
 
+/** The header's breadcrumb: "<owner> / <repository>", each linking to it on GitHub, as GitHub writes it. */
+export interface HeaderCrumbs {
+  /** The repository's owner (their GitHub profile), or null where the repository is not known. */
+  owner: { label: string; href: string } | null
+  /** The repository, or else the dashboard's title (linking to the dashboard). */
+  repository: { label: string; href?: string }
+}
+
+/** From the repository ("owner/name", signin.ts pagesRepository or tokenmaxr.json), else the dashboard's title. */
+export function headerCrumbs(repository: string | null, title: string): HeaderCrumbs {
+  const slash = repository ? repository.indexOf('/') : -1
+  if (!repository || slash <= 0 || slash === repository.length - 1) return { owner: null, repository: { label: title } }
+  const owner = repository.slice(0, slash)
+  const name = repository.slice(slash + 1)
+  const profile = `https://github.com/${encodeURIComponent(owner)}`
+  return { owner: { label: owner, href: profile }, repository: { label: name, href: `${profile}/${encodeURIComponent(name)}` } }
+}
+
+/**
+ * The Detail calendar's heat colours: GitHub's contribution-graph greens for the scheme the page follows
+ * (github.css defines them, light and dark).
+ */
+export const PAGES_HEAT_LEVELS = [0, 1, 2, 3, 4].map(level => `var(--pages-heat-${level})`)
+
 /** Until data/index.json names it: the repository (https://<user>.github.io/<repository>/), else "tokens". */
 export function defaultTitle(pathname: string): string {
   const repository = pathname.split('/').find(Boolean)
@@ -107,7 +132,7 @@ const noSubscribe = () => () => {}
 const notSignedOut = () => false
 
 export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStatus = 'idle', view: ViewToggle | null = null, user: string | null = null,
-  SignIn?: ComponentType): TokensSite {
+  SignIn?: ComponentType, Header?: ComponentType<{ owner: Owner }>): TokensSite {
   // Sign out keeps the key (view.setSignedOut); Sign in brings the owner's view back, or, in a browser that holds
   // no key, opens the Agents page and starts the GitHub sign-in there (SignInPanel).
   const Controls = () => {
@@ -124,7 +149,8 @@ export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStat
     return createElement('button', { type: 'button', onClick: signIn, title: state.status === 'unlocked' ? 'Back to your view' : 'Sign in with GitHub' }, 'Sign in')
   }
   return {
-    // "7-of-9 / tokens": the user links to their GitHub profile, as "d0m1" links home on d0m1.com.
+    // Above the dashboard is the user's GitHub profile, as d0m1.com's home is above /tokens. The Header (GithubHeader)
+    // draws the breadcrumb; the shell's Esc goes back a page and never leaves the dashboard.
     root: { label: user ?? title, to: '/', href: user ? `https://github.com/${user}` : undefined },
     home: '/',
     ownerPages: [{ label: 'Agents', to: '/agents' }],
@@ -143,5 +169,7 @@ export function pagesSite(title: string, store: OwnerStore, handoff: HandoffStat
       if (status === 403) store.lock()
     },
     prefs: store.prefs,
+    Header,
+    heatLevels: PAGES_HEAT_LEVELS,
   }
 }

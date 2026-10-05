@@ -5,6 +5,7 @@ import type { HeatmapProps } from './Heatmap'
 import { calendarMonths } from './calendar'
 import { formatUsd, type DayCost } from './cost'
 import { GH_LEVELS, makeHeatScale } from './heat'
+import { useTokensSite } from './site'
 import { addDays, formatCompact, formatDayShort, formatMonth, plural } from './usage'
 import './MonthCalendar.css'
 
@@ -27,6 +28,7 @@ export default function MonthCalendar({ cells, from, to, today, noun, caption, c
   const scale = useMemo(() => makeHeatScale(visibleCells.map(cell => cell.total)), [visibleCells])
   const hasUntracked = visibleCells.some(cell => cell.total === 0 && cell.promptsNoUsage > 0)
   const activeDate = focusDate < from || focusDate > to ? to : focusDate
+  const levels = useTokensSite().heatLevels ?? GH_LEVELS
 
   const hoverOpen = hover !== null
   useEffect(() => {
@@ -90,7 +92,7 @@ export default function MonthCalendar({ cells, from, to, today, noun, caption, c
                     key={day.date}
                     data-date={day.date}
                     className={`agents-calendar__day${untracked ? ' is-untracked' : ''}${hover?.date === day.date ? ' is-active' : ''}${level >= 3 ? ' is-bright' : ''}`}
-                    style={{ backgroundColor: GH_LEVELS[level] }}
+                    style={{ backgroundColor: levels[level] }}
                     tabIndex={day.date === activeDate ? 0 : -1}
                     aria-label={description}
                     aria-current={day.date === today ? 'date' : undefined}
@@ -123,7 +125,7 @@ export default function MonthCalendar({ cells, from, to, today, noun, caption, c
           {hasUntracked && <span className="agents-heat__key"><span className="agents-calendar__swatch is-untracked" aria-hidden="true" />tokens not recorded</span>}
           <span>Less</span>
           <span className="agents-heat__swatches" aria-hidden="true">
-            {GH_LEVELS.map(color => <span className="agents-calendar__swatch" key={color} style={{ backgroundColor: color }} />)}
+            {levels.map(color => <span className="agents-calendar__swatch" key={color} style={{ backgroundColor: color }} />)}
           </span>
           <span>More</span>
         </div>

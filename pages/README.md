@@ -4,7 +4,7 @@ This repository holds AI token usage published by
 [tokenmaxr](https://github.com/7-of-9/tokenmaxr) collectors, and the static
 dashboard that GitHub Pages serves from it: the same pages as
 [d0m1.com/tokens](https://d0m1.com/tokens), built from the same code, reading
-this repository's files.
+this repository's files, and dressed to look like a page of GitHub's.
 
 It shows tokens and prompts per active day, the number of active days (days
 with recorded tokens), a daily heatmap with days that had prompts but no
@@ -107,11 +107,7 @@ repository named after your account) or your profile's website.
   itself (a 404 means none).
 - `tokenmaxr.json` marks this repository for the collector, and holds the
   dashboard's settings (the Pages workflow serves it beside the page):
-  - `title` renames the dashboard.
-  - `"background": true` turns on d0m1.com's animated background (a video
-    streamed from d0m1.com's CDN, `cdn.d0m1.com`) and its controls along the
-    bottom edge. Off by default: the dashboard is plain dark and loads
-    nothing from d0m1.com's CDN.
+  - `title` renames the dashboard (the browser tab).
   - `repository` (`"<owner>/<name>"`) names this repository, for a dashboard
     on a custom domain (on `<you>.github.io/<repository>/` the address says
     it). Without it, signing in on a custom domain tries the repositories
@@ -127,16 +123,50 @@ repository named after your account) or your profile's website.
   ```json
   {
    "tokenmaxr": 1,
-   "title": "AI token usage",
-   "background": true
+   "title": "AI token usage"
   }
   ```
+
+  An older `"background": true` (d0m1.com's animated background) is ignored:
+  the dashboard has no background (below).
 
   Pushing the change redeploys the dashboard.
 
 The dashboard lives at `https://<you>.github.io/<this repository>/`. Its
 settings are in the link: `#/?period=90d`, `#/?view=detail`,
 `#/?machine=<id>`; the owner's Agents page is `#/agents`.
+
+## Renaming this repository
+
+Rename it on github.com (Settings → General → Repository name). Your
+machines follow by themselves; there is nothing to change on any of them:
+
+- GitHub keeps sending the collectors' requests for the old name to the
+  repository, and each collector (newer than 0.4.7) notices with its next
+  publish that has something to commit (or within a day), takes the new name
+  into its settings and publishes there. A machine that publishes with the
+  sign-in your fleet shares follows too, by itself or from the share. Its
+  status (`tokenmaxr github status`), Settings and the app show the new name
+  and dashboard address straight away, and "renamed on GitHub from ..." for a
+  week. Nothing is published again: the data is the same repository's.
+- **The old dashboard address stops working**: GitHub Pages does not
+  redirect `https://<you>.github.io/<old name>/`. The collectors point the
+  repository's website and this README's links at the new address (only
+  where they named the old one; a website or link of your own stays), and the
+  Pages workflow deploys the new address with the next push. Update links you
+  shared or bookmarked yourself, and `repository` in `tokenmaxr.json` if you
+  set it.
+- The owner key a browser keeps is kept per dashboard address: sign in again
+  once at the new address (the old one's key stays in the browser until you
+  clear the site's data).
+- Moving the repository to another account (a transfer) works the same while
+  the tokenmaxor App is installed with access to it there; otherwise the
+  collectors keep the old name and publishing stops with "cannot write to
+  the repository" until you install the App for it (they follow within the
+  hour after that) or sign in again on a machine. Do not create a new
+  repository with the old name: GitHub then stops redirecting it (the
+  collectors find the repository by its id instead, but older collectors do
+  not).
 
 ## Owner sign-in
 
@@ -156,8 +186,8 @@ Signing in puts that key in your browser; there are two ways.
    collaborators can read it, and tokenmaxor must be installed with access to
    this repository), derives the owner key from it in the browser (WebCrypto),
    checks that the key opens the published `owner.json` files, keeps it, and
-   forgets the token and the fleet key. It shows **Agents** and **Sign out**
-   in the header, as d0m1.com does.
+   forgets the token and the fleet key. It shows the **Agents** tab under the
+   header and **Sign out** in it.
 
 GitHub's device-flow endpoints cannot be called from a web page (they send no
 CORS headers), so the page reaches them through a small relay on d0m1.com
@@ -228,18 +258,24 @@ What the browser keeps, and who else could reach it:
 
 ## Differences from d0m1.com/tokens
 
-The dashboard is d0m1.com/tokens: the same pages, shell, styles and fonts, the
-same slide between pages, and no outer panel on either site. d0m1.com's
-animated background is opt-in (`"background": true` in `tokenmaxr.json`,
-above); without it the dashboard is plain dark. d0m1.com's site footer (its copyright and links) is
-hidden on its token pages, so the dashboard leaves it out. What differs on
-purpose:
+The dashboard has d0m1.com/tokens' content: the same pages (Overview and
+Detail, the Agents page), the same data and layout, the same slide between
+pages. It looks like a page of GitHub's rather than of d0m1.com: GitHub's
+colours (Primer), light or dark as your system is set, the system font,
+GitHub's boxes, buttons and segmented controls, and the contribution graph's
+greens; no background video or image, no d0m1.com faces or glow
+(`pages/dashboard/github.css`, scoped to the dashboard's page, so d0m1.com is
+unchanged). d0m1.com's site footer (its copyright and links) is hidden on its
+token pages, so the dashboard leaves it out. What differs on purpose:
 
-- The breadcrumb starts with the GitHub user (`<you>` of `<you>.github.io`,
-  linking to your GitHub profile) where d0m1.com has "d0m1" (linking home);
-  on another host it is the dashboard's title, cut short when long, and
-  links to the dashboard. `<` on the first page goes up to that profile, as
-  it goes home on d0m1.com (Esc stays on the dashboard).
+- GitHub's header bar in place of d0m1.com's `< d0m1 / tokens`: the GitHub
+  mark (to github.com), then `<you> / <repository>` as GitHub writes it, each
+  linking to it on GitHub, and Sign in or Sign out on the right
+  (`GithubHeader.tsx`). On a custom domain the repository comes from
+  `repository` in `tokenmaxr.json`; without one the header shows the
+  dashboard's title, linking to the dashboard. The header scrolls with the
+  page, as GitHub's does. Below it, once you are signed in (or on the Agents
+  page), the repository-style tabs Usage and Agents. Esc goes back a page.
 - The owner signs in with GitHub's device flow (a code to enter at
   github.com/login/device) or from the collector, and the browser keeps a key
   rather than a session; Sign out and Sign in then toggle the public view.

@@ -1,10 +1,10 @@
 // Builds the tokenmaxr GitHub Pages dashboard (pages/dashboard) into pages/site, the static folder the usage
 // repository's Pages workflow deploys beside its data/. The same /tokens and /tokens/agents pages as d0m1.com,
-// in the same shell and with the same styles (the site-wide sheets and the two faces included, no d0m1 page
-// besides), reading the published files instead of the d0m1 API: no site plugins, no API origin, relative URLs
-// throughout, so it works under https://<user>.github.io/<repository>/. Run: npm run build:pages, which then runs
-// scripts/sync-pages-site.mjs to stamp site/version.json and copy the build into the collector
-// (collector/internal/ghpub/site), whose publisher keeps every usage repository's site/ current.
+// in the same shell (the site-wide sheets included, no d0m1 page besides) but dressed as a page of GitHub's
+// (pages/dashboard/github.css), reading the published files instead of the d0m1 API: no site plugins, no API
+// origin, relative URLs throughout, so it works under https://<user>.github.io/<repository>/. Run: npm run
+// build:pages, which then runs scripts/sync-pages-site.mjs to stamp site/version.json and copy the build into the
+// collector (collector/internal/ghpub/site), whose publisher keeps every usage repository's site/ current.
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
@@ -56,8 +56,8 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     reportCompressedSize: false,
-    // The collector publishes the site through GitHub's text API, so every file must be UTF-8 text: the two fonts
-    // (pages.css) travel inside the stylesheet as data: URLs rather than as .ttf files.
+    // The collector publishes the site through GitHub's text API, so every file must be UTF-8 text: any font would
+    // have to travel inside the stylesheet as a data: URL rather than as a .ttf file (the dashboard uses none now).
     assetsInlineLimit: (file) => (file.endsWith('.ttf') ? true : undefined),
     rollupOptions: {
       output: {

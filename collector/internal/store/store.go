@@ -571,6 +571,27 @@ type GitHubState struct {
 	// LinkRetryAt: the installation could not set the repository's website
 	// (no Administration: write); it is tried again from then (daily).
 	LinkRetryAt time.Time `json:"linkRetryAt,omitzero"`
+	// RepoID is the immutable GitHub id of the repository named RepoName,
+	// as GitHub last said (RepoChecked). A config whose repository is not
+	// RepoName has none known yet. It finds the repository after a rename
+	// or transfer whose old name no longer leads to it.
+	RepoID      int64     `json:"repoId,omitempty"`
+	RepoName    string    `json:"repoName,omitempty"`
+	RepoChecked time.Time `json:"repoChecked,omitzero"`
+	// RepoOutside is the name GitHub gives the repository after a transfer
+	// out of the App's installation (not followed; checked again hourly
+	// while publishes fail).
+	RepoOutside string `json:"repoOutside,omitempty"`
+	// RenamedFrom is the repository's name before the rename (or transfer)
+	// this machine last followed (RenamedAt), and FormerPagesURL its
+	// dashboard's address then: links to that address move to the new one.
+	RenamedFrom    string    `json:"renamedFrom,omitempty"`
+	RenamedAt      time.Time `json:"renamedAt,omitzero"`
+	FormerPagesURL string    `json:"formerPagesUrl,omitempty"`
+	// FormerNames are names the repository had before (newest first, a
+	// few): a fleet share that still names one of them means this
+	// repository.
+	FormerNames []string `json:"formerNames,omitempty"`
 }
 
 // OwnerState identifies what a committed owner.json says without keeping it

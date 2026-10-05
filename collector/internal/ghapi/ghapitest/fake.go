@@ -7,6 +7,7 @@ package ghapitest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -52,6 +53,69 @@ type Fake struct {
 	NoAdmin      bool
 	seq          int
 	AuthSeen     []string
+	// Requests lists every request as asked: "GET /repos/octo/agent-usage".
+	Requests []string
+	// Repo is the repository's full name now (New: "octo/agent-usage"; its
+	// id is RepoID). Rename gives it another, and its old names redirect
+	// there (Redirects lists each redirect: "307 POST /repos/..."), unless
+	// NoRedirect (GitHub dropped the redirect: 404). Uncovered moves it out
+	// of the installation's reach: as a public repository it is still read
+	// by any sign-in (by its names and its id), but the installation does
+	// not list it and writes to it are refused (403). ByID counts requests
+	// by its id.
+	Repo       string
+	former     []string
+	NoRedirect bool
+	Uncovered  bool
+	Redirects  []string
+	ByID       int
+}
+
+// RepoID is the fake repository's immutable id.
+const RepoID = 1
+
+// Rename renames (or, with another owner, transfers) the repository to
+// full ("owner/name"), as on github.com: its old name redirects.
+func (f *Fake) Rename(full string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.former = append(f.former, f.full())
+	f.Repo = full
+}
+
+func (f *Fake) full() string {
+	if f.Repo == "" {
+		return "octo/agent-usage"
+	}
+	return f.Repo
+}
+
+// pagesURL is the repository's Pages address, as GitHub forms it.
+func (f *Fake) pagesURL() string {
+	owner, name, _ := strings.Cut(f.full(), "/")
+	return "https://" + strings.ToLower(owner) + ".github.io/" + name + "/"
+}
+
+func (f *Fake) repoJSON() map[string]any {
+	owner, name, _ := strings.Cut(f.full(), "/")
+	ownerID := 42
+	if owner != "octo" {
+		ownerID = 43
+	}
+	return map[string]any{"id": RepoID, "name": name, "full_name": f.full(), "default_branch": "main", "owner": map[string]any{"login": owner, "id": ownerID}}
+}
+
+// underRepo returns what follows the repository path prefix in path (""
+// for the repository itself), matching the name in any case, like GitHub.
+func underRepo(path, prefix string) (string, bool) {
+	if len(path) < len(prefix) || !strings.EqualFold(path[:len(prefix)], prefix) {
+		return "", false
+	}
+	rest := path[len(prefix):]
+	if rest != "" && rest[0] != '/' {
+		return "", false
+	}
+	return rest, true
 }
 
 func New() *Fake {
@@ -80,21 +144,59 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.AuthSeen = append(f.AuthSeen, r.Header.Get("Authorization"))
+	f.Requests = append(f.Requests, r.Method+" "+r.URL.Path)
 	body, _ := io.ReadAll(r.Body)
 	js := func(code int, v any) { w.WriteHeader(code); json.NewEncoder(w).Encode(v) }
 	if tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok && f.Revoked[tok] {
 		js(401, map[string]string{"message": "Bad credentials"})
 		return
 	}
+	// A repository's old name redirects to its id, as GitHub does after a
+	// rename or a transfer: GET and HEAD with 301, the rest with 307.
+	path := r.URL.Path
+	for _, old := range f.former {
+		rest, ok := underRepo(path, "/repos/"+old)
+		if !ok {
+			continue
+		}
+		if f.NoRedirect {
+			js(404, map[string]string{"message": "Not Found"})
+			return
+		}
+		to := fmt.Sprintf("http://%s/repositories/%d%s", r.Host, RepoID, rest)
+		if r.URL.RawQuery != "" {
+			to += "?" + r.URL.RawQuery
+		}
+		code := http.StatusTemporaryRedirect
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			code = http.StatusMovedPermanently
+		}
+		f.Redirects = append(f.Redirects, fmt.Sprintf("%d %s %s", code, r.Method, path))
+		w.Header().Set("Location", to)
+		js(code, map[string]string{"message": "Moved Permanently", "url": to})
+		return
+	}
+	if rest, ok := underRepo(path, fmt.Sprintf("/repositories/%d", RepoID)); ok {
+		f.ByID++
+		path = "/repos/" + f.full() + rest
+	}
+	repo := "/repos/" + f.full()
+	if rest, ok := underRepo(path, repo); ok {
+		path = repo + rest // GitHub's names are not case-sensitive
+		if f.Uncovered && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			js(403, map[string]string{"message": "Resource not accessible by integration"})
+			return
+		}
+	}
 	switch {
-	case r.URL.Path == "/login/device/code":
+	case path == "/login/device/code":
 		form, _ := url.ParseQuery(string(body))
 		if form.Get("client_id") != "Iv-test" {
 			js(200, map[string]string{"error": "unauthorized_client"})
 			return
 		}
 		js(200, map[string]any{"device_code": "dev-1", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5})
-	case r.URL.Path == "/login/oauth/access_token":
+	case path == "/login/oauth/access_token":
 		out := f.PollPlan[min(f.Polls, len(f.PollPlan)-1)]
 		f.Polls++
 		switch out {
@@ -109,16 +211,18 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "expired":
 			js(200, map[string]string{"error": "expired_token"})
 		}
-	case r.URL.Path == "/user":
+	case path == "/user":
 		js(200, map[string]any{"login": "octo", "id": 42})
-	case r.URL.Path == "/user/installations" && f.NoInstall:
+	case path == "/user/installations" && f.NoInstall:
 		js(200, map[string]any{"installations": []any{}})
-	case r.URL.Path == "/user/installations":
+	case path == "/user/installations":
 		js(200, map[string]any{"installations": []map[string]any{{"id": 7, "app_id": 99, "app_slug": "tokenmaxor", "account": map[string]any{"login": "octo", "id": 42}, "repository_selection": "selected"}}})
-	case r.URL.Path == "/user/installations/7/repositories":
-		js(200, map[string]any{"repositories": []map[string]any{{"id": 1, "name": "agent-usage", "full_name": "octo/agent-usage", "default_branch": "main", "owner": map[string]any{"login": "octo", "id": 42}}}})
-	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/contents/"):
-		p := strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/contents/")
+	case path == "/user/installations/7/repositories" && f.Uncovered:
+		js(200, map[string]any{"repositories": []any{}})
+	case path == "/user/installations/7/repositories":
+		js(200, map[string]any{"repositories": []map[string]any{f.repoJSON()}})
+	case strings.HasPrefix(path, repo+"/contents/"):
+		p := strings.TrimPrefix(path, repo+"/contents/")
 		if ref := r.URL.Query().Get("ref"); ref != "" {
 			f.Reads = append(f.Reads, p+"@"+ref)
 		} else {
@@ -130,19 +234,19 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		js(200, map[string]string{"content": base64.StdEncoding.EncodeToString([]byte(c)), "encoding": "base64"})
-	case r.URL.Path == "/repos/octo/agent-usage/git/ref/heads/main":
+	case path == repo+"/git/ref/heads/main":
 		js(200, map[string]any{"object": map[string]string{"sha": f.Head}})
-	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/git/commits/"):
-		js(200, map[string]any{"tree": map[string]string{"sha": f.commits[strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/git/commits/")]}})
-	case strings.HasPrefix(r.URL.Path, "/repos/octo/agent-usage/git/trees/") && r.Method == http.MethodGet:
+	case strings.HasPrefix(path, repo+"/git/commits/"):
+		js(200, map[string]any{"tree": map[string]string{"sha": f.commits[strings.TrimPrefix(path, repo+"/git/commits/")]}})
+	case strings.HasPrefix(path, repo+"/git/trees/") && r.Method == http.MethodGet:
 		// The files at that tree or ref, recursively.
-		files := f.at(strings.TrimPrefix(r.URL.Path, "/repos/octo/agent-usage/git/trees/"))
+		files := f.at(strings.TrimPrefix(path, repo+"/git/trees/"))
 		var tree []map[string]string
 		for _, p := range slices.Sorted(maps.Keys(files)) {
 			tree = append(tree, map[string]string{"path": p, "type": "blob", "mode": "100644"})
 		}
 		js(200, map[string]any{"sha": f.commits[f.Head], "tree": tree, "truncated": false})
-	case r.URL.Path == "/repos/octo/agent-usage/git/trees":
+	case path == repo+"/git/trees":
 		var req struct {
 			BaseTree string `json:"base_tree"`
 			Tree     []map[string]json.RawMessage
@@ -185,7 +289,7 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t := f.id("t")
 		f.trees[t] = next
 		js(201, map[string]string{"sha": t})
-	case r.URL.Path == "/repos/octo/agent-usage/git/commits":
+	case path == repo+"/git/commits":
 		var req struct {
 			Tree    string
 			Parents []string
@@ -197,7 +301,7 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.parents[c] = req.Parents[0]
 		}
 		js(201, map[string]string{"sha": c})
-	case r.URL.Path == "/repos/octo/agent-usage/git/refs/heads/main":
+	case path == repo+"/git/refs/heads/main":
 		var req struct{ SHA string }
 		json.Unmarshal(body, &req)
 		if edit := f.Interleave; edit != nil {
@@ -225,14 +329,14 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.Files = map[string]string{}
 		}
 		js(200, map[string]any{})
-	case r.URL.Path == "/repos/octo/agent-usage/actions/variables/TOKENMAXR_FLEET_KEY" && r.Method == http.MethodGet:
+	case path == repo+"/actions/variables/TOKENMAXR_FLEET_KEY" && r.Method == http.MethodGet:
 		v, ok := f.Vars["TOKENMAXR_FLEET_KEY"]
 		if !ok {
 			js(404, map[string]string{"message": "Not Found"})
 			return
 		}
 		js(200, map[string]string{"name": "TOKENMAXR_FLEET_KEY", "value": v})
-	case r.URL.Path == "/repos/octo/agent-usage/actions/variables" && r.Method == http.MethodPost:
+	case path == repo+"/actions/variables" && r.Method == http.MethodPost:
 		var req struct{ Name, Value string }
 		json.Unmarshal(body, &req)
 		if _, ok := f.Vars[req.Name]; ok {
@@ -241,15 +345,17 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Vars[req.Name] = req.Value
 		js(201, map[string]any{})
-	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodGet:
+	case path == repo && r.Method == http.MethodGet:
 		var homepage any // GitHub sends null for none
 		if f.Homepage != "" {
 			homepage = f.Homepage
 		}
-		js(200, map[string]any{"full_name": "octo/agent-usage", "default_branch": "main", "homepage": homepage})
-	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodPatch && f.NoAdmin:
+		out := f.repoJSON()
+		out["homepage"] = homepage
+		js(200, out)
+	case path == repo && r.Method == http.MethodPatch && f.NoAdmin:
 		js(403, map[string]string{"message": "Resource not accessible by integration"})
-	case r.URL.Path == "/repos/octo/agent-usage" && r.Method == http.MethodPatch:
+	case path == repo && r.Method == http.MethodPatch:
 		var in struct {
 			Homepage *string `json:"homepage"`
 		}
@@ -258,20 +364,20 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.Homepage = *in.Homepage
 			f.HomepageSets++
 		}
-		js(200, map[string]any{"full_name": "octo/agent-usage", "homepage": f.Homepage})
-	case r.URL.Path == "/repos/octo/agent-usage/pages" && r.Method == http.MethodPost:
+		js(200, map[string]any{"id": RepoID, "full_name": f.full(), "homepage": f.Homepage})
+	case path == repo+"/pages" && r.Method == http.MethodPost:
 		if f.Pages {
 			js(409, map[string]string{"message": "GitHub Pages is already enabled."})
 			return
 		}
 		f.Pages = true
 		js(201, map[string]any{})
-	case r.URL.Path == "/repos/octo/agent-usage/pages":
+	case path == repo+"/pages":
 		if !f.Pages {
 			js(404, map[string]string{"message": "Not Found"})
 			return
 		}
-		js(200, map[string]string{"html_url": "https://octo.github.io/agent-usage/"})
+		js(200, map[string]string{"html_url": f.pagesURL()})
 	default:
 		js(404, map[string]string{"message": "unexpected " + r.Method + " " + r.URL.Path})
 	}

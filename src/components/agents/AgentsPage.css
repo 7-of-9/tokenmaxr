@@ -31,6 +31,11 @@
   padding: 0 0 2rem;
 }
 
+/* d0m1.com's outer panel (site.sheet): the tiles sit inside it, and the page scrolls as a whole. */
+.agents-page .agents-panel.agents-sheet {
+  padding: 24px 24px 28px;
+}
+
 .agents-testdata + .agents-sheet {
   margin-top: 1.25rem;
 }
@@ -762,6 +767,10 @@
 @media (max-width: 640px) {
   .agents-testdata + .agents-sheet {
     margin-top: 1rem;
+  }
+
+  .agents-page .agents-panel.agents-sheet {
+    padding: 14px 12px 18px;
   }
 
   .agents-graph {

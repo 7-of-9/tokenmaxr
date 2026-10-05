@@ -321,9 +321,18 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	// The GitHub publisher: daily aggregates and quota meters, when due.
 	if ru != nil {
 		progress("publishing", upload.Progress{})
+		repo := ""
+		if cfg.GitHub != nil {
+			repo = cfg.GitHub.Repo
+		}
 		// A retry publishes now only when the last attempt failed (offline,
 		// unreachable); a recent good publish keeps its cadence.
 		a.publishGitHub(ctx, &cfg, sec, st, ru, hr.Homes, o.Force || o.Retry && st.GitHub.LastError != "")
+		if cfg.GitHub != nil && repo != "" && cfg.GitHub.Repo != repo {
+			// The repository was renamed on GitHub: a sign-in this machine
+			// shares goes out with the new name now.
+			a.fleetGitHub(ctx, &cfg, &sec, st)
+		}
 	}
 
 	progress("finishing", upload.Progress{})

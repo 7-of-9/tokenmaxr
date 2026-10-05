@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,6 +30,48 @@ type Client struct {
 	HTTP     *http.Client
 	// UserAgent is required by GitHub.
 	UserAgent string
+	// moved: an API request was answered from another address (Moved).
+	moved atomic.Bool
+}
+
+// Moved reports whether an API request since the last call was answered
+// from another address than the one asked: GitHub redirects requests for a
+// renamed or transferred repository to /repositories/{id}. It clears the
+// mark.
+func (c *Client) Moved() bool { return c.moved.Swap(false) }
+
+// httpClient is c.HTTP made safe for GitHub's redirects. GitHub answers a
+// request for a renamed or transferred repository with a redirect to
+// /repositories/{id}: 301 for GET and HEAD, 307 for every other method,
+// which Go sends again with the same method and body (the request's GetBody,
+// which http.NewRequest sets for the bytes.Reader of do). A 301, 302 or 303
+// would turn a write into a GET without its body that looks like success, so
+// a write is never followed through one: the redirect is its answer (an
+// Error with that status). The token goes only to the API's own scheme and
+// host: Go would keep it for a subdomain or another port too.
+func (c *Client) httpClient() *http.Client {
+	hc := http.Client{Timeout: 30 * time.Second}
+	if c.HTTP != nil {
+		hc = *c.HTTP
+	}
+	api, _ := url.Parse(c.API)
+	next := hc.CheckRedirect
+	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if req.Method != via[0].Method {
+			return http.ErrUseLastResponse
+		}
+		if api == nil || req.URL.Scheme != api.Scheme || req.URL.Host != api.Host {
+			req.Header.Del("Authorization")
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		return nil
+	}
+	return &hc
 }
 
 // New returns a client for github.com.
@@ -79,11 +122,14 @@ func (c *Client) do(ctx context.Context, method, base, path string, body, out an
 	if c.Token != "" && base == c.API {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
-	res, err := c.HTTP.Do(req)
+	res, err := c.httpClient().Do(req)
 	if err != nil {
 		return errors.New("GitHub is unreachable")
 	}
 	defer res.Body.Close()
+	if res.Request != nil && res.Request.URL.String() != req.URL.String() {
+		c.moved.Store(true)
+	}
 	data, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
 	if res.StatusCode >= 300 {
 		var m struct {
@@ -461,6 +507,11 @@ func (c *Client) CreateVariable(ctx context.Context, repo, name, value string) e
 
 // RepoInfo is what the collector reads of a repository's settings.
 type RepoInfo struct {
+	// ID is immutable; FullName ("owner/name") is the repository's name now,
+	// which differs from the one asked for after a rename or a transfer
+	// (GitHub redirects the old name).
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
 	// Homepage is the repository's website ("" when unset; GitHub sends
 	// null).
 	Homepage      string `json:"homepage"`
@@ -471,6 +522,14 @@ type RepoInfo struct {
 func (c *Client) Repository(ctx context.Context, repo string) (RepoInfo, error) {
 	var r RepoInfo
 	return r, c.do(ctx, http.MethodGet, c.API, "/repos/"+repo, nil, &r)
+}
+
+// RepositoryByID returns the repository with id, whatever its name now
+// (404 when the user's token cannot see it: deleted, or no longer granted
+// to the App).
+func (c *Client) RepositoryByID(ctx context.Context, id int64) (RepoInfo, error) {
+	var r RepoInfo
+	return r, c.do(ctx, http.MethodGet, c.API, fmt.Sprintf("/repositories/%d", id), nil, &r)
 }
 
 // SetHomepage sets repo's website (the App's Administration: write).

@@ -235,8 +235,14 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 		a.fleetFailed(st, "the fleet's GitHub sign-in", err)
 		return
 	}
+	repo := s.Repo
+	if adopted && shareNamesRenamed(cfg, st, repo) {
+		// Shared before its machine followed a rename this one knows of
+		// (github_rename.go): this repository, by its name now.
+		repo = cfg.GitHub.Repo
+	}
 	same := adopted && sec.GitHub != nil && sec.GitHub.Token == s.Token && sec.GitHub.Login == s.Login &&
-		cfg.GitHub.Repo == s.Repo && cfg.GitHub.Branch == s.Branch
+		cfg.GitHub.Repo == repo && cfg.GitHub.Branch == s.Branch
 	if same {
 		// Shared again: the sign-in unchanged, maybe the choices. The share
 		// already taken also passes them on while none were taken, as when
@@ -262,15 +268,36 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	}
 	// The repository must hold this machine's fleet key: a server pins it,
 	// so a repository of another fleet is refused.
-	key, _, err := ghpub.Join(ctx, newGitHubClient(s.Token, a.Version), s.Repo, k, true)
+	gc := newGitHubClient(s.Token, a.Version)
+	key, _, err := ghpub.Join(ctx, gc, repo, k, true)
 	if err == nil && !bytes.Equal(key, k) {
 		err = ghpub.ErrFleetMismatch
 	}
 	if err != nil {
-		a.fleetFailed(st, "adopting the fleet's GitHub sign-in for "+s.Repo, errors.New(githubErrorText(err)))
+		a.fleetFailed(st, "adopting the fleet's GitHub sign-in for "+repo, errors.New(githubErrorText(err)))
 		return
 	}
-	moved := !adopted || cfg.GitHub.Repo != s.Repo || cfg.GitHub.BranchOrDefault() != (&store.GitHubConfig{Branch: s.Branch}).BranchOrDefault()
+	moved := !adopted || cfg.GitHub.Repo != repo || cfg.GitHub.BranchOrDefault() != (&store.GitHubConfig{Branch: s.Branch}).BranchOrDefault()
+	// The share names this repository otherwise: the sharer followed a
+	// rename (or transfer) this machine has not noticed yet, or it names
+	// the repository as it was called before (a sharer that has not
+	// followed). The same repository, whose data stays published, under
+	// the name GitHub gives it now, not necessarily the share's.
+	var renamedFrom string
+	var repoID int64
+	stale := false
+	if moved && adopted && cfg.GitHub.Repo != repo && cfg.GitHub.Branch == s.Branch {
+		if id, cur, ok := sameRepository(ctx, gc, cfg, st, cfg.GitHub.Repo, repo); ok {
+			moved = false
+			repoID = id
+			if strings.EqualFold(cur, cfg.GitHub.Repo) {
+				repo, stale = cfg.GitHub.Repo, true
+			} else {
+				renamedFrom, repo = cfg.GitHub.Repo, cur
+			}
+		}
+	}
+	renewed := !adopted || sec.GitHub == nil || sec.GitHub.Token != s.Token || sec.GitHub.Login != s.Login
 	gh := cfg.GitHub
 	if !adopted {
 		if st.GitHub.MachineID == "" {
@@ -286,7 +313,7 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 			gh.ShowCountry = kp.ShowCountry && gh.LocalPref(store.PrefShowCountry)
 		}
 	}
-	gh.Repo, gh.Branch = s.Repo, s.Branch
+	gh.Repo, gh.Branch = repo, s.Branch
 	a.followPrefs(gh, st, s.Prefs)
 	cfg.GitHub, sec.GitHub = gh, &store.GitHubSecrets{Token: s.Token, Login: s.Login, UserID: s.UserID}
 	cfg.GitHubKeptPrefs = nil
@@ -299,15 +326,33 @@ func (a *App) adoptGitHub(ctx context.Context, cfg *store.Config, sec *store.Sec
 	if moved {
 		st.GitHub.Published, st.GitHub.LastPublish = nil, time.Time{}
 		st.GitHub.Site, st.GitHub.SiteChecked, st.GitHub.PagesURL = "", time.Time{}, ""
+		if !strings.EqualFold(st.GitHub.RepoName, repo) {
+			// Another repository: its id is read with the next publish, and
+			// no rename of the earlier one applies to it.
+			st.GitHub.RepoChecked = time.Time{}
+			st.GitHub.RenamedFrom, st.GitHub.RenamedAt, st.GitHub.FormerPagesURL = "", time.Time{}, ""
+			st.GitHub.FormerNames, st.GitHub.RepoOutside = nil, ""
+		}
+	}
+	if renamedFrom != "" {
+		a.renamedRepo(ctx, gc, cfg, st, renamedFrom, repoID, a.Now())
+	}
+	if renamedFrom != "" || stale {
+		// The share's name, when it is an earlier one, means this
+		// repository from now on (shareNamesRenamed).
+		st.GitHub.RepoID, st.GitHub.RepoName = repoID, repo
+		formerName(&st.GitHub, s.Repo, repo)
 	}
 	if !adopted {
 		// The first publish needs the whole history in the rollup: re-read
 		// it for the rollup alone, so the server is not sent it again.
 		st.GitHub.StartRebuild()
-		a.Log.Printf("github: publishing to %s as %q with the sign-in %s shared through the fleet", s.Repo, gh.Label, s.Login)
+		a.Log.Printf("github: publishing to %s as %q with the sign-in %s shared through the fleet", repo, gh.Label, s.Login)
 		return
 	}
-	a.Log.Printf("github: took the fleet's renewed GitHub sign-in for %s", s.Repo)
+	if renewed || renamedFrom == "" && !stale {
+		a.Log.Printf("github: took the fleet's renewed GitHub sign-in for %s", repo)
+	}
 }
 
 // followPrefs takes the sharer's publishing choices p (nil from a collector

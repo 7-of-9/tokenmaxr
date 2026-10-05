@@ -110,7 +110,8 @@ function render() {
   }
   if (g.on) {
     link($("gh-repo"), "https://github.com/" + g.repo, g.repo);
-    $("gh-who").textContent = g.adopted ? "(shared by " + g.login + ")" : "(" + g.login + ")";
+    $("gh-who").textContent = (g.adopted ? "(shared by " + g.login + ")" : "(" + g.login + ")") +
+      (g.renamedFrom ? " · renamed from " + g.renamedFrom + " on GitHub, followed by itself" : "");
     const pages = $("gh-pages");
     if (g.pagesUrl) {
       const a = document.createElement("a");

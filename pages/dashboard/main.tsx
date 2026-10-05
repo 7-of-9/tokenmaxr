@@ -1,19 +1,20 @@
 // The tokenmaxr GitHub Pages dashboard: d0m1.com's /tokens and /tokens/agents pages (AgentsPage, LimitsPage, in the
-// shared TokensShell) over the files collectors publish to this repository. Built by `npm run build:pages`
-// (vite.pages.config.ts) into pages/site/.
+// shared TokensShell) over the files collectors publish to this repository, dressed as a page of GitHub's
+// (GithubHeader.tsx, github.css). Built by `npm run build:pages` (vite.pages.config.ts) into pages/site/.
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
-import { BackgroundThemeProvider } from '../../src/contexts/BackgroundThemeContext'
 import Dashboard from './Dashboard'
 import { githubSource } from './githubSource'
 import { consumeUnlockFragment, createOwnerStore, createUnlockHandoff, indexedDbVault, memoryVault, ownerStorageName } from './owner'
 import { createDeviceSignIn, pagesRepository, parseDashboardConfig, type DashboardConfig } from './signin'
 import { storedViewToggle } from './site'
-// d0m1.com's site-wide styles, which its token pages sit on; pages.css adds the two faces they use.
+import { reloadOnStaleChunks } from '../../src/utils/staleChunks'
+// d0m1.com's site-wide styles, which its token pages sit on (the same spacing and resets); github.css then gives
+// them GitHub's look, under the pages-github class index.html sets.
 import '../../src/index.css'
 import '../../src/App.css'
-import './pages.css'
+import './github.css'
 
 let storage: Storage | null = null
 try {
@@ -53,8 +54,7 @@ const source = githubSource({ ownerKey: owner.ready })
 // Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
 const view = storedViewToggle(storage, `${name}:signed-out`, window)
 
-// tokenmaxr.json, served beside the page: the background (off unless "background": true) and, on a custom domain,
-// the repository. Missing or unreadable: the defaults.
+// tokenmaxr.json, served beside the page: on a custom domain, the repository. Missing or unreadable: the default.
 const config: Promise<DashboardConfig> = fetch('tokenmaxr.json', { cache: 'no-cache', headers: { Accept: 'application/json' } })
   .then(response => (response.ok ? response.json() : null))
   .catch(() => null)
@@ -80,19 +80,19 @@ if (!window.location.hash.startsWith('#/')) {
 }
 
 // As on d0m1.com (App.tsx): console.log and console.info are off unless ?debug=true, before the hash or in it
-// (#/?debug=true): the background video (when tokenmaxr.json turns it on) narrates every play attempt.
+// (#/?debug=true).
 const debug = [window.location.search, window.location.hash.split('?')[1] ?? ''].some(q => new URLSearchParams(q).get('debug') === 'true')
 if (!debug) {
   console.log = () => {}
   console.info = () => {}
 }
 
+reloadOnStaleChunks()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
-      <BackgroundThemeProvider>
-        <Dashboard source={source} owner={owner} handoff={handoff} view={view} config={config} signIn={signIn} repository={repository} />
-      </BackgroundThemeProvider>
+      <Dashboard source={source} owner={owner} handoff={handoff} view={view} signIn={signIn} repository={repository} />
     </HashRouter>
   </StrictMode>,
 )

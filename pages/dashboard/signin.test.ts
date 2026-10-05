@@ -71,10 +71,11 @@ test('the repository from the Pages address or tokenmaxr.json', () => {
   assert.equal(pagesRepository('github.io', '/x/'), null)
   assert.equal(parseRepository('octo/usage'), 'octo/usage')
   for (const bad of ['octo', 'octo/', '/usage', 'octo/usage/x', 'oc to/usage', 'octo/../x', 42, null]) assert.equal(parseRepository(bad), null, String(bad))
-  assert.deepEqual(parseDashboardConfig({ tokenmaxr: 1, title: 'x' }), { background: false, repository: null })
-  assert.deepEqual(parseDashboardConfig({ background: true, repository: 'octo/usage' }), { background: true, repository: 'octo/usage' })
-  assert.deepEqual(parseDashboardConfig({ background: 'yes', repository: 'nope' }), { background: false, repository: null })
-  assert.deepEqual(parseDashboardConfig(null), { background: false, repository: null })
+  assert.deepEqual(parseDashboardConfig({ tokenmaxr: 1, title: 'x' }), { repository: null })
+  // "background" (d0m1.com's animated background, retired) is ignored.
+  assert.deepEqual(parseDashboardConfig({ background: true, repository: 'octo/usage' }), { repository: 'octo/usage' })
+  assert.deepEqual(parseDashboardConfig({ background: 'yes', repository: 'nope' }), { repository: null })
+  assert.deepEqual(parseDashboardConfig(null), { repository: null })
 })
 
 test('the device code through the relay: a simple request (no preflight), no credentials, GitHub\'s page only', async () => {

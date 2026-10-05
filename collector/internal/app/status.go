@@ -281,6 +281,9 @@ func (a *App) githubRows(p *termfmt.Printer, cfg store.Config, sec store.Secrets
 		if st.GitHub.PagesURL != "" {
 			more = append(more, p.Accent(st.GitHub.PagesURL))
 		}
+		if from := renamedFrom(st, now); from != "" {
+			more = append(more, p.Dim("renamed on GitHub from "+from+", followed ")+since(p, st.GitHub.RenamedAt, now)+p.Dim(" (its old dashboard address no longer works)"))
+		}
 	}
 	for _, o := range []struct {
 		name, what string
