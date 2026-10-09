@@ -1,4 +1,5 @@
 import type { NavigationType } from 'react-router-dom'
+import { isCvRoutePath } from '../data/unlistedRoutes'
 
 export type EnterDir = 'forward' | 'back' | 'none' | 'zoom-in' | 'zoom-out'
 
@@ -13,14 +14,6 @@ export type CardOrigin = {
 const MENU_PATHS = new Set([
   '/',
   '/projects',
-  '/cv',
-  '/cvfull',
-  '/cvsg',
-  '/cvuk',
-  '/cto',
-  '/full',
-  '/sg',
-  '/uk',
   '/btc',
   '/tokens',
   '/agents',
@@ -44,7 +37,9 @@ const pathHash = (path: string) => {
   return hash
 }
 
-const isMenuPath = (path: string) => MENU_PATHS.has(path) || COLLECTION_PATH_HASHES.has(pathHash(path.toLowerCase()))
+// CV routes slide like menu pages too; they resolve per path (unlistedRoutes.ts).
+const isMenuPath = (path: string) =>
+  MENU_PATHS.has(path) || COLLECTION_PATH_HASHES.has(pathHash(path.toLowerCase())) || isCvRoutePath(path)
 
 export const ZOOM_ORIGIN_KEY = 'd0m1-zoom-origin'
 

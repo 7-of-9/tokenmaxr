@@ -181,3 +181,24 @@ func TestFingerprintIgnoresObservedAt(t *testing.T) {
 		t.Fatal("a moved meter must be sent")
 	}
 }
+
+// A Team or Enterprise seat's tier code names no plan; the organisation's
+// type does (owner report 2026-10-09: "Plan unavailable" on a Team account).
+func TestClaudePlanFromOrgType(t *testing.T) {
+	for _, c := range []struct{ tier, orgType, seat, want string }{
+		{"default_claude_max_20x", "claude_max", "", "Max (20x)"},
+		{"default_raven", "claude_team", "team_premium", "Team (Premium)"},
+		{"default_raven", "claude_team", "standard", "Team (Standard)"},
+		{"default_raven", "claude_team", "", "Team"},
+		{"default_raven", "claude_enterprise", "", "Enterprise"},
+		{"default_raven", "", "", ""},
+	} {
+		got := claudePlan(c.tier)
+		if got == "" {
+			got = claudeOrgPlan(c.orgType, c.seat)
+		}
+		if got != c.want {
+			t.Errorf("%s/%s/%s: %q, want %q", c.tier, c.orgType, c.seat, got, c.want)
+		}
+	}
+}

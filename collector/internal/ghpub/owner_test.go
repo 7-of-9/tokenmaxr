@@ -195,6 +195,11 @@ func ownerFixtures() []model.LimitSnapshot {
 		}),
 		with("c2", func(s *model.LimitSnapshot) { s.Label = "me@exa\u00a0mple.com" }),
 		with("c3", func(s *model.LimitSnapshot) { s.Window = "plan"; s.AcctQ = "session" }),
+		with("c4", func(s *model.LimitSnapshot) { s.Org, s.OrgKind = "a_00112233445566ff", "team" }),
+		with("c5", func(s *model.LimitSnapshot) { s.Org, s.OrgKind = "a_00112233445566ff", "personal" }),
+		with("c6", func(s *model.LimitSnapshot) { s.Org = "org-uuid" }),
+		with("c7", func(s *model.LimitSnapshot) { s.Org, s.OrgKind = "a_00112233445566ff", "claude_team" }),
+		with("c8", func(s *model.LimitSnapshot) { s.OrgKind = "enterprise" }),
 	}
 }
 

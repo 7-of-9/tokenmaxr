@@ -19,6 +19,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/configfix"
 	"github.com/7-of-9/tokenmaxr/collector/internal/evidence"
 	"github.com/7-of-9/tokenmaxr/collector/internal/homes"
+	"github.com/7-of-9/tokenmaxr/collector/internal/limits"
 	"github.com/7-of-9/tokenmaxr/collector/internal/logx"
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
 	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
@@ -202,8 +203,11 @@ func (a *App) envFor(k []byte, cfg *store.Config, st *store.State, h homes.Home,
 		Attribute: func(provider string, ts time.Time, sessionID string, hint sources.Hint) (string, string) {
 			return accounts.Resolve(st.Accounts, ix, key, provider, ts, sessionID, hint)
 		},
-		HashID:      hashFn(k),
-		Label:       func(acct string) string { return cfg.AccountLabels[acct] },
+		HashID: hashFn(k),
+		Label:  func(acct string) string { return cfg.AccountLabels[acct] },
+		OrgSince: func(provider, org string) time.Time {
+			return st.NoteOrg(key+"|"+provider, org, a.Now())
+		},
 		TZOffsetMin: TZOffsetMin,
 		Prompts:     cfg.Prompts,
 	}
@@ -283,6 +287,11 @@ func (a *App) probeAccounts(k []byte, cfg *store.Config, st *store.State, now ti
 		for _, o := range accounts.Probe(h.Path, h.CodexHome(a.CodexHome)) {
 			acct := accounts.Hash(k, o)
 			st.Accounts = accounts.Observe(st.Accounts, h.Key(), o.Provider, acct, now)
+			if o.Provider == model.ProviderAnthropic {
+				// Before the quota refresh: the reading Claude Code is asked
+				// for next is then after any organisation switch noted here.
+				st.NoteOrg(h.Key()+"|"+o.Provider, limits.ClaudeOrg(h.Path, hashFn(k)), now)
+			}
 			if _, ok := cfg.AccountLabels[acct]; !ok && o.Label != "" {
 				cfg.AccountLabels[acct] = o.Label
 				changed = true

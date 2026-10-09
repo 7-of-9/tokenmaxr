@@ -1,6 +1,6 @@
 // Assertions for limits.ts. Run: node --experimental-strip-types src/components/agents/limits.test.ts
 import assert from 'node:assert/strict'
-import { accountTrackingKey, buildAccounts, countdown, countdownParts, initializeTracking, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, weeklyMeter, type LimitRow } from './limits.ts'
+import { accountName, accountTrackingKey, buildAccounts, countdown, countdownParts, initializeTracking, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, trackedChoice, weeklyMeter, type LimitRow } from './limits.ts'
 
 const NOW = Date.parse('2026-10-01T12:00:00Z')
 const iso = (ms: number) => new Date(NOW + ms).toISOString()
@@ -212,6 +212,153 @@ assert.equal(countdown(50 * H), '2d 2h')
     long: { name: 'x'.repeat(81), reportedPlan: '' },
     control: { name: 'Free\n', reportedPlan: '' },
   })), { valid: { name: 'Free', reportedPlan: '' } })
+}
+
+// One email (one login) that is both a Team seat and a personal Max plan is two accounts, each with its own
+// plan, organisation and meters (owner report 2026-10-09: "they are separate distinct accounts").
+const team: LimitRow = { ...base, id: 't-week', provider: 'anthropic', source: 'claude-code', acct: 'a_1111111111111111', window: 'week',
+  label: 'dm@example.com', name: 'Example Team', plan: 'Team', org: 'a_00000000000000e1', orgKind: 'team', usedPercent: 97, resetsAt: iso(30 * H) }
+const personal: LimitRow = { ...team, id: 'p-week', name: 'Dm Example', plan: 'Max (20x)', org: 'a_00000000000000e2', orgKind: 'personal', usedPercent: 23, resetsAt: iso(100 * H) }
+{
+  const teamSession: LimitRow = { ...team, id: 't-session', window: 'session', usedPercent: 100, status: 'full', resetsAt: iso(2 * H) }
+  const accounts = buildAccounts([team, teamSession, personal], NOW)
+  assert.equal(accounts.length, 2)
+  const [max, seat] = accounts
+  assert.deepEqual([max.label, seat.label], ['dm@example.com · Max (20x)', 'dm@example.com · Team'])
+  assert.deepEqual([max.week?.used, seat.week?.used], [23, 97])
+  assert.deepEqual([max.state, seat.state], ['ready', 'blocked'])
+  assert.deepEqual([max.org, seat.org, max.orgKind, seat.orgKind], ['Dm Example', 'Example Team', 'personal', 'team'])
+  assert.notEqual(max.key, seat.key)
+  assert.notEqual(accountTrackingKey(max), accountTrackingKey(seat))
+  // Without a plan the organisation tells them apart.
+  const [unnamed] = buildAccounts([{ ...team, plan: undefined }], NOW)
+  assert.equal(unnamed.label, 'dm@example.com · Example Team')
+  // Two Team organisations of one email are two accounts; a personal plan's upgrade is the same account.
+  assert.equal(buildAccounts([team, { ...team, id: 't2', name: 'Other Team', org: 'a_00000000000000e3' }], NOW).length, 2)
+  const upgraded = buildAccounts([personal, { ...personal, id: 'p2', plan: 'Max (5x)', name: 'Renamed', observedAt: iso(-2 * 60_000) }], NOW)
+  assert.equal(upgraded.length, 1)
+  assert.equal(accountTrackingKey(upgraded[0]), accountTrackingKey(max))
+}
+
+// Rows from an older collector (no organisation) while machines run mixed versions, for the same login (acct).
+{
+  const labels = (rows: LimitRow[]) => buildAccounts(rows, NOW).map((a) => a.label)
+  const old = (over: Partial<LimitRow>): LimitRow => ({ ...base, id: 'old-week', provider: 'anthropic', source: 'claude-code', acct: team.acct,
+    window: 'week', label: 'dm@example.com', usedPercent: 40, resetsAt: iso(30 * H), ...over })
+  // An old collector on the Team seat while a new one is on the personal plan: the Team keeps its own line.
+  const oldTeam = [old({ name: 'Example Team', plan: 'Team', observedAt: iso(-2 * H) }), old({ id: 'old-session', window: 'session', name: 'Example Team', plan: 'Team', usedPercent: 10, resetsAt: iso(H) })]
+  const mixed = buildAccounts([...oldTeam, personal], NOW)
+  assert.deepEqual(mixed.map((a) => a.label), ['dm@example.com · Max (20x)', 'dm@example.com · Team'])
+  assert.deepEqual(mixed.map((a) => [a.week?.used, a.session?.used]), [[23, undefined], [40, 10]])
+  // An old collector on another machine, same Team seat, with newer readings: they join the Team account, one line.
+  const newerElsewhere = old({ name: 'Example Team', plan: 'Team', usedPercent: 99, observedAt: iso(-1000) })
+  const joined = buildAccounts([newerElsewhere, team, personal], NOW)
+  assert.deepEqual(joined.map((a) => a.label), ['dm@example.com · Max (20x)', 'dm@example.com · Team'])
+  assert.equal(joined[1].week?.used, 99)
+  assert.equal(joined[1].orgKind, 'team')
+  // ... and an older reading of a window the Team account has newer is left out.
+  assert.equal(buildAccounts([{ ...newerElsewhere, observedAt: iso(-H) }, team], NOW)[0].week?.used, 97)
+  // Upgrade: the personal plan's valid week, read by the old collector before the switch to the Team seat, stays.
+  const before = old({ name: 'Dm Example', plan: 'Max (20x)', usedPercent: 55, observedAt: iso(-3 * H), resetsAt: iso(90 * H) })
+  const upgraded = buildAccounts([before, team], NOW)
+  assert.deepEqual(upgraded.map((a) => [a.label, a.week?.used]), [['dm@example.com · Max (20x)', 55], ['dm@example.com · Team', 97]])
+  // When the personal plan reports itself, the old reading joins it, and only while it is the newer one.
+  assert.deepEqual(labels([before, team, personal]), ['dm@example.com · Max (20x)', 'dm@example.com · Team'])
+  // A Team row must name the same organisation to join it.
+  assert.deepEqual(labels([old({ name: 'Other Team', plan: 'Team' }), team]), ['dm@example.com · Team', 'dm@example.com · Team · organisation unknown'])
+  // An old row naming no plan says its organisation is unknown; an old Team row with no plan joins by name.
+  assert.deepEqual(labels([old({}), team]), ['dm@example.com · organisation unknown', 'dm@example.com · Team'])
+  assert.deepEqual(labels([old({ name: 'Example Team', observedAt: iso(-1000) }), team]), ['dm@example.com · Team'])
+  // An old bare plan row adds nothing beside the login's organisation-aware accounts.
+  assert.deepEqual(labels([old({ window: 'plan', usedPercent: undefined, resetsAt: null }), team]), ['dm@example.com · Team'])
+  // An old extra-usage row (no reset) whose plan matches none of them is a leftover whose id is never written again.
+  assert.deepEqual(labels([old({ id: 'old-extra', window: 'extra', plan: 'Pro', usedPercent: 12, resetsAt: null }), team]), ['dm@example.com · Team'])
+  // Another login's old rows are untouched, and old rows of one email still merge across machines.
+  const legacy = old({ id: 'legacy', observedAt: iso(-2 * H) })
+  const elsewhere = old({ id: 'elsewhere', acct: 'a_2222222222222222', window: 'session', resetsAt: iso(H) })
+  const merged = buildAccounts([legacy, elsewhere], NOW)
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].orgKind, '')
+  assert.equal(merged[0].label, 'dm@example.com')
+}
+
+// A Team organisation's identity is its hash: a rename keeps the account, its line and its saved choice.
+{
+  const renamed: LimitRow = { ...team, id: 't-renamed', name: 'Renamed Team', observedAt: iso(-1000) }
+  const [one] = buildAccounts([team], NOW)
+  const both = buildAccounts([team, renamed], NOW)
+  assert.equal(both.length, 1)
+  assert.equal(accountTrackingKey(both[0]), accountTrackingKey(one))
+  assert.ok(accountTrackingKey(one).includes(team.org as string))
+  // A choice saved under the organisation's name (before the hash was used) still applies.
+  const byName = JSON.stringify(['anthropic', 'email', 'dm@example.com', 'team', 'example team'])
+  assert.equal(trackedChoice({ [byName]: false }, one), false)
+  assert.equal(trackedChoice({ [byName]: false, [JSON.stringify(['anthropic', 'email', 'dm@example.com'])]: true }, one), false)
+  // An account with no email keeps the choice saved under its identity before organisations were reported.
+  const noEmail: LimitRow = { ...personal, label: undefined }
+  const [anon] = buildAccounts([noEmail], NOW)
+  const before = JSON.stringify(['anthropic', 'account', `anthropic|${personal.acct}`])
+  assert.notEqual(accountTrackingKey(anon), before)
+  assert.equal(trackedChoice({ [before]: false }, anon), false)
+  assert.equal(initializeTracking([anon], { [before]: false })[accountTrackingKey(anon)], false)
+}
+
+// Screen readers can tell the accounts of one email apart.
+{
+  const accounts = buildAccounts([team, personal, { ...team, id: 't2', name: 'Other Team', org: 'a_00000000000000e3' }], NOW)
+  const names = accounts.map(accountName)
+  assert.equal(new Set(names).size, 3)
+  assert.ok(names.includes('dm@example.com · Team · Example Team'))
+  assert.ok(names.includes('dm@example.com · Max (20x)'))
+}
+
+// A full meter that never said when it resets stops blocking once a whole window has passed since the reading.
+{
+  const row: LimitRow = { ...base, id: 'full', provider: 'anthropic', source: 'claude-code', window: 'session', usedPercent: 100, status: 'full', resetsAt: null, observedAt: iso(-4 * H) }
+  assert.equal(buildAccounts([row], NOW)[0].state, 'blocked')
+  const [later] = buildAccounts([row], NOW + 2 * H)
+  assert.equal(later.state, 'unknown')
+  assert.equal(later.session?.lapsed, true)
+  const week: LimitRow = { ...row, window: 'week', observedAt: iso(-6 * 24 * H) }
+  assert.equal(buildAccounts([week], NOW)[0].state, 'blocked')
+  assert.equal(buildAccounts([week], NOW + 25 * H)[0].state, 'unknown')
+  // A window of unknown length keeps its reading, and so does a source whose windows of that name vary in length.
+  assert.equal(buildAccounts([{ ...row, window: '90m', observedAt: iso(-30 * 24 * H) }], NOW)[0].scoped[0].full, true)
+  assert.equal(buildAccounts([{ ...week, provider: 'openai', source: 'codex' }], NOW + 25 * H)[0].state, 'blocked')
+}
+
+// Saved choices made per email carry over to each organisation's account, and a new choice is kept per account.
+{
+  const legacyKey = JSON.stringify(['anthropic', 'email', 'dm@example.com'])
+  const accounts = buildAccounts([team, personal], NOW)
+  const [max, seat] = accounts
+  assert.equal(trackedChoice({}, max), true)
+  assert.equal(trackedChoice({ [legacyKey]: false }, max), false)
+  assert.equal(trackedChoice({ [legacyKey]: false, [accountTrackingKey(max)]: true }, max), true)
+  const migrated = initializeTracking(accounts, { [legacyKey]: false })
+  assert.equal(migrated[accountTrackingKey(max)], false)
+  assert.equal(migrated[accountTrackingKey(seat)], false)
+  assert.equal(migrated[legacyKey], false)
+  const chosen = { ...migrated, [accountTrackingKey(seat)]: true }
+  assert.equal(initializeTracking(accounts, chosen), chosen)
+  assert.equal(trackedChoice(chosen, seat), true)
+  assert.equal(trackedChoice(chosen, max), false)
+  // A legacy account keeps its key.
+  const [legacy] = buildAccounts([{ ...team, orgKind: undefined, org: undefined }], NOW)
+  assert.equal(accountTrackingKey(legacy), legacyKey)
+  // Plan labels too: a label saved per email applies until one is saved per account.
+  const planless: LimitRow[] = [{ ...team, plan: undefined }, { ...personal, plan: undefined }]
+  const relabelled = buildAccounts(planless, NOW, { [legacyKey]: { name: 'Free', reportedPlan: '' } })
+  assert.deepEqual(relabelled.map((a) => a.plan), ['Free', 'Free'])
+  const [planlessMax] = buildAccounts([planless[1]], NOW)
+  const specific = { [legacyKey]: { name: 'Free', reportedPlan: '' }, [accountTrackingKey(planlessMax)]: { name: 'Max 20x', reportedPlan: '' } }
+  assert.deepEqual(buildAccounts(planless, NOW, specific).map((a) => [a.orgKind, a.plan]).sort(), [['personal', 'Max 20x'], ['team', 'Free']])
+}
+
+// The mock previews one email with a Team seat and a personal plan, its older collector's row hidden.
+{
+  const both = buildAccounts(mockLimits(NOW), NOW).filter((a) => a.email === 'both@example.dev')
+  assert.deepEqual(both.map((a) => a.label), ['both@example.dev · Max (20x)', 'both@example.dev · Team'])
 }
 
 console.log('limits.test.ts: ok')

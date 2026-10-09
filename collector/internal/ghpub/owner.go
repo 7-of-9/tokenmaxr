@@ -74,6 +74,10 @@ type OwnerRow struct {
 	ObservedAt  string   `json:"observedAt"`
 	Status      string   `json:"status"`
 	UsedPercent *float64 `json:"usedPercent,omitempty"`
+	// Org is the hashed organisation and OrgKind its kind ("team",
+	// "enterprise", "personal"); absent when unknown.
+	Org     string `json:"org,omitempty"`
+	OrgKind string `json:"orgKind,omitempty"`
 }
 
 // sourceProvider, acctQualities and the patterns below are validate.js's.
@@ -83,6 +87,7 @@ var (
 		"gemini-cli": "google", "web-claude": "anthropic", "web-chatgpt": "openai", "web-grok": "xai",
 	}
 	acctQualities = []string{"recorded", "session", "timeline", "bounded", "lineage", "inferred", "unknown"}
+	orgKinds      = []string{"team", "enterprise", "personal"}
 	idRE          = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	acctRE        = regexp.MustCompile(`^a_[0-9a-f]{16}$`)
 	windowRE      = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
@@ -172,6 +177,11 @@ func ownerRow(s model.LimitSnapshot, now time.Time) (OwnerRow, bool) {
 		return r, false
 	}
 	r.Label = s.Label
+	if !field(s.Org, 32) || s.Org != "" && !acctRE.MatchString(s.Org) ||
+		!field(s.OrgKind, 16) || s.OrgKind != "" && !slices.Contains(orgKinds, s.OrgKind) {
+		return r, false
+	}
+	r.Org, r.OrgKind = s.Org, s.OrgKind
 	if !field(s.Status, 32) || s.Status != "" && !windowRE.MatchString(s.Status) {
 		return r, false
 	}

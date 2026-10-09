@@ -273,6 +273,9 @@ export const validateHeartbeat = wrap((x) => {
 })
 
 const WINDOW_RE = /^[a-z0-9_-]{1,32}$/
+// The kind of organisation a Claude login is in. It separates a Team seat
+// from the same person's personal organisation (SPEC "Limit snapshots").
+export const ORG_KINDS = ['team', 'enterprise', 'personal']
 const LABEL_RE = /^[^@\r\n]{1,80}$/
 
 // A plan-window snapshot. Newest observedAt wins on the server; percent is
@@ -291,6 +294,12 @@ export const validateLimit = wrap((x, now) => {
   let acctQ = str(x, 'acctQ', 16) || 'unknown'
   if (!ACCT_Q.includes(acctQ)) fail('acctQ unknown')
   if (!acct) acctQ = 'unknown'
+  // org is the hashed organisation id, orgKind what kind it is; both
+  // optional (older collectors and other providers send neither).
+  const org = str(x, 'org', 32)
+  if (org && !ACCT_RE.test(org)) fail('org malformed')
+  const orgKind = str(x, 'orgKind', 16)
+  if (orgKind && !ORG_KINDS.includes(orgKind)) fail('orgKind unknown')
   const observedMs = Date.parse(x.observedAt)
   if (!Number.isFinite(observedMs)) fail('observedAt unparseable')
   if (observedMs < MIN_TS || observedMs > now.getTime() + MAX_FUTURE_MS) fail('observedAt out of range')
@@ -336,6 +345,8 @@ export const validateLimit = wrap((x, now) => {
   }
   if (usedPercent != null) out.usedPercent = usedPercent
   if (!out.label) delete out.label
+  if (org) out.org = org
+  if (orgKind) out.orgKind = orgKind
   return out
 })
 

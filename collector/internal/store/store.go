@@ -407,8 +407,15 @@ type State struct {
 	Checks   map[string]string                `json:"checks"`
 	// Limits is snapshot id -> fingerprint of the last limit snapshot
 	// queued, so an unchanged meter (or plan row) is not re-sent every tick.
-	Limits  map[string]string `json:"limits,omitempty"`
-	Backoff Backoff           `json:"backoff"`
+	Limits map[string]string `json:"limits,omitempty"`
+	// Orgs is the organisation each home's login was last seen in, by
+	// home key + "|" + provider (NoteOrg).
+	Orgs map[string]OrgSeen `json:"orgs,omitempty"`
+	// OrgMeters is the last limit snapshots of each organisation read here,
+	// by snapshot id (limits.RetainOrgMeters), so owner.json keeps an
+	// organisation that is no longer signed in.
+	OrgMeters map[string]model.LimitSnapshot `json:"orgMeters,omitempty"`
+	Backoff   Backoff                        `json:"backoff"`
 	// Homes are the scan roots of the last tick; WSLSkipped the WSL distros
 	// that were installed but not running (never started by the collector).
 	Homes      []HomeState `json:"homes,omitempty"`
@@ -458,6 +465,36 @@ type AccountHistoryState struct {
 	LastError   string    `json:"lastError,omitempty"`
 	// Queued is snapshot id -> last queued total (not observedAt).
 	Queued map[string]int64 `json:"queued,omitempty"`
+}
+
+// OrgSeen is the organisation (a hash) a home's login is in, and when the
+// home switched to it (zero: the first one seen there).
+type OrgSeen struct {
+	Org   string    `json:"org"`
+	Since time.Time `json:"since,omitzero"`
+}
+
+// NoteOrg records that key's login is in org at now and returns when key
+// switched to it. The first organisation seen is not a switch (zero): only a
+// change seen while watching is, so a usage meter read before it can be told
+// apart from one read after.
+func (st *State) NoteOrg(key, org string, now time.Time) time.Time {
+	if org == "" {
+		return time.Time{}
+	}
+	prev, ok := st.Orgs[key]
+	if ok && prev.Org == org {
+		return prev.Since
+	}
+	if st.Orgs == nil {
+		st.Orgs = map[string]OrgSeen{}
+	}
+	seen := OrgSeen{Org: org}
+	if ok {
+		seen.Since = now.UTC()
+	}
+	st.Orgs[key] = seen
+	return seen.Since
 }
 
 // RecentWindow is the local numbers, updated in place.

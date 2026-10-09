@@ -27,6 +27,16 @@ const noD0m1Footer = (): Plugin => ({
   load: id => (id === NO_FOOTER ? 'export default function Footer() { return null }' : null),
 })
 
+// The shared motion code knows d0m1's CV routes by sealed per-path records; a usage dashboard has no CV
+// routes, so it ships an empty set rather than d0m1's records.
+const NO_CV_ROUTES = '\0tokenmaxr:no-cv-routes'
+const noD0m1CvRoutes = (): Plugin => ({
+  name: 'tokenmaxr:no-d0m1-cv-routes',
+  enforce: 'pre',
+  resolveId: source => (/(^|\/)unlistedRoutes\.generated\.json$/.test(source) ? NO_CV_ROUTES : null),
+  load: id => (id === NO_CV_ROUTES ? 'export default { records: {} }' : null),
+})
+
 export const DEFAULT_RELAY = 'https://d0m1.com/api/github/device'
 
 /** The relay base: https only (or a local harness), no trailing slash. */
@@ -42,11 +52,13 @@ export default defineConfig({
   root: here('./pages/dashboard'),
   base: './',
   publicDir: false,
-  plugins: [noD0m1Footer(), react()],
+  plugins: [noD0m1Footer(), noD0m1CvRoutes(), react()],
   define: {
     // source.ts's d0m1 default; the Pages dashboard always provides its own source.
     __AGENTS_API_ORIGIN__: JSON.stringify(''),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    // No d0m1 CV links on anyone's usage dashboard.
+    __CV_DISCOVERABLE__: JSON.stringify(false),
     // The GitHub sign-in relay (api/src/lib/github-device.js): GitHub's device-flow endpoints send no CORS headers.
     // TOKENMAXR_RELAY_URL=<base> npm run build:pages points a build at another deployment of it.
     __TOKENMAXR_RELAY__: JSON.stringify(relayUrl()),

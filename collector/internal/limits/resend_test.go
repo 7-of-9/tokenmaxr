@@ -50,8 +50,17 @@ func TestSyntheticPlanRowsIgnoreLocalTime(t *testing.T) {
 	t0 := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
 	plan := model.LimitSnapshot{ID: "id", Provider: model.ProviderAnthropic, Window: "plan", Label: "a@example.com", ObservedAt: t0}
 	later := plan
-	later.ObservedAt = t0.Add(24 * time.Hour)
+	later.ObservedAt = t0.Add(23 * time.Hour)
 	if ShouldResend(SentMark(plan), SentMark(later)) {
-		t.Fatal("a plan row stamped with local time must not be re-queued just because time passed")
+		t.Fatal("a plan row stamped with local time must not be re-queued within the day")
+	}
+	// Once a day, so the server's reading of a signed-in account stays fresh.
+	later.ObservedAt = t0.Add(24 * time.Hour)
+	if !ShouldResend(SentMark(plan), SentMark(later)) {
+		t.Fatal("an unchanged plan row must be re-queued the next day")
+	}
+	// The bare fingerprint an older collector stored is re-queued once.
+	if !ShouldResend(Fingerprint(plan), SentMark(plan)) {
+		t.Fatal("a plan row marked by an older collector must be re-queued once")
 	}
 }

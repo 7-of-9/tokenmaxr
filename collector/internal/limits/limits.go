@@ -33,17 +33,21 @@ func Collect(env *sources.Env) []model.LimitSnapshot {
 		return nil
 	}
 	var out []model.LimitSnapshot
-	out = append(out, claudeLimits(env)...)
+	claude, login := claudeLimits(env)
+	out = append(out, claude...)
 	out = append(out, codexLimits(env)...)
 	out = append(out, grokLimits(env)...)
-	return applyAccounts(env, out)
+	return applyAccounts(env, out, login)
 }
 
 // applyAccounts labels a meter only when its account matches the current login,
 // and adds a plan row for a signed-in account that wrote no meter, so every
-// account is visible. The email stays off public usage; only the owner
-// limits read returns it.
-func applyAccounts(env *sources.Env, rows []model.LimitSnapshot) []model.LimitSnapshot {
+// account is visible. A Claude login whose organisation is known always gets
+// one: it never expires on the server (meters do, 14 days after their reset),
+// so an organisation that is not signed in at the moment stays listed. The email stays off public usage; only the owner
+// limits read returns it. claude is the current Claude login (nil if none):
+// its plan row carries the plan and organisation, like its meters.
+func applyAccounts(env *sources.Env, rows []model.LimitSnapshot, claude *claudeLogin) []model.LimitSnapshot {
 	obs := accounts.Probe(env.Home, codexDir(env))
 	email := map[string]string{}
 	currentAcct := map[string]string{}
@@ -65,11 +69,15 @@ func applyAccounts(env *sources.Env, rows []model.LimitSnapshot) []model.LimitSn
 	rows = Dedupe(rows)
 	have := map[string]bool{}
 	for _, r := range rows {
-		have[r.Provider+"|"+r.Acct] = true
+		have[r.Provider+"|"+r.Acct+"|"+r.Org] = true
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	for _, o := range obs {
-		if have[o.Provider+"|"+currentAcct[o.Provider]] {
+		var login claudeLogin
+		if o.Provider == model.ProviderAnthropic && claude != nil && claude.acct == currentAcct[o.Provider] {
+			login = *claude
+		}
+		if login.org == "" && have[o.Provider+"|"+currentAcct[o.Provider]+"|"+login.org] {
 			continue
 		}
 		src, ok := sourceFor(o.Provider)
@@ -84,13 +92,17 @@ func applyAccounts(env *sources.Env, rows []model.LimitSnapshot) []model.LimitSn
 			}
 		}
 		rows = append(rows, model.LimitSnapshot{
-			ID:         snapshotID(o.Provider, src, acct, "plan", ""),
+			ID:         orgSnapshotID(o.Provider, src, acct, login.org, "plan", ""),
 			Provider:   o.Provider,
 			Source:     src,
 			Acct:       acct,
 			AcctQ:      q,
+			Plan:       login.plan,
 			Window:     "plan",
+			Name:       login.name,
 			Label:      e,
+			Org:        login.org,
+			OrgKind:    login.orgKind,
 			ObservedAt: now,
 		})
 	}
@@ -167,10 +179,19 @@ const ResendAfter = 5 * time.Minute
 
 // SentMark records what was queued for a snapshot: its fingerprint and, for
 // provider-reported meters, when the provider reported it. Synthetic "plan"
-// rows carry local time, not a provider time, so only their content counts.
+// rows carry local time, not a provider time: their content counts, and the
+// UTC day, so an unchanged plan row is re-queued once a day and the server's
+// reading of a signed-in account never goes stale (and a server that dropped
+// fields it did not know yet gets them again within a day).
 func SentMark(s model.LimitSnapshot) string {
 	fp := Fingerprint(s)
-	if s.Window == "plan" || s.ObservedAt.IsZero() {
+	if s.Window == "plan" {
+		if s.ObservedAt.IsZero() {
+			return fp
+		}
+		return fmt.Sprintf("%s#d%d", fp, s.ObservedAt.Unix()/86400)
+	}
+	if s.ObservedAt.IsZero() {
 		return fp
 	}
 	return fmt.Sprintf("%s@%d", fp, s.ObservedAt.Unix())
@@ -210,6 +231,16 @@ func splitMark(mark string) (fp string, at int64, ok bool) {
 
 func snapshotID(provider, source, acct, window, scope string) string {
 	return model.EventID("limit", provider, source, acct+"|"+window+"|"+scope)
+}
+
+// orgSnapshotID is snapshotID for a meter of organisation org (a hash): one
+// login's Team seat and personal organisation are separate meters. Without
+// an org it is snapshotID, so a meter keeps its id until the org is known.
+func orgSnapshotID(provider, source, acct, org, window, scope string) string {
+	if org == "" {
+		return snapshotID(provider, source, acct, window, scope)
+	}
+	return model.EventID("limit", provider, source, acct+"|"+window+"|"+scope+"|o:"+org)
 }
 
 // sanitize keeps a short label. An email, or anything with one, is dropped.
@@ -261,8 +292,11 @@ func parseRFC(s string) *time.Time {
 type claudeFile struct {
 	OAuth *struct {
 		AccountUUID string `json:"accountUuid"`
+		OrgUUID     string `json:"organizationUuid"`
 		OrgName     string `json:"organizationName"`
 		Tier        string `json:"organizationRateLimitTier"`
+		OrgType     string `json:"organizationType"`
+		SeatTier    string `json:"seatTier"`
 	} `json:"oauthAccount"`
 	Cache *struct {
 		FetchedAtMs int64  `json:"fetchedAtMs"`
@@ -312,6 +346,106 @@ func claudePlan(tier string) string {
 	}
 }
 
+// claudeOrgPlan is the plan an organisation's type names ("claude_team",
+// "claude_enterprise", ...), with a Team or Enterprise seat's tier
+// ("team_premium": Premium); "" when it names none.
+func claudeOrgPlan(orgType, seat string) string {
+	plan := ""
+	switch t := strings.ToLower(orgType); {
+	case strings.Contains(t, "enterprise"):
+		plan = "Enterprise"
+	case strings.Contains(t, "team"):
+		plan = "Team"
+	case strings.Contains(t, "max"):
+		plan = "Max"
+	case strings.Contains(t, "pro"):
+		plan = "Pro"
+	default:
+		return ""
+	}
+	switch s := strings.ToLower(seat); {
+	case strings.Contains(s, "premium"):
+		plan += " (Premium)"
+	case strings.Contains(s, "standard"):
+		plan += " (Standard)"
+	}
+	return plan
+}
+
+// claudeOrgKind is the kind of organisation a type names: "team",
+// "enterprise" or "personal" (claude_max, claude_pro, ...); "" if none is
+// given. It is the kind and not the type so that a personal upgrade from Pro
+// to Max stays the same account.
+func claudeOrgKind(orgType string) string {
+	switch t := strings.ToLower(strings.TrimSpace(orgType)); {
+	case t == "":
+		return ""
+	case strings.Contains(t, "enterprise"):
+		return "enterprise"
+	case strings.Contains(t, "team"):
+		return "team"
+	default:
+		return "personal"
+	}
+}
+
+// ClaudeOrg is the hashed organisation of the Claude login in home ("" if
+// none or no hash). The collector notes it before asking Claude Code for a
+// fresh usage reading, so that reading counts as the new organisation's.
+func ClaudeOrg(home string, hash func(provider, nativeID string) string) string {
+	if hash == nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		return ""
+	}
+	var f claudeFile
+	if json.Unmarshal(b, &f) != nil || f.OAuth == nil || f.OAuth.AccountUUID == "" || f.OAuth.OrgUUID == "" {
+		return ""
+	}
+	return hash(model.ProviderAnthropic, "org|"+f.OAuth.OrgUUID)
+}
+
+// RetainFor is how long past its reset a retained meter is still published
+// (the server's GET /api/limits keeps the same).
+const RetainFor = 14 * 24 * time.Hour
+
+// RetainOrgMeters keeps the last snapshots of each organisation (provider,
+// acct, org) a machine has read, so an organisation that is no longer signed
+// in keeps its last reading where only the current one is published (GitHub
+// Pages' owner.json; the server keeps every row itself). It returns current
+// plus the kept snapshots of organisations current does not cover, with their
+// original ObservedAt, and the snapshots to keep. A meter is dropped 14 days
+// after its reset; a row with no reset (the plan row) is kept.
+func RetainOrgMeters(kept map[string]model.LimitSnapshot, current []model.LimitSnapshot, now time.Time) ([]model.LimitSnapshot, map[string]model.LimitSnapshot) {
+	orgKey := func(s model.LimitSnapshot) string { return s.Provider + "|" + s.Acct + "|" + s.Org }
+	next := map[string]model.LimitSnapshot{}
+	live := map[string]bool{}
+	for _, s := range current {
+		if s.Org == "" {
+			continue
+		}
+		live[orgKey(s)] = true
+		next[s.ID] = s
+	}
+	out := append([]model.LimitSnapshot(nil), current...)
+	for id, s := range kept {
+		if s.Org == "" || live[orgKey(s)] || s.ResetsAt != nil && now.Sub(*s.ResetsAt) > RetainFor {
+			continue
+		}
+		next[id] = s
+		out = append(out, s)
+	}
+	return out, next
+}
+
+// claudeLogin is who ~/.claude.json says is signed in: the account and
+// organisation hashes, the organisation's kind, plan and name.
+type claudeLogin struct {
+	acct, org, orgKind, plan, name string
+}
+
 func claudeWindow(kind string) string {
 	switch kind {
 	case "session", "five_hour":
@@ -328,23 +462,43 @@ func claudeWindow(kind string) string {
 	}
 }
 
-func claudeLimits(env *sources.Env) []model.LimitSnapshot {
+func claudeLimits(env *sources.Env) ([]model.LimitSnapshot, *claudeLogin) {
 	b, err := os.ReadFile(filepath.Join(env.Home, ".claude.json"))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var f claudeFile
-	if json.Unmarshal(b, &f) != nil || f.Cache == nil {
-		return nil
+	if json.Unmarshal(b, &f) != nil {
+		return nil, nil
+	}
+	var login *claudeLogin
+	var switched time.Time
+	if f.OAuth != nil && f.OAuth.AccountUUID != "" {
+		login = &claudeLogin{name: sanitize(f.OAuth.OrgName), plan: claudePlan(f.OAuth.Tier)}
+		if login.plan == "" {
+			// A Team or Enterprise seat reports an internal tier code
+			// (default_raven); the organisation's type names the plan.
+			login.plan = claudeOrgPlan(f.OAuth.OrgType, f.OAuth.SeatTier)
+		}
+		if env.HashID != nil {
+			login.acct = env.HashID(model.ProviderAnthropic, f.OAuth.AccountUUID)
+			if f.OAuth.OrgUUID != "" {
+				login.org = env.HashID(model.ProviderAnthropic, "org|"+f.OAuth.OrgUUID)
+			}
+		}
+		if login.org != "" {
+			login.orgKind = claudeOrgKind(f.OAuth.OrgType)
+			if env.OrgSince != nil {
+				switched = env.OrgSince(model.ProviderAnthropic, login.org)
+			}
+		}
+	}
+	if f.Cache == nil {
+		return nil, login
 	}
 	uuid := f.Cache.AccountUUID
-	name, plan := "", ""
-	if f.OAuth != nil {
-		if uuid == "" {
-			uuid = f.OAuth.AccountUUID
-		}
-		name = sanitize(f.OAuth.OrgName)
-		plan = claudePlan(f.OAuth.Tier)
+	if uuid == "" && f.OAuth != nil {
+		uuid = f.OAuth.AccountUUID
 	}
 	acct, q := "", model.AcctUnknown
 	if env.HashID != nil && uuid != "" {
@@ -353,11 +507,25 @@ func claudeLimits(env *sources.Env) []model.LimitSnapshot {
 			q = model.AcctRecorded
 		}
 	}
+	// The plan and organisation are the login's. They describe the cached
+	// meters only when the cache is the login's account: right after a
+	// switch it can still hold the previous one's.
+	var who claudeLogin
+	if login != nil && f.OAuth.AccountUUID == uuid {
+		who = *login
+	}
 	observed := unixAuto(f.Cache.FetchedAtMs)
 	if observed.IsZero() {
 		if st, err := os.Stat(filepath.Join(env.Home, ".claude.json")); err == nil {
 			observed = st.ModTime().UTC()
 		}
+	}
+	if !switched.IsZero() && observed.Before(switched) {
+		// The login moved to another organisation after this cache was
+		// read (a Team seat and the same person's personal organisation
+		// share an account): it is the other organisation's until Claude
+		// Code reads it again. The plan row stands in until then.
+		return nil, login
 	}
 	u := f.Cache.Utilization
 	var out []model.LimitSnapshot
@@ -366,15 +534,17 @@ func claudeLimits(env *sources.Env) []model.LimitSnapshot {
 			return
 		}
 		s := model.LimitSnapshot{
-			ID:         snapshotID(model.ProviderAnthropic, model.SourceClaudeCode, acct, window, scope),
+			ID:         orgSnapshotID(model.ProviderAnthropic, model.SourceClaudeCode, acct, who.org, window, scope),
 			Provider:   model.ProviderAnthropic,
 			Source:     model.SourceClaudeCode,
 			Acct:       acct,
 			AcctQ:      q,
-			Plan:       plan,
+			Plan:       who.plan,
 			Window:     window,
 			Scope:      scope,
-			Name:       name,
+			Name:       who.name,
+			Org:        who.org,
+			OrgKind:    who.orgKind,
 			Detail:     detail,
 			ResetsAt:   resets,
 			ObservedAt: observed,
@@ -410,7 +580,7 @@ func claudeLimits(env *sources.Env) []model.LimitSnapshot {
 		}
 		add("extra", "", detail, status, u.Extra.Utilization, true, nil)
 	}
-	return out
+	return out, login
 }
 
 // --- Codex: newest rate_limits in each rollout ---
@@ -433,6 +603,9 @@ type codexWin struct {
 	UsedPercent   float64 `json:"used_percent"`
 	WindowMinutes int     `json:"window_minutes"`
 	ResetsAt      int64   `json:"resets_at"`
+	// ResetsIn is what older Codex builds wrote instead of resets_at:
+	// seconds from the reading.
+	ResetsIn *int64 `json:"resets_in_seconds"`
 }
 
 type codexLine struct {
@@ -568,6 +741,9 @@ func codexFile(env *sources.Env, path string) []model.LimitSnapshot {
 			sc += "secondary"
 		}
 		resets := unixAuto(w.ResetsAt)
+		if resets.IsZero() && w.ResetsIn != nil && *w.ResetsIn >= 0 {
+			resets = foundTS.Add(time.Duration(*w.ResetsIn) * time.Second)
+		}
 		var resetsAt *time.Time
 		if !resets.IsZero() {
 			resetsAt = &resets

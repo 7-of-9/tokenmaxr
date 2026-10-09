@@ -194,7 +194,13 @@ type LimitSnapshot struct {
 	Scope    string `json:"scope,omitempty"`
 	Name     string `json:"name,omitempty"`
 	// Label is the account email. Owner-only: GET /api/limits returns it, public usage does not.
-	Label       string     `json:"label,omitempty"`
+	Label string `json:"label,omitempty"`
+	// Org is the hashed organisation the meter belongs to (Claude: one
+	// login can be a Team seat and a personal organisation), and OrgKind
+	// what kind it is: "team", "enterprise" or "personal". Both are empty
+	// when unknown; Org is then not part of the id.
+	Org         string     `json:"org,omitempty"`
+	OrgKind     string     `json:"orgKind,omitempty"`
 	Detail      string     `json:"detail,omitempty"`
 	UsedPercent *float64   `json:"usedPercent,omitempty"`
 	ResetsAt    *time.Time `json:"resetsAt,omitempty"`

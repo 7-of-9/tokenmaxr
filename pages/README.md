@@ -41,8 +41,15 @@ repository named after your account) or your profile's website.
     (`modelPrompts`, a count; never the text).
   - `owner.json`: the owner's plan limits (the rows d0m1.com's owner-only
     `GET /api/limits` returns: account email, organisation, plan, each
-    window's use and reset), **encrypted** for the owner (see *Owner
-    sign-in*). Without the owner key it reveals nothing but its size. It is
+    window's use and reset, and for Claude `org`, the hashed organisation,
+    and `orgKind`, `team`, `enterprise` or `personal`, so that one email's
+    Team seat and personal plan show as two accounts), **encrypted** for the
+    owner (see *Owner sign-in*). A Claude Code login reads one
+    organisation at a time, so the machine also keeps (in its `state.json`)
+    the last rows of each organisation it has read and publishes those of
+    the ones it is not signed into now, with their original reading times,
+    until 14 days past each meter's reset (the plan row stays): switching
+    between a Team seat and a personal plan on one machine shows both. Without the owner key it reveals nothing but its size. It is
     rewritten (with a fresh nonce) only when what it says changes. Collectors
     from 0.4.7 always publish it (there is no option to turn the meters off:
     they are encrypted).

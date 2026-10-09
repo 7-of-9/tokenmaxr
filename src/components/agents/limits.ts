@@ -24,6 +24,10 @@ export interface LimitRow {
   observedAt: string
   /** ok, full or disabled. Older collectors also wrote "paused" for any limit Claude did not lead with: ignored. */
   status?: string
+  /** Hashed organisation (Claude). Absent from older collectors and other providers. */
+  org?: string
+  /** team, enterprise or personal: one Claude login can be a Team seat and a personal organisation, two accounts. */
+  orgKind?: string
 }
 
 /** A source refused the owner's limits: 401 not signed in (or locked), 403 not the owner (or the wrong key). */
@@ -71,6 +75,14 @@ export interface Account {
   email: string
   plan: string
   org: string
+  /** team, enterprise or personal; '' for rows from before the collector reported organisations. */
+  orgKind: string
+  /** The hashed organisation ('' when unknown): a Team or Enterprise organisation's identity, stable across renames. */
+  orgId: string
+  /** Provider and email (else acct or source): the account's identity before organisations were reported. */
+  identity: string
+  /** "email · plan", or "email · organisation" without a plan: what tells two accounts of one email apart. */
+  label: string
   /** The unscoped 5-hour and weekly windows. */
   session?: Meter
   week?: Meter
@@ -91,11 +103,22 @@ function time(iso?: string | null): number | null {
   return Number.isFinite(ms) ? ms : null
 }
 
+/**
+ * How long a window lasts, by source and window, for a reading that never said when it resets: only where the
+ * length is known (Claude Code's 5-hour session and 7-day week). Codex maps windows of other lengths to the same
+ * names, so its readings are left alone.
+ */
+const WINDOW_MS: Record<string, number> = { 'claude-code|session': 5 * 3_600_000, 'claude-code|week': 7 * 86_400_000 }
+
 function toMeter(row: LimitRow, now: number): Meter {
   const used = typeof row.usedPercent === 'number' && Number.isFinite(row.usedPercent) && row.usedPercent >= 0 && row.usedPercent <= 100 ? row.usedPercent : null
   const resetsAt = time(row.resetsAt)
   const observedAt = time(row.observedAt) ?? 0
-  const lapsed = resetsAt !== null && resetsAt <= now
+  // Without a reset time, a window has certainly reset once a whole window has passed since the reading:
+  // otherwise a full meter would block ("Temporarily limited") for ever.
+  const windowKey = `${row.source}|${row.window}`
+  const length = Object.hasOwn(WINDOW_MS, windowKey) ? WINDOW_MS[windowKey] : undefined
+  const lapsed = resetsAt !== null ? resetsAt <= now : length !== undefined && observedAt > 0 && observedAt + length <= now
   const hit = row.status === 'full' || (used !== null && used >= 100)
   return {
     key: row.id,
@@ -126,10 +149,62 @@ export type AccountTracking = Record<string, boolean>
 /** Owner-supplied, browser-local clarifications, bound to the source label they clarify. */
 export type AccountPlanOverrides = Record<string, { name: string; reportedPlan: string }>
 
-/** No machine, plan, row ID or meter timestamp is part of an account's tracking identity. */
+/** A Team or Enterprise organisation is named in an account's identity; a personal one is the person's own. */
+function namedKind(kind: string): boolean {
+  return kind === 'team' || kind === 'enterprise'
+}
+
+/** A Team or Enterprise organisation's identity in keys: its hash, else (older rows) its name. */
+function orgIdentity(account: Pick<Account, 'orgId' | 'org'>): string {
+  return account.orgId || account.org.trim().toLowerCase()
+}
+
+/**
+ * No machine, plan, row ID or meter timestamp is part of an account's tracking identity. The organisation's kind
+ * (and a Team or Enterprise organisation's hash) is: one email can be a Team seat and a personal plan.
+ */
 export function accountTrackingKey(account: Account): string {
   const email = account.email.trim().toLowerCase()
-  return JSON.stringify([account.provider, email ? 'email' : 'account', email || account.key])
+  const base = [account.provider, email ? 'email' : 'account', email || account.key]
+  if (!email || !account.orgKind) return JSON.stringify(base)
+  const org = namedKind(account.orgKind) ? orgIdentity(account) : ''
+  return JSON.stringify(org ? [...base, account.orgKind, org] : [...base, account.orgKind])
+}
+
+/**
+ * Keys a choice may have been saved under before, newest first: a Team or Enterprise organisation by name (before
+ * its hash was used), then the email alone (before organisations were reported), or for an account with no email
+ * its pre-organisation identity.
+ */
+function earlierTrackingKeys(account: Account): string[] {
+  if (!account.orgKind) return []
+  const email = account.email.trim().toLowerCase()
+  if (!email) return [JSON.stringify([account.provider, 'account', account.identity])]
+  const keys: string[] = []
+  const name = account.org.trim().toLowerCase()
+  if (namedKind(account.orgKind) && name && account.orgId) keys.push(JSON.stringify([account.provider, 'email', email, account.orgKind, name]))
+  keys.push(JSON.stringify([account.provider, 'email', email]))
+  return keys
+}
+
+/** A saved choice: under today's key, else under an earlier one (earlierTrackingKeys). */
+function saved<T>(store: Record<string, T>, account: Account): T | undefined {
+  for (const key of [accountTrackingKey(account), ...earlierTrackingKeys(account)]) {
+    if (Object.hasOwn(store, key)) return store[key]
+  }
+  return undefined
+}
+
+/** What a screen reader names an account by: its label, and a Team or Enterprise organisation's name. */
+export function accountName(account: Account): string {
+  const org = namedKind(account.orgKind) && account.org && !account.label.includes(account.org) ? account.org : ''
+  return [account.label || account.tool, org].filter(Boolean).join(' · ')
+}
+
+/** Whether an account is tracked: the saved choice (see saved), else tracked when it has a weekly reading. */
+export function trackedChoice(choices: AccountTracking, account: Account): boolean {
+  const choice = saved(choices, account)
+  return typeof choice === 'boolean' ? choice : !!weeklyMeter(account)
 }
 
 /** Recover valid choices from storage, without treating malformed entries as unchecked accounts. */
@@ -160,14 +235,18 @@ export function parsePlanOverrides(raw: string | null): AccountPlanOverrides {
   } catch { return {} }
 }
 
-/** Set defaults once. A later lapse, refresh, or temporary disappearance never changes a saved choice. */
+/**
+ * Set defaults once. A later lapse, refresh, or temporary disappearance never changes a saved choice. A choice
+ * saved under an earlier key (the email alone, before organisations were reported) carries over to each of its
+ * organisations' accounts, and stays, for older pages.
+ */
 export function initializeTracking(accounts: Account[], choices: AccountTracking): AccountTracking {
   let result = choices
   for (const account of accounts) {
     const key = accountTrackingKey(account)
     if (Object.hasOwn(result, key) && typeof result[key] === 'boolean') continue
     if (result === choices) result = { ...choices }
-    result[key] = !!weeklyMeter(account)
+    result[key] = trackedChoice(choices, account)
   }
   return result
 }
@@ -183,23 +262,36 @@ function planName(plan?: string): string {
   return p.toLowerCase().startsWith('default_') ? '' : p
 }
 
+/** The newest row of a list, by reading time. */
+function newestRow(rows: LimitRow[]): LimitRow | undefined {
+  return rows.reduce<LimitRow | undefined>((best, r) => (!best || (time(r.observedAt) ?? 0) > (time(best.observedAt) ?? 0) ? r : best), undefined)
+}
+
 function toAccount(rows: LimitRow[], now: number): Account {
-  const head = rows.reduce((a, b) => ((time(b.observedAt) ?? 0) > (time(a.observedAt) ?? 0) ? b : a))
-  const email = (head.label || '').trim()
+  const head = newestRow(rows) as LimitRow
+  // The identity comes from organisation-aware rows when there are any: an older collector's row attached to this
+  // account (attachLegacy) does not decide it.
+  const aware = rows.filter((r) => r.orgKind)
+  const idRow = newestRow(aware) ?? head
+  const email = (idRow.label || head.label || '').trim()
   const metered = rows.filter((r) => r.window !== 'plan' && r.window !== 'extra' && r.status !== 'disabled').map((r) => toMeter(r, now))
   const session = newest(metered.filter((m) => m.window === 'session' && !m.scope))
   const week = newest(metered.filter((m) => m.window === 'week' && !m.scope))
-  const scoped = metered
-    .filter((m) => m.scope || (m.window !== 'session' && m.window !== 'week'))
-    .sort((a, b) => (a.scope || a.window).localeCompare(b.scope || b.window))
-  const extraRow = rows.find((r) => r.window === 'extra')
+  // The newest reading per scoped window: two machines (or an older collector) may report the same one.
+  const byScope = new Map<string, Meter>()
+  for (const m of metered) {
+    if (!m.scope && (m.window === 'session' || m.window === 'week')) continue
+    const key = `${m.window}|${m.scope ?? ''}`
+    const held = byScope.get(key)
+    if (!held || m.observedAt > held.observedAt) byScope.set(key, m)
+  }
+  const scoped = [...byScope.values()].sort((a, b) => (a.scope || a.window).localeCompare(b.scope || b.window))
+  const extraRow = newestRow(rows.filter((r) => r.window === 'extra'))
   // Windows can arrive in any order, including snapshots from before an upgrade/downgrade.
-  const planRow = rows.filter((r) => !!planName(r.plan)).reduce<LimitRow | undefined>(
-    (latest, row) => !latest || (time(row.observedAt) ?? 0) > (time(latest.observedAt) ?? 0) ? row : latest,
-    undefined,
-  )
-  const plan = planName(planRow?.plan)
-  const org = rows.map((r) => (r.name || '').trim()).find(Boolean) ?? ''
+  const plan = planName(newestRow(rows.filter((r) => !!planName(r.plan)))?.plan)
+  const org = [...aware, ...rows].map((r) => (r.name || '').trim()).find(Boolean) ?? ''
+  const orgKind = idRow.orgKind || ''
+  const orgId = aware.map((r) => r.org || '').find(Boolean) ?? ''
 
   // A full scoped window blocks one model, not the account.
   const blocking = [session, week].filter((m): m is Meter => !!m && m.full)
@@ -207,12 +299,16 @@ function toAccount(rows: LimitRow[], now: number): Account {
   const state: AccountState = blockedBy ? 'blocked' : [session, week].some(currentMeter) ? 'ready' : 'unknown'
 
   return {
-    key: `${head.provider}|${email.toLowerCase() || head.acct || head.source}`,
+    key: groupKey(idRow),
     provider: head.provider,
     tool: TOOL_LABEL[head.source] ?? head.source,
     email,
     plan,
     org,
+    orgKind,
+    orgId,
+    identity: identityOf(idRow),
+    label: [email, plan || org].filter(Boolean).join(' · '),
     session,
     week,
     scoped,
@@ -223,30 +319,108 @@ function toAccount(rows: LimitRow[], now: number): Account {
   }
 }
 
-/** One account per provider and email, in a fixed provider order so cards never reshuffle as states change. */
+/** Provider and email (else acct, else source): an account before organisations were reported. */
+function identityOf(row: LimitRow): string {
+  return `${row.provider}|${(row.label || '').trim().toLowerCase() || row.acct || row.source}`
+}
+
+/**
+ * An account is a provider and email, and, once the collector reports it, the organisation's kind and a Team or
+ * Enterprise organisation's hash: a Team seat and the same person's personal plan are two accounts. Rows from
+ * before organisations were reported have no kind and still merge across machines by email.
+ */
+function groupKey(row: LimitRow): string {
+  const kind = row.orgKind || ''
+  if (!kind) return identityOf(row)
+  const org = namedKind(kind) ? (row.org || (row.name || '').trim().toLowerCase()) : ''
+  return `${identityOf(row)}|${kind}${org ? `|${org}` : ''}`
+}
+
+interface AwareGroup {
+  key: string
+  kind: string
+  rows: LimitRow[]
+  accts: Set<string>
+  plans: Set<string>
+  names: Set<string>
+}
+
+/**
+ * Where an older collector's row (no organisation) belongs while machines run mixed versions: the
+ * organisation-aware account of the same provider and acct (one login) whose plan it names, and for a Team or
+ * Enterprise organisation whose name it names too (an older collector stamped both from the login). It is left out
+ * when that account has a reading of the same window as new or newer, or when it is a bare plan row that adds
+ * nothing to the login's organisation-aware accounts, or a row without a reading of its own (extra usage, a plan, no
+ * reset) that matches none of them. Returns the account key to add it to, '' to leave it out, or
+ * undefined: it matches no organisation and keeps a line of its own.
+ */
+function attachLegacy(row: LimitRow, groups: AwareGroup[]): string | undefined {
+  if (!row.acct) return undefined
+  const mine = groups.filter((g) => g.rows[0].provider === row.provider && g.accts.has(row.acct))
+  if (!mine.length) return undefined
+  const plan = planName(row.plan).toLowerCase()
+  const name = (row.name || '').trim().toLowerCase()
+  if (row.window === 'plan' && !plan && !name) return ''
+  const match = mine.find((g) =>
+    (plan ? g.plans.has(plan) : !!name && g.names.has(name)) && (!namedKind(g.kind) || (!!name && g.names.has(name))))
+  // A row with no reading of its own (extra usage, a plan, anything without a reset) that matches none of the
+  // login's organisations is an old collector's leftover: its id is never written again, so it would stay forever.
+  if (!match) return row.window === 'plan' || row.window === 'extra' || !row.resetsAt ? '' : undefined
+  const at = time(row.observedAt) ?? 0
+  const newer = match.rows.some((r) => r.window === row.window && (r.scope || '') === (row.scope || '') && (time(r.observedAt) ?? 0) >= at)
+  return newer ? '' : match.key
+}
+
+/** One account per provider, email and organisation, in a fixed provider order so cards never reshuffle as states change. */
 export function buildAccounts(items: LimitRow[], now: number, planOverrides: AccountPlanOverrides = {}): Account[] {
   const groups = new Map<string, LimitRow[]>()
-  for (const item of items) {
-    const key = `${item.provider}|${(item.label || '').trim().toLowerCase() || item.acct || item.source}`
+  const add = (key: string, row: LimitRow) => {
     const list = groups.get(key)
-    if (list) list.push(item)
-    else groups.set(key, [item])
+    if (list) list.push(row)
+    else groups.set(key, [row])
   }
+  for (const item of items) if (item.orgKind) add(groupKey(item), item)
+  const aware: AwareGroup[] = [...groups].map(([key, rows]) => ({
+    key,
+    kind: rows[0].orgKind || '',
+    rows,
+    accts: new Set(rows.map((r) => r.acct).filter(Boolean)),
+    plans: new Set(rows.map((r) => planName(r.plan).toLowerCase()).filter(Boolean)),
+    names: new Set(rows.map((r) => (r.name || '').trim().toLowerCase()).filter(Boolean)),
+  }))
+  const attached: [string, LimitRow][] = []
+  for (const item of items) {
+    if (item.orgKind) continue
+    const to = attachLegacy(item, aware)
+    if (to === '') continue
+    if (to === undefined) add(groupKey(item), item)
+    else attached.push([to, item])
+  }
+  for (const [key, row] of attached) add(key, row)
   const rank = (p: Provider) => {
     const i = PROVIDER_ORDER.indexOf(p)
     return i < 0 ? PROVIDER_ORDER.length : i
   }
-  return [...groups.values()]
+  const accounts = [...groups.values()]
     .map((rows) => {
       const account = toAccount(rows, now)
-      const override = planOverrides[accountTrackingKey(account)]
+      const override = saved(planOverrides, account)
       // A later, more specific provider report wins over a clarification of an older label.
       if (override && planName(override.reportedPlan).toLowerCase() === account.plan.toLowerCase()) {
-        return { ...account, plan: override.name }
+        return { ...account, plan: override.name, label: [account.email, override.name].filter(Boolean).join(' · ') }
       }
       return account
     })
-    .sort((a, b) => rank(a.provider) - rank(b.provider) || a.email.localeCompare(b.email) || a.tool.localeCompare(b.tool))
+  // An older collector's line beside the same email's organisation-aware ones says which plan it is, or that its
+  // organisation is unknown, so no two lines read the same.
+  const withOrgs = new Set(accounts.filter((a) => a.orgKind && a.email).map((a) => `${a.provider}|${a.email.toLowerCase()}`))
+  for (const account of accounts) {
+    if (account.orgKind || !account.email || !withOrgs.has(`${account.provider}|${account.email.toLowerCase()}`)) continue
+    account.label = [account.email, account.plan || account.org || 'organisation unknown'].join(' · ')
+    if (accounts.some((a) => a !== account && a.provider === account.provider && a.label === account.label)) account.label += ' · organisation unknown'
+  }
+  return accounts.sort((a, b) => rank(a.provider) - rank(b.provider) || a.email.localeCompare(b.email) || a.tool.localeCompare(b.tool) ||
+    a.label.localeCompare(b.label) || a.orgKind.localeCompare(b.orgKind) || a.key.localeCompare(b.key))
 }
 
 export interface CountdownPart {
@@ -310,7 +484,10 @@ export function clock(ms: number, now: number): string {
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(at)
 }
 
-/** Synthetic accounts for ?mock=1, relative to now: one blocked on its session, one on its week, one ready, one stale. */
+/**
+ * Synthetic accounts for ?mock=1, relative to now: one blocked on its session, one on its week, one ready, one stale,
+ * and one email that is both a Team seat and a personal Max plan (with a row from before organisations were reported).
+ */
 export function mockLimits(now: number): LimitRow[] {
   const at = (ms: number) => new Date(now + ms).toISOString()
   const MIN = 60_000
@@ -335,5 +512,13 @@ export function mockLimits(now: number): LimitRow[] {
     row({ id: 'm9', provider: 'openai', source: 'codex', window: 'week', label: 'side@example.net', plan: 'Plus', usedPercent: 88, resetsAt: at(-2 * D), observedAt: at(-9 * D) }),
     row({ id: 'm10', provider: 'xai', source: 'grok-cli', window: 'plan', label: 'owner@example.com', plan: 'SuperGrok Heavy', status: undefined }),
     row({ id: 'm11', provider: 'cursor', source: 'cursor', window: 'plan', label: 'owner@example.com', status: undefined }),
+    row({ id: 'm12', provider: 'anthropic', source: 'claude-code', window: 'session', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Example Team', plan: 'Team', org: 'a_00000000000000e1', orgKind: 'team', usedPercent: 31, resetsAt: at(3 * H + 40 * MIN) }),
+    row({ id: 'm13', provider: 'anthropic', source: 'claude-code', window: 'week', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Example Team', plan: 'Team', org: 'a_00000000000000e1', orgKind: 'team', usedPercent: 58, resetsAt: at(2 * D + 7 * H) }),
+    row({ id: 'm14', provider: 'anthropic', source: 'claude-code', window: 'session', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Sam Example', plan: 'Max (20x)', org: 'a_00000000000000e2', orgKind: 'personal', usedPercent: 12, resetsAt: at(1 * H + 5 * MIN) }),
+    row({ id: 'm15', provider: 'anthropic', source: 'claude-code', window: 'week', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Sam Example', plan: 'Max (20x)', org: 'a_00000000000000e2', orgKind: 'personal', usedPercent: 23, resetsAt: at(5 * D + 2 * H) }),
+    row({ id: 'm17', provider: 'anthropic', source: 'claude-code', window: 'plan', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Sam Example', plan: 'Max (20x)', org: 'a_00000000000000e2', orgKind: 'personal', status: undefined }),
+    // The Team seat's week written by an older collector before organisations were reported: the Team account
+    // has a newer reading of it, so it is not shown.
+    row({ id: 'm16', provider: 'anthropic', source: 'claude-code', window: 'week', acct: 'a_00000000000000d1', label: 'both@example.dev', name: 'Example Team', plan: 'Team', usedPercent: 97, resetsAt: at(1 * D), observedAt: at(-2 * D) }),
   ]
 }

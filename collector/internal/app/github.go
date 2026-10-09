@@ -331,6 +331,9 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 			meters = append(meters, limits.Collect(a.envFor(k, cfg, st, h, ix))...)
 		}
 		meters = limits.Dedupe(meters)
+		// An organisation this machine no longer reads keeps its last
+		// reading on the dashboard, as the server keeps its rows.
+		meters, st.OrgMeters = limits.RetainOrgMeters(st.OrgMeters, meters, now)
 	}
 	m := ghpub.Machine{ID: st.GitHub.MachineID, Label: cfg.GitHub.Label, OS: runtime.GOOS, Collector: a.Version, LastEventAt: ru.LastEvent()}
 	if cfg.GitHub.ShowCountry {

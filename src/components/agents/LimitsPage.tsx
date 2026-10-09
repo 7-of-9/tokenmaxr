@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import LoadingIndicator from '../LoadingIndicator'
-import { accountTrackingKey, ago, buildAccounts, countdownParts, initializeTracking, LimitsDenied, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, weeklyMeter, type Account, type AccountTracking, type LimitRow, type Meter } from './limits'
+import { accountName, accountTrackingKey, ago, buildAccounts, countdownParts, initializeTracking, LimitsDenied, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, trackedChoice, weeklyMeter, type Account, type AccountTracking, type LimitRow, type Meter } from './limits'
 import TokensShell from './TokensShell'
 import AuthGate from './AuthGate'
 import { LOCAL_PREFS, useTokensSite, type SitePrefs } from './site'
@@ -141,16 +141,12 @@ function WeeklyBar({ meter, label }: { meter: Meter; label: string }) {
   const percent = Math.round(available)
   const style = { '--meter-color': severityColor(1 - available / 100) } as CSSProperties
   return (
-    <div className="limits-bar" style={style}>
-      <div className="limits-bar__heading">
-        <span className="limits-bar__pct">{percent}<span>%</span></span>
-        <span className="limits-bar__label">available</span>
-      </div>
+    <div className="limits-bar" style={style} title={`${percent}% of the weekly quota available`}>
+      <span className="limits-bar__pct">{percent}<span>%</span></span>
       <div className="limits-bar__track" role="progressbar" aria-label={`${label}: weekly quota available`}
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% available`}>
         <span className="limits-bar__fill" style={{ width: `${available}%` }} />
       </div>
-      {meter.detail && <span className="limits-bar__detail">{meter.detail}</span>}
     </div>
   )
 }
@@ -163,10 +159,10 @@ function ResetCountdown({ meter, now }: { meter: Meter; now: number }) {
   const resetDate = new Date(Math.round(meter.resetsAt / 60_000) * 60_000)
   return (
     <div className="limits-reset" style={{ '--reset-color': severityColor(severity) } as CSSProperties}>
-      <span className="limits-reset__label">Resets in</span>
+      <span className="limits-reset__label">resets in</span>
       <span className="limits-reset__countdown" aria-label={parts.map(p => `${p.value} ${p.unit}${p.value === 1 ? '' : 's'}`).join(' ')}>
         {parts.map(part => <span className="limits-reset__part" key={part.unit}>
-          <strong>{part.value}</strong><span>{part.unit}{part.value === 1 ? '' : 's'}</span>
+          <strong>{part.value}</strong><span>{part.unit[0]}</span>
         </span>)}
       </span>
       <time className="limits-reset__date" dateTime={new Date(meter.resetsAt).toISOString()} title={FULL_DATE.format(resetDate)}>
@@ -176,7 +172,15 @@ function ResetCountdown({ meter, now }: { meter: Meter; now: number }) {
   )
 }
 
-/** Identity, a wide available-quota gauge, then the weekly reset countdown. */
+/** A Team or Enterprise organisation's name, or any organisation's when there is no plan: with the plan, it tells
+ * apart two accounts of one email (a Team seat and a personal plan). A personal organisation's name is the person's. */
+function OrgName({ account }: { account: Account }) {
+  const named = account.orgKind === 'team' || account.orgKind === 'enterprise' || !account.plan
+  return account.org && named ? <span className="limits-line__org">{account.org}</span> : null
+}
+
+/** One dense line, like Other's: identity and its notes, the available-quota
+ * gauge, then the weekly reset countdown. */
 function AccountLine({ account, now, onTrack }: { account: Account; now: number; onTrack: (account: Account, tracked: boolean) => void }) {
   const week = weeklyMeter(account)
   const observedAt = week?.observedAt ?? account.observedAt
@@ -185,19 +189,19 @@ function AccountLine({ account, now, onTrack }: { account: Account; now: number;
     <li className={`limits-line${week?.full ? ' is-full' : ''}`}>
       <div className="limits-line__who">
         <label className="limits-track">
-          <input type="checkbox" checked onChange={() => onTrack(account, false)} aria-label={`Track ${account.tool} ${account.email || 'unknown account'}`} />
-          <span className="limits-line__email" title={account.org || undefined}>{account.email || 'Unknown account'}</span>
+          <input type="checkbox" checked onChange={() => onTrack(account, false)} aria-label={`Track ${account.tool} ${account.label ? accountName(account) : 'unknown account'}`} />
+          <span className="limits-line__email" title={accountName(account)}>{account.email || 'Unknown account'}</span>
         </label>
-        <div className="limits-line__meta">
-          <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
-          <span className={`limits-reading${oldReading ? ' is-old' : ''}`} title={`Reading from ${FULL_DATE.format(new Date(observedAt))}`}>
-            Read {ago(observedAt, now)}
-          </span>
-        </div>
+        <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
+        <OrgName account={account} />
+        <span className={`limits-reading${oldReading ? ' is-old' : ''}`} title={`Reading from ${FULL_DATE.format(new Date(observedAt))}`}>
+          read {ago(observedAt, now)}
+        </span>
         {account.blockedBy?.window === 'session' && <span className="limits-session-notice">Temporarily limited</span>}
+        {week?.detail && <span className="limits-line__detail">{week.detail}</span>}
       </div>
       {week ? <>
-        <WeeklyBar meter={week} label={account.email || account.tool} />
+        <WeeklyBar meter={week} label={accountName(account)} />
         <ResetCountdown meter={week} now={now} />
       </> : <div className="limits-no-reading">{account.week?.lapsed ? 'Reset passed · awaiting a new reading' : 'No weekly reading available'}</div>}
     </li>
@@ -231,11 +235,12 @@ function OtherAccounts({ accounts, onTrack }: { accounts: Account[]; onTrack: (a
       <ul className="limits-lines">
         {accounts.map(account => <li className="limits-unmetered__line" key={account.key}>
           <label className="limits-track">
-            <input type="checkbox" checked={false} onChange={() => onTrack(account, true)} aria-label={`Track ${account.tool} ${account.email || 'unknown account'}`} />
+            <input type="checkbox" checked={false} onChange={() => onTrack(account, true)} aria-label={`Track ${account.tool} ${account.label ? accountName(account) : 'unknown account'}`} />
             <span className="limits-unmetered__tool">{account.tool}</span>
-            <span className="limits-line__email">{account.email || 'Unknown account'}</span>
+            <span className="limits-line__email" title={accountName(account)}>{account.email || 'Unknown account'}</span>
           </label>
           <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
+          <OrgName account={account} />
           <span className="limits-unmetered__reason">{weeklyMeter(account) ? 'Not tracked' : account.week?.lapsed ? 'Awaiting a new reading' : 'No weekly reading'}</span>
         </li>)}
       </ul>
@@ -257,13 +262,13 @@ const LimitsPage = () => {
   const planLabels = usePlanLabels(prefs)
   const accounts = useMemo(() => (items ? buildAccounts(items, now, planLabels) : []), [items, now, planLabels])
   const { choices, setTracked, saveFailed } = useTracking(accounts, mock, prefs)
-  const isTracked = (account: Account) => choices[accountTrackingKey(account)] ?? !!weeklyMeter(account)
+  const isTracked = (account: Account) => trackedChoice(choices, account)
   const tracked = accounts.filter(isTracked)
   const other = accounts.filter(account => !isTracked(account))
   // Accounts arrive in provider order, so the boxes keep it.
   const byTool = useMemo(() => {
     const groups = new Map<string, Account[]>()
-    for (const a of accounts.filter(account => choices[accountTrackingKey(account)] ?? !!weeklyMeter(account))) groups.set(a.tool, [...(groups.get(a.tool) ?? []), a])
+    for (const a of accounts.filter(account => trackedChoice(choices, account))) groups.set(a.tool, [...(groups.get(a.tool) ?? []), a])
     return [...groups]
   }, [accounts, choices])
 

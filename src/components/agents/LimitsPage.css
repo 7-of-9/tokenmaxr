@@ -84,22 +84,38 @@
   list-style: none;
 }
 
+/* One dense line an account, like Other's rows: who and its notes, the
+   gauge, the reset. */
 .limits-line {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.5fr) 210px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(160px, 1fr) auto;
   align-items: center;
-  gap: 16px 32px;
-  padding: 22px 20px;
-  font-size: 14px;
+  gap: 8px 24px;
+  padding: 11px 18px;
+  font-size: 13px;
 }
 
 .limits-line + .limits-line { border-top: 1px solid var(--ag-line); }
 .limits-line.is-full { background: rgba(248, 81, 73, 0.045); }
 
 .limits-line__who {
-  display: grid;
-  gap: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
   min-width: 0;
+}
+
+.limits-line__who > .limits-track { min-width: 0; }
+.limits-line__detail { color: var(--gh-muted); font-size: 12px; }
+
+.limits-line__org {
+  overflow: hidden;
+  max-width: 22ch;
+  color: var(--gh-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .limits-line__email {
@@ -108,14 +124,6 @@
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.limits-line__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px 10px;
-  padding-left: 27px;
 }
 
 .limits-track {
@@ -162,39 +170,33 @@
 
 .limits-bar {
   display: grid;
+  grid-template-columns: 3.4em minmax(0, 1fr);
+  align-items: center;
   gap: 10px;
   min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.limits-bar__heading {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
 .limits-bar__pct {
   color: var(--meter-color);
-  font-size: 30px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1;
+  text-align: right;
   transition: color 600ms ease;
 }
 
 .limits-bar__pct > span {
-  margin-left: 2px;
-  font-size: 18px;
+  margin-left: 1px;
+  font-size: 11px;
   font-weight: 400;
 }
 
-.limits-bar__label { color: var(--gh-muted); font-size: 13px; }
-.limits-bar__detail { color: var(--gh-muted); font-size: 11px; }
-
 .limits-bar__track {
   overflow: hidden;
-  height: 18px;
+  height: 8px;
   border: 1px solid rgba(139, 148, 158, 0.12);
-  border-radius: 5px;
+  border-radius: 4px;
   background: linear-gradient(90deg, rgba(248, 81, 73, 0.12), rgba(210, 153, 34, 0.12), rgba(63, 185, 80, 0.12));
 }
 
@@ -208,30 +210,33 @@
 }
 
 .limits-reset {
-  display: grid;
-  justify-items: end;
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
   gap: 6px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .limits-reset__label,
 .limits-reset__date,
 .limits-reset--unknown { color: var(--gh-muted); font-size: 12px; }
 
+.limits-reset__date::before { content: "· "; }
+
 .limits-reset__countdown {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
-  gap: 12px;
+  gap: 4px;
   color: var(--reset-color);
 }
 
 .limits-reset__part {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
 }
 
-.limits-reset__part strong { font-size: 30px; font-weight: 600; line-height: 1; }
+.limits-reset__part strong { font-size: 14px; font-weight: 600; line-height: 1; }
 .limits-reset__part > span { font-size: 12px; }
 .limits-reset__date { white-space: nowrap; }
 
@@ -277,29 +282,19 @@
 .limits-page .agents-foot { color: var(--gh-muted); font-size: 12px; }
 
 @media (max-width: 1050px) {
-  .limits-line {
-    grid-template-columns: minmax(160px, 1fr) minmax(180px, 1.2fr) 185px;
-    gap: 16px 20px;
-    padding: 20px 16px;
-  }
+  /* The gauge and reset share a second line under who. */
+  .limits-line { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 10px 14px; }
+  .limits-line__who { grid-column: 1 / -1; }
+  .limits-no-reading { grid-column: 1 / -1; padding-left: 27px; }
 }
 
 @media (max-width: 760px) {
-  .limits-line { grid-template-columns: minmax(0, 1fr) 145px; gap: 20px 16px; }
-  .limits-line__who { grid-column: 1 / -1; }
-  .limits-no-reading { grid-column: 1 / -1; padding-left: 27px; }
-  .limits-reset__part strong { font-size: 26px; }
-  .limits-reset__countdown { gap: 8px; }
-  .limits-reset__part { gap: 3px; }
-  .limits-reset__part > span { font-size: 11px; }
-  .limits-reset__date { font-size: 11px; }
   .limits-unmetered__reason { flex-basis: 100%; margin-left: 67px; }
 }
 
 @media (max-width: 420px) {
   .limits-line { grid-template-columns: minmax(0, 1fr); }
-  .limits-reset { justify-items: start; }
-  .limits-bar__heading { flex-wrap: wrap; }
+  .limits-reset { justify-content: flex-start; }
   .limits-unmetered__line > .limits-track { flex-wrap: wrap; }
 }
 

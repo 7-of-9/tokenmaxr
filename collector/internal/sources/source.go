@@ -95,6 +95,10 @@ type Env struct {
 	HashID func(provider, nativeID string) string
 	// Label returns the private label for an account hash ("" if none).
 	Label func(acct string) string
+	// OrgSince records that provider's login at this home is in organisation
+	// org (a hash) and returns when this home switched to it: zero when it
+	// has been the only one seen. Nil means nothing is remembered (dry runs).
+	OrgSince func(provider, org string) time.Time
 	// TZOffsetMin returns the machine's UTC offset in minutes east at t.
 	TZOffsetMin func(t time.Time) int
 	// Prompts disables prompt capture when false (usage/activity still flow).
