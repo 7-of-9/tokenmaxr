@@ -32,12 +32,22 @@ const base = { acct: '', acctQ: 'unknown', observedAt: iso(-60_000), label: 'a@e
   assert.equal(buildAccounts(rows, NOW)[0].blockedBy?.window, 'week')
 }
 
-// A full window whose reset has passed no longer blocks, and its reading is marked lapsed.
+// A full week whose reset has passed is a full week again: 0% used, the next reset a week on, the passed one kept.
 {
   const rows: LimitRow[] = [{ ...base, id: '1', provider: 'openai', source: 'codex', window: 'week', usedPercent: 100, resetsAt: iso(-H), status: 'full' }]
   const [a] = buildAccounts(rows, NOW)
-  assert.equal(a.state, 'unknown')
-  assert.equal(a.week?.lapsed, true)
+  assert.equal(a.state, 'ready')
+  assert.equal(weeklyMeter(a)?.used, 0)
+  assert.equal(a.week?.full, false)
+  assert.equal(a.week?.passedAt, NOW - H)
+  assert.equal(a.week?.resetsAt, NOW - H + 7 * 24 * H)
+  // Weeks later, the next reset still lies ahead; a reset exactly now rolls a whole week on.
+  assert.equal(buildAccounts(rows, NOW + 20 * 24 * H)[0].week?.resetsAt, NOW - H + 21 * 24 * H)
+  assert.equal(buildAccounts([{ ...rows[0], resetsAt: iso(0) }], NOW)[0].week?.resetsAt, NOW + 7 * 24 * H)
+  // It sorts above a week with some quota left, which sorts above one used up.
+  const left: LimitRow = { ...rows[0], id: '2', acct: 'b', label: 'b@example.com', usedPercent: 40, status: 'ok', resetsAt: iso(5 * H) }
+  const gone: LimitRow = { ...rows[0], id: '3', acct: 'c', label: 'c@example.com', resetsAt: iso(2 * H) }
+  assert.deepEqual(sortByAvailability(buildAccounts([gone, left, { ...rows[0], label: 'a@example.com' }], NOW)).map((x) => x.email), ['a@example.com', 'b@example.com', 'c@example.com'])
 }
 
 // A full model-scoped week blocks that model only.
@@ -85,13 +95,13 @@ assert.equal(countdown(12 * 60_000 + 5_000), '12m 05s')
 assert.equal(countdown(45_000), '45s')
 assert.equal(countdown(50 * H), '2d 2h')
 
-// Weekly comparisons include a real 0% reading, but never missing, invalid or already-reset readings.
+// Weekly comparisons include a real 0% reading, but never missing or invalid readings.
 {
   const row: LimitRow = { ...base, id: 'week', provider: 'openai', source: 'codex', window: 'week', usedPercent: 0, resetsAt: iso(7 * 24 * H) }
   const [zero] = buildAccounts([row], NOW)
   assert.equal(weeklyMeter(zero)?.used, 0)
   assert.equal(zero.state, 'ready')
-  for (const change of [{ usedPercent: undefined }, { usedPercent: NaN }, { usedPercent: -1 }, { usedPercent: 101 }, { observedAt: 'invalid' }, { resetsAt: iso(0) }]) {
+  for (const change of [{ usedPercent: undefined }, { usedPercent: NaN }, { usedPercent: -1 }, { usedPercent: 101 }, { observedAt: 'invalid' }]) {
     const [account] = buildAccounts([{ ...row, ...change }], NOW)
     assert.equal(weeklyMeter(account), undefined)
     assert.equal(account.state, 'unknown')
@@ -105,7 +115,7 @@ assert.equal(countdown(50 * H), '2d 2h')
   assert.equal(full.state, 'blocked')
   assert.equal(weeklyMeter(full), undefined)
   assert.equal(full.blockedBy?.resetsAt, NOW + H)
-  assert.equal(buildAccounts([row], NOW + H)[0].state, 'unknown')
+  assert.equal(buildAccounts([row], NOW + H)[0].state, 'ready')
   const [unparsed] = buildAccounts([{ ...row, resetsAt: '2026-10-01T20:00:00', status: 'ok', usedPercent: 25 }], NOW)
   assert.equal(unparsed.week?.resetsAt, null)
   assert.equal(weeklyMeter(unparsed)?.used, 25)

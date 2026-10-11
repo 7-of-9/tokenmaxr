@@ -166,6 +166,7 @@
 }
 
 .limits-reading.is-old { color: var(--lim-warn); }
+.limits-fresh { color: var(--lim-go); font-size: 12px; font-weight: 600; }
 .limits-session-notice { color: var(--lim-stop); font-size: 12px; }
 
 .limits-bar {

@@ -64,6 +64,12 @@ export interface Meter {
   lapsed: boolean
   /** Used up and not reset yet. */
   full: boolean
+  /**
+   * A weekly reset the reading named has passed (owner direction 2026-10-11): the week starts again full, so the meter
+   * reads 0% used, resetsAt is the next reset (the passed one a whole number of weeks on) and passedAt is the one that
+   * passed. The next reading replaces the projection.
+   */
+  passedAt?: number
 }
 
 export type AccountState = 'ready' | 'blocked' | 'unknown'
@@ -108,7 +114,8 @@ function time(iso?: string | null): number | null {
  * length is known (Claude Code's 5-hour session and 7-day week). Codex maps windows of other lengths to the same
  * names, so its readings are left alone.
  */
-const WINDOW_MS: Record<string, number> = { 'claude-code|session': 5 * 3_600_000, 'claude-code|week': 7 * 86_400_000 }
+const WEEK_MS = 7 * 86_400_000
+const WINDOW_MS: Record<string, number> = { 'claude-code|session': 5 * 3_600_000, 'claude-code|week': WEEK_MS }
 
 function toMeter(row: LimitRow, now: number): Meter {
   const used = typeof row.usedPercent === 'number' && Number.isFinite(row.usedPercent) && row.usedPercent >= 0 && row.usedPercent <= 100 ? row.usedPercent : null
@@ -120,6 +127,13 @@ function toMeter(row: LimitRow, now: number): Meter {
   const length = Object.hasOwn(WINDOW_MS, windowKey) ? WINDOW_MS[windowKey] : undefined
   const lapsed = resetsAt !== null ? resetsAt <= now : length !== undefined && observedAt > 0 && observedAt + length <= now
   const hit = row.status === 'full' || (used !== null && used >= 100)
+  if (lapsed && row.window === 'week' && resetsAt !== null && observedAt > 0) {
+    const next = resetsAt + Math.max(1, Math.ceil((now - resetsAt + 1) / WEEK_MS)) * WEEK_MS
+    return {
+      key: row.id, window: row.window, scope: row.scope || undefined, detail: row.detail || undefined,
+      used: 0, resetsAt: next, observedAt, lapsed: false, full: false, passedAt: resetsAt,
+    }
+  }
   return {
     key: row.id,
     window: row.window,
@@ -165,8 +179,9 @@ export function resetClock(ms: number): { value: number; unit: 'd' | 'h' | 'm' }
 }
 
 /**
- * A provider's accounts in reading order (owner direction 2026-10-11): those with quota left, most available
- * first; then those with none left, soonest reset first; then those without a weekly reading.
+ * A provider's accounts most usable first (owner direction 2026-10-11): those with quota left, most available first
+ * (a week whose reset has passed is full); then those with none left, soonest reset first; then those without a
+ * weekly reading.
  */
 export function sortByAvailability(accounts: Account[]): Account[] {
   const rank = (a: Account) => {
@@ -546,6 +561,8 @@ export function mockLimits(now: number): LimitRow[] {
     row({ id: 'm4', provider: 'anthropic', source: 'claude-code', window: 'session', label: 'work@example.org', name: 'Example Org', usedPercent: 22, resetsAt: at(3 * H) }),
     row({ id: 'm5', provider: 'anthropic', source: 'claude-code', window: 'week', label: 'work@example.org', name: 'Example Org', usedPercent: 100, status: 'full', resetsAt: at(1 * D + 9 * H) }),
     row({ id: 'm6', provider: 'anthropic', source: 'claude-code', window: 'extra', label: 'work@example.org', status: 'disabled', detail: 'out of credits' }),
+    // Used up when read three days ago; its reset passed an hour ago, so it is full again.
+    row({ id: 'm18', provider: 'anthropic', source: 'claude-code', window: 'week', acct: 'a_00000000000000f1', label: 'spare@example.com', plan: 'Max (20x)', usedPercent: 100, status: 'full', resetsAt: at(-1 * H), observedAt: at(-3 * D) }),
     row({ id: 'm7', provider: 'openai', source: 'codex', window: 'session', label: 'owner@example.com', plan: 'Pro', usedPercent: 9, resetsAt: at(4 * H) }),
     row({ id: 'm8', provider: 'openai', source: 'codex', window: 'week', label: 'owner@example.com', plan: 'Pro', usedPercent: 37, resetsAt: at(5 * D) }),
     row({ id: 'm9', provider: 'openai', source: 'codex', window: 'week', label: 'side@example.net', plan: 'Plus', usedPercent: 88, resetsAt: at(-2 * D), observedAt: at(-9 * D) }),

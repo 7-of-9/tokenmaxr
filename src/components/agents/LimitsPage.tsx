@@ -199,6 +199,9 @@ function AccountLine({ account, now, onTrack }: { account: Account; now: number;
         <span className={`limits-reading${oldReading ? ' is-old' : ''}`} title={`Reading from ${FULL_DATE.format(new Date(observedAt))}`}>
           read {ago(observedAt, now)}
         </span>
+        {week?.passedAt !== undefined && <span className="limits-fresh" title={`The weekly reset the last reading named passed at ${FULL_DATE.format(new Date(week.passedAt))}: a full week since`}>
+          reset {RESET_DATE.format(new Date(Math.round(week.passedAt / 60_000) * 60_000))} · full
+        </span>}
         {account.blockedBy?.window === 'session' && <span className="limits-session-notice">Temporarily limited</span>}
         {week?.detail && <span className="limits-line__detail">{week.detail}</span>}
       </div>
