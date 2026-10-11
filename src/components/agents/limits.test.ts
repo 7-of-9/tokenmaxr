@@ -1,6 +1,6 @@
 // Assertions for limits.ts. Run: node --experimental-strip-types src/components/agents/limits.test.ts
 import assert from 'node:assert/strict'
-import { accountName, accountTrackingKey, buildAccounts, countdown, countdownParts, initializeTracking, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, trackedChoice, weeklyMeter, type LimitRow } from './limits.ts'
+import { accountName, accountTrackingKey, buildAccounts, countdown, countdownParts, initializeTracking, mockLimits, resetClock, sortByAvailability, parsePlanOverrides, parseTracking, resetSeverity, severityColor, trackedChoice, weeklyMeter, type Account, type LimitRow } from './limits.ts'
 
 const NOW = Date.parse('2026-10-01T12:00:00Z')
 const iso = (ms: number) => new Date(NOW + ms).toISOString()
@@ -362,3 +362,27 @@ const personal: LimitRow = { ...team, id: 'p-week', name: 'Dm Example', plan: 'M
 }
 
 console.log('limits.test.ts: ok')
+
+// The reset countdown is always to the minute, with no zero days (owner direction 2026-10-11).
+{
+  const M = 60_000
+  const fmt = (ms: number) => resetClock(ms).map((p) => `${p.value}${p.unit}`).join(' ')
+  assert.equal(fmt((2 * 1440 + 6 * 60 + 12) * M), '2d 6h 12m')
+  assert.equal(fmt((2 * 1440 + 5) * M), '2d 0h 5m')
+  assert.equal(fmt((6 * 60 + 29) * M), '6h 29m')
+  assert.equal(fmt(29 * M), '29m')
+  assert.equal(fmt(10_000), '1m')
+}
+
+// A provider's accounts: quota left, most first; then none left, soonest reset first; then no weekly reading.
+{
+  const at = (h: number) => NOW + h * H
+  const acct = (key: string, used: number | undefined, resetH: number, full = false) => ({
+    key, week: used === undefined ? undefined : { used, full, resetsAt: at(resetH), observedAt: NOW - 60_000 },
+  }) as unknown as Account
+  const order = sortByAvailability([
+    acct('empty-late', 100, 54, true), acct('some', 63, 100), acct('none', undefined, 0),
+    acct('empty-soon', 100, 6, true), acct('most', 10, 120),
+  ]).map((a) => a.key)
+  assert.deepEqual(order, ['most', 'some', 'empty-soon', 'empty-late', 'none'])
+}

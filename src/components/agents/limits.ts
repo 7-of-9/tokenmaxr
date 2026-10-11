@@ -143,6 +143,45 @@ export function weeklyMeter(account: Account): (Meter & { used: number }) | unde
   return currentMeter(account.week) ? account.week : undefined
 }
 
+/** The share of the weekly quota still available, 0-100 (0 once the week is full). */
+export function availablePercent(meter: Meter & { used: number }): number {
+  return meter.full ? 0 : 100 - Math.min(100, Math.max(0, meter.used))
+}
+
+/**
+ * The reset countdown always to the minute, with no zero days, so a reset a few hours away reads as soon:
+ * "2d 6h 12m", "6h 29m", "29m" (owner direction 2026-10-11).
+ */
+export function resetClock(ms: number): { value: number; unit: 'd' | 'h' | 'm' }[] {
+  if (!Number.isFinite(ms)) return []
+  const m = Math.max(0, Math.ceil(ms / 60_000))
+  const d = Math.floor(m / 1440)
+  const h = Math.floor((m % 1440) / 60)
+  const parts: { value: number; unit: 'd' | 'h' | 'm' }[] = []
+  if (d) parts.push({ value: d, unit: 'd' })
+  if (d || h) parts.push({ value: h, unit: 'h' })
+  parts.push({ value: m % 60, unit: 'm' })
+  return parts
+}
+
+/**
+ * A provider's accounts in reading order (owner direction 2026-10-11): those with quota left, most available
+ * first; then those with none left, soonest reset first; then those without a weekly reading.
+ */
+export function sortByAvailability(accounts: Account[]): Account[] {
+  const rank = (a: Account) => {
+    const week = weeklyMeter(a)
+    if (!week) return { group: 2, key: 0 }
+    const left = availablePercent(week)
+    if (left > 0) return { group: 0, key: -left }
+    return { group: 1, key: week.resetsAt ?? Number.MAX_SAFE_INTEGER }
+  }
+  return accounts
+    .map((account, i) => ({ account, i, r: rank(account) }))
+    .sort((x, y) => x.r.group - y.r.group || x.r.key - y.r.key || x.i - y.i)
+    .map((x) => x.account)
+}
+
 /** Browser-local choices; both true and false are explicit, durable decisions. */
 export type AccountTracking = Record<string, boolean>
 

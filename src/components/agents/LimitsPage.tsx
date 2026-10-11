@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import LoadingIndicator from '../LoadingIndicator'
-import { accountName, accountTrackingKey, ago, buildAccounts, countdownParts, initializeTracking, LimitsDenied, mockLimits, parsePlanOverrides, parseTracking, resetSeverity, severityColor, trackedChoice, weeklyMeter, type Account, type AccountTracking, type LimitRow, type Meter } from './limits'
+import { accountName, accountTrackingKey, ago, availablePercent, buildAccounts, initializeTracking, LimitsDenied, mockLimits, parsePlanOverrides, parseTracking, resetClock, resetSeverity, severityColor, sortByAvailability, trackedChoice, weeklyMeter, type Account, type AccountTracking, type LimitRow, type Meter } from './limits'
 import TokensShell from './TokensShell'
 import AuthGate from './AuthGate'
 import { LOCAL_PREFS, useTokensSite, type SitePrefs } from './site'
@@ -136,17 +136,18 @@ const FULL_DATE = new Intl.DateTimeFormat('en-GB', {
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 
 /** Source percentages are used; the gauge deliberately shows the quota still available. */
-function WeeklyBar({ meter, label }: { meter: Meter; label: string }) {
-  const available = meter.full ? 0 : 100 - Math.min(100, Math.max(0, meter.used ?? 0))
+function WeeklyBar({ meter, label }: { meter: Meter & { used: number }; label: string }) {
+  const available = availablePercent(meter)
   const percent = Math.round(available)
   const style = { '--meter-color': severityColor(1 - available / 100) } as CSSProperties
   return (
     <div className="limits-bar" style={style} title={`${percent}% of the weekly quota available`}>
       <span className="limits-bar__pct">{percent}<span>%</span></span>
-      <div className="limits-bar__track" role="progressbar" aria-label={`${label}: weekly quota available`}
+      {/* No bar at 0%: an empty bar is noise (owner direction 2026-10-11). */}
+      {percent > 0 ? <div className="limits-bar__track" role="progressbar" aria-label={`${label}: weekly quota available`}
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}% available`}>
         <span className="limits-bar__fill" style={{ width: `${available}%` }} />
-      </div>
+      </div> : <span aria-hidden="true" />}
     </div>
   )
 }
@@ -154,15 +155,16 @@ function WeeklyBar({ meter, label }: { meter: Meter; label: string }) {
 function ResetCountdown({ meter, now }: { meter: Meter; now: number }) {
   const severity = resetSeverity(meter.resetsAt, now)
   if (meter.resetsAt === null || severity === null) return <div className="limits-reset limits-reset--unknown">Reset time unavailable</div>
-  const parts = countdownParts(meter.resetsAt - now)
+  const parts = resetClock(meter.resetsAt - now)
+  const units = { d: 'day', h: 'hour', m: 'minute' } as const
   // Tool-displayed reset times have minute precision; avoid displaying :59 from parse-time drift.
   const resetDate = new Date(Math.round(meter.resetsAt / 60_000) * 60_000)
   return (
     <div className="limits-reset" style={{ '--reset-color': severityColor(severity) } as CSSProperties}>
       <span className="limits-reset__label">resets in</span>
-      <span className="limits-reset__countdown" aria-label={parts.map(p => `${p.value} ${p.unit}${p.value === 1 ? '' : 's'}`).join(' ')}>
+      <span className="limits-reset__countdown" aria-label={parts.map(p => `${p.value} ${units[p.unit]}${p.value === 1 ? '' : 's'}`).join(' ')}>
         {parts.map(part => <span className="limits-reset__part" key={part.unit}>
-          <strong>{part.value}</strong><span>{part.unit[0]}</span>
+          <strong>{part.value}</strong><span>{part.unit}</span>
         </span>)}
       </span>
       <time className="limits-reset__date" dateTime={new Date(meter.resetsAt).toISOString()} title={FULL_DATE.format(resetDate)}>
@@ -219,7 +221,7 @@ function ProviderBox({ tool, accounts, now, onTrack }: { tool: string; accounts:
         </span>
       </header>
       <ul className="limits-lines">
-        {accounts.map((account) => (
+        {sortByAvailability(accounts).map((account) => (
           <AccountLine key={account.key} account={account} now={now} onTrack={onTrack} />
         ))}
       </ul>
