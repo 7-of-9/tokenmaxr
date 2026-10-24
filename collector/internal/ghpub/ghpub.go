@@ -395,11 +395,13 @@ func Hash(b []byte) string {
 }
 
 // Publish commits the files whose content differs from published (path ->
-// Hash) in one commit, with meta.json, and returns the new hashes of every
-// committed path ("" for a path deleted: a File.Delete is committed only for
-// a path in published). When no data file changed, nothing is committed
+// Hash) in one commit, with meta.json and the data/index.json that lists them
+// (index.go), and returns the new hashes of every committed path of files
+// ("" for a path deleted: a File.Delete is committed only for a path in
+// published). When no data file changed, nothing is committed
 // unless refreshMeta (e.g. a daily "last seen"). A branch moved by another
-// machine is retried: each machine writes only its own paths.
+// machine is retried: each machine writes only its own paths, and the index
+// anew from the head it commits on.
 func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, files []ghapi.File, published map[string]string, refreshMeta bool) (map[string]string, error) {
 	var commit []ghapi.File
 	changed := map[string]string{}
@@ -452,10 +454,21 @@ func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, f
 	return changed, nil
 }
 
+// commitRetrying commits files on top of the branch's head, with the
+// data/index.json that leaves right (listed from that same head, so a retry
+// after another machine's commit lists theirs too).
 func commitRetrying(ctx context.Context, c *ghapi.Client, repo, branch, msg string, files []ghapi.File) error {
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		if _, err = c.Commit(ctx, repo, branch, msg, files); !errors.Is(err, ghapi.ErrConflict) {
+		var head string
+		if head, err = c.Head(ctx, repo, branch); err != nil {
+			break
+		}
+		commit := files
+		if index, ok := indexUpdate(ctx, c, repo, head, files); ok {
+			commit = append(slices.Clone(files), index)
+		}
+		if _, err = c.CommitOn(ctx, repo, branch, head, msg, commit); !errors.Is(err, ghapi.ErrConflict) {
 			break
 		}
 	}

@@ -5,7 +5,9 @@
 package ghapitest
 
 import (
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -135,6 +137,15 @@ func (f *Fake) at(ref string) map[string]string {
 	return f.Files
 }
 
+// blobSHA is git's object id for a file with this content, as GitHub lists it.
+func blobSHA(content string) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d", len(content))
+	h.Write([]byte{0})
+	h.Write([]byte(content))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 func (f *Fake) id(p string) string {
 	f.seq++
 	return p + strings.Repeat("x", 1) + string(rune('a'+f.seq))
@@ -243,7 +254,7 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		files := f.at(strings.TrimPrefix(path, repo+"/git/trees/"))
 		var tree []map[string]string
 		for _, p := range slices.Sorted(maps.Keys(files)) {
-			tree = append(tree, map[string]string{"path": p, "type": "blob", "mode": "100644"})
+			tree = append(tree, map[string]string{"path": p, "type": "blob", "mode": "100644", "sha": blobSHA(files[p])})
 		}
 		js(200, map[string]any{"sha": f.commits[f.Head], "tree": tree, "truncated": false})
 	case path == repo+"/git/trees":

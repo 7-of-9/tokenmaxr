@@ -57,11 +57,39 @@ echo "bye"`)
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	fakeShell(t, `sleep 30 & echo $! > '`+pidFile+`'
 wait`)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := loginShellCodexHome(ctx)
+		done <- err
+	}()
+	// Wait until the child exists before cancelling. On a busy Mac, starting
+	// the test shell can itself take longer than the old 300 ms timeout.
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pid > 0 {
+				break
+			}
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("shell exited before starting its child: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shell did not start its child")
+		}
+	}
 	start := time.Now()
-	if _, err := loginShellCodexHome(ctx); err == nil || time.Since(start) > 10*time.Second {
-		t.Fatalf("hung shell: %v after %s", err, time.Since(start))
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("cancelled shell returned no error")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("hung shell did not stop after %s", time.Since(start))
 	}
 	b, err := os.ReadFile(pidFile)
 	if err != nil {

@@ -123,13 +123,13 @@
 @media (max-width: 640px) {
   /* Give navigation its own row instead of squeezing the breadcrumb out of a phone header. */
   .tokens-shell:has(.tokens-header--auth) {
-    --header-height: 88px;
+    --header-height: 100px;
   }
 
   .tokens-shell .tokens-header--auth {
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr);
-    grid-template-rows: 34px 38px;
+    grid-template-rows: 40px 44px;
     align-content: center;
     gap: 2px 8px;
     padding: 6px 12px;
@@ -150,7 +150,7 @@
   .tokens-header--auth .tokens-private-pages a {
     display: inline-flex;
     align-items: center;
-    min-height: 36px;
+    min-height: 44px;
     padding: 0.35rem 0.5rem;
   }
 
@@ -159,7 +159,7 @@
     grid-column: 2;
     grid-row: 1 / -1;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: 34px 38px;
+    grid-template-rows: 40px 44px;
     gap: 2px 8px;
     max-width: none;
   }
@@ -200,7 +200,7 @@
     grid-row: 1;
     width: 32px;
     min-width: 0;
-    height: 34px;
+    height: 40px;
     margin-right: 0;
     padding: 0;
     font-size: 2rem;

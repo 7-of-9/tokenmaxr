@@ -10,6 +10,8 @@
 // - model and session: keep non-empty
 // - machine/cc: the first reporter's, set on insert and never changed. A row
 //   written before v1.1 has no machine; its first later sighting fills both.
+//   Exception: a record whose source is an upgrade (sourceUpgrade) brings its
+//   channel and its reporter.
 // Every tie-break is deterministic so arrival order never changes the result.
 
 import { num } from './tables.js'
@@ -58,11 +60,20 @@ export function mergeEvent(existing, incoming) {
   let out
   if (ipv > epv) {
     out = { ...incoming }
+    // A Claude chat turn recorded live (pv 2) replaces a swept inference
+    // (pv 1) of the same turn, reporter included (SPEC "Claude chat").
+    if (chatRank(incoming.source) && chatRank(existing.source)) return mergeMeta(out, incoming, existing)
   } else {
     out = { ...existing }
     for (const f of TOKEN_FIELDS) out[f] = Math.max(existing[f] ?? 0, incoming[f] ?? 0)
     out.ts = minTs(existing.ts, incoming.ts)
     if (existing.q === 'exact' || incoming.q === 'exact') out.q = 'exact'
+    // Same pv, better evidence of the client: the usage moves channel and
+    // reporter with its activity and prompt (mergeActivity), in any order.
+    if (sourceUpgrade(existing.source, incoming.source)) {
+      out.source = incoming.source
+      return mergeMeta(out, incoming, existing)
+    }
   }
   return mergeMeta(out, existing, incoming)
 }
@@ -87,7 +98,25 @@ function firstReporter(out, a, b) {
   return out
 }
 
+// Claude chat channels share event ids (SPEC "Claude chat"). A prompt's
+// channel follows the best evidence of its client: seen live in a browser,
+// then an app, then not recorded. Swept records arrive hours after live ones,
+// so this only matters when that order is broken.
+const CHAT_RANK = { 'chat-claude': 1, 'native-claude': 2, 'web-claude': 3 }
+const chatRank = (source) => CHAT_RANK[source] ?? 0
+
+// sourceUpgrade reports that a record of source `to` replaces the channel of
+// a stored record of source `from` with the same id: a Claude chat turn by
+// the evidence of its client, and a ~/.claude line the desktop app wrote,
+// first uploaded as claude-code by collectors that did not read its
+// entrypoint (SPEC "Claude Native"). Never the other way round.
+export function sourceUpgrade(from, to) {
+  if (chatRank(from) && chatRank(to) > chatRank(from)) return true
+  return from === 'claude-code' && to === 'native-claude'
+}
+
 function mergeActivity(a, b) {
+  if (sourceUpgrade(a.source, b.source)) [a, b] = [b, a]
   const out = { ...a, kind: 'activity' }
   out.ts = minTs(a.ts, b.ts)
   out.hasUsage = Boolean(a.hasUsage || b.hasUsage)

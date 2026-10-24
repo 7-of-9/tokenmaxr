@@ -170,6 +170,7 @@ function computeFacets(entries, workspaces, months) {
       providerRank(a.provider) - providerRank(b.provider) || Number(a.unattributed) - Number(b.unattributed) ||
       Number(!a.probable) - Number(!b.probable) || b.count - a.count || a.label.localeCompare(b.label) || a.acct.localeCompare(b.acct)),
     workspaces,
+    sources: [...tally(entries, (e) => e.source)].map(([value, count]) => ({ value, count })).sort(byCount),
     models: [...tally(entries, (e) => e.model)].map(([value, count]) => ({ value, count })).sort(byCount),
     machines: [...tally(entries, (e) => e.machine)].map(([value, count]) => ({ value, count })).sort(byCount),
     months: months.map((month) => ({ month, count: monthCounts.get(month) || 0 })),
@@ -195,7 +196,7 @@ async function getIndex(store, key, nowMs) {
 
 // Public counts share the private index's lifetime and ingest invalidation,
 // but construct a new allow-listed result. Never return or spread an entry.
-export async function getPromptCountAggregates(store, key, machines, nowMs = Date.now()) {
+export async function getPromptCountAggregates(store, key, machines, nowMs = Date.now(), source = '') {
   const index = await getIndex(store, key, nowMs)
   const ids = new Set(machines.map(m => m.id))
   const labels = new Map()
@@ -215,6 +216,7 @@ export async function getPromptCountAggregates(store, key, machines, nowMs = Dat
   let total = 0
   for (const entry of index.entries) {
     if (!PROVIDERS.includes(entry.provider)) continue
+    if (source && entry.source !== source) continue
     const tsMs = Date.parse(entry.ts)
     if (!Number.isFinite(tsMs)) continue
     const date = localDate(tsMs, entry.tzOffsetMin)
@@ -317,6 +319,7 @@ export async function handlePrompts(req, rawCtx) {
   for (const e of index.entries) {
     if (month !== 'all' && e.month !== month) continue
     if (q.provider && e.provider !== q.provider) continue
+    if (q.source && e.source !== q.source) continue
     if (q.acct && e.acctKey !== q.acct) continue
     if (ws && e.wsKey !== wsKey && e.workspace !== ws) continue
     if (q.machine && e.machine !== q.machine) continue

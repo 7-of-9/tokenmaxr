@@ -42,7 +42,8 @@ test('validateLimit keeps a meter and rejects an email', () => {
   assert.equal(checkCaps({ usage: [], prompts: [], limits: new Array(51).fill({}) }).status, 413)
 })
 
-test('newer limit snapshot replaces an older one, and only the owner can read them', async () => {
+test('newer limit snapshot replaces an older one, and only the owner can read them', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
   const store = memoryStore()
   const lim = (fn) => fn()
   const older = validateLimit(snap({ observedAt: '2026-09-01T00:00:00Z', usedPercent: 10 }), NOW).value

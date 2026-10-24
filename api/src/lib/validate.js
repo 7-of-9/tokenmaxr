@@ -15,6 +15,9 @@ export const SOURCE_PROVIDER = {
   cursor: 'cursor',
   'gemini-cli': 'google',
   'web-claude': 'anthropic',
+  'native-claude': 'anthropic',
+  // Claude chat whose client was not recorded (SPEC "Claude chat").
+  'chat-claude': 'anthropic',
   'web-chatgpt': 'openai',
   'web-grok': 'xai',
 }

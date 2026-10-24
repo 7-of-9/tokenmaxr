@@ -140,7 +140,7 @@ export async function runScenario(t, { call, store }) {
     const u = await getUsage()
     const d = dayOf(u, '2026-09-20')
     assert.ok(d, 'day present')
-    assert.equal(d.v, 3)
+    assert.equal(d.v, 4)
     const an = d.providers.anthropic
     assert.deepEqual(an.exact, { in: 110, cacheW: 20, cacheW1h: 8, cacheR: 1000, out: 55, reasoning: 0, calls: 2, events: 2 })
     assert.deepEqual(an.models.exact['claude-test-model'], { in: 110, cacheW: 20, cacheW1h: 8, cacheR: 1000, out: 55, reasoning: 0, calls: 2 })

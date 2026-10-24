@@ -1,13 +1,33 @@
 # Builds the dashboard from site/ and data/ and deploys it to GitHub Pages.
-# Collectors commit to data/machines/<id>/; each push redeploys (a newer push
-# cancels an older build). Artifacts keep for one day, so the repository's
-# Actions storage stays near zero.
+# Collectors commit to data/machines/<id>/ (and data/index.json, the list of
+# files) about once an hour each. Those commits do not deploy: the dashboard
+# of a public repository reads data/ straight from the repository when the
+# page loads, so it is current without a deploy. The deployed copy of data/ is
+# what a private repository's dashboard shows (and any dashboard when the
+# repository cannot be read), so an hourly run redeploys it when anything in
+# the repository changed since the last deploy, and skips when nothing did.
+# Changes to the dashboard itself (site/, which the collectors update,
+# tokenmaxr.json, scripts/ and this file) deploy at once, data included. A
+# newer push run cancels an older one; a scheduled run waits for it instead.
+# The hourly run starts only once a collector has joined (the repository
+# variable TOKENMAXR_FLEET_KEY exists) and not when the repository variable
+# TOKENMAXR_SCHEDULE is "off"; a skipped run uses no Actions minutes. Public
+# repositories pay nothing for Actions. In a private one each hourly run that
+# starts bills at least a minute, even when it deploys nothing: up to about
+# 720 minutes a month. Set TOKENMAXR_SCHEDULE to "off" to stop it (the private
+# dashboard then updates only on a dashboard change or "Run workflow").
+# GitHub turns scheduled runs off after 60 days without a commit only in
+# public repositories, where collectors commit far more often.
+# Artifacts keep for one day, so the repository's Actions storage stays near
+# zero.
 name: dashboard
 
 on:
   push:
     branches: [main]
-    paths: ["data/**", "site/**", "tokenmaxr.json", "scripts/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "tokenmaxr.json", "scripts/**", ".github/workflows/pages.yml"]
+  schedule:
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -17,12 +37,17 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # A scheduled run never cancels a push run deploying a dashboard change.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   deploy:
-    # The template itself has no data and no Pages site.
-    if: ${{ !github.event.repository.is_template }}
+    # The template itself has no data and no Pages site. (A scheduled run's
+    # event names no repository, so the template is also named.) Scheduled
+    # runs: see the top of this file.
+    if: >-
+      ${{ !github.event.repository.is_template && github.repository != '7-of-9/tokenmaxr-pages' &&
+      (github.event_name != 'schedule' || (vars.TOKENMAXR_FLEET_KEY != '' && vars.TOKENMAXR_SCHEDULE != 'off')) }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -32,25 +57,50 @@ jobs:
       # A new repository has no data (and maybe no Pages yet): nothing to deploy.
       - id: data
         run: if [ -d data/machines ]; then echo "has=1" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.data.outputs.has == '1'
+      - id: pages
+        if: steps.data.outputs.has == '1'
+        uses: actions/configure-pages@v5
+      # The hourly run: deploy only when the repository differs from the
+      # deployed copy's (its data/index.json keeps the tree of the commit it
+      # was built from), so a dashboard change whose push run failed or was
+      # replaced deploys too. A site that cannot be read, or one built before
+      # this check, deploys.
+      - id: changed
+        if: steps.data.outputs.has == '1'
+        env:
+          EVENT: ${{ github.event_name }}
+          SITE: ${{ steps.pages.outputs.base_url }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          deployed=""
+          if [ "$EVENT" = schedule ]; then
+            deployed=$(curl -fsSL --max-time 20 "$SITE/data/index.json?tree=$tree" | jq -r '.sourceTree // empty' 2>/dev/null || true)
+          fi
+          if [ "$deployed" = "$tree" ]; then
+            echo "Nothing changed since the last deploy ($tree): nothing to deploy."
+          else
+            echo "deploy=1" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changed.outputs.deploy == '1'
         uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Assemble the site
-        if: steps.data.outputs.has == '1'
+        if: steps.changed.outputs.deploy == '1'
+        env:
+          SOURCE_TREE: ${{ steps.changed.outputs.tree }}
         run: |
           node scripts/build-index.mjs
           mkdir -p _site
           cp -r site/. _site/
           cp -r data _site/data
           cp tokenmaxr.json _site/
-      - if: steps.data.outputs.has == '1'
-        uses: actions/configure-pages@v5
-      - if: steps.data.outputs.has == '1'
+      - if: steps.changed.outputs.deploy == '1'
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
           retention-days: 1
       - id: deployment
-        if: steps.data.outputs.has == '1'
+        if: steps.changed.outputs.deploy == '1'
         uses: actions/deploy-pages@v4

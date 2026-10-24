@@ -103,6 +103,39 @@
         </div>
       </section>
 
+      <section class="card" id="wc">
+        <div class="head"><h2>Claude Web capture <span class="muted">estimated</span></h2><span class="badge" id="wc-badge"></span></div>
+        <p class="lead">Records your claude.ai chats in Chrome as estimated tokens, separate from Claude Code. claude.ai reports no token counts for chat, so these are lower-bound estimates: the conversation text, plus the tool definitions and a system-prompt floor that every model call re-reads (as cache reads).</p>
+        <div id="wc-steps" hidden>
+          <p>Load the extension once:</p>
+          <ol class="steps">
+            <li>Open <code>chrome://extensions</code></li>
+            <li>Turn on <b>Developer mode</b></li>
+            <li>Click <b>Load unpacked</b> and choose <code id="wc-dir"></code></li>
+          </ol>
+        </div>
+        <dl id="wc-info" hidden>
+          <dt>Extension</dt><dd id="wc-ext"></dd>
+          <dt>Records</dt><dd id="wc-records"></dd>
+        </dl>
+        <label class="check" id="wc-sweep-row" hidden><input type="checkbox" id="wc-sweep"> <span>Sweep claude.ai history from this machine (one machine only; estimated, client not recorded before capture started)</span></label>
+        <label class="check" id="wc-infer-row" hidden><input type="checkbox" id="wc-infer"> <span>Count later chats no browser recorded as Claude Native (apps). Turn off if other machines capture claude.ai and publish only to GitHub.</span></label>
+        <label class="field" id="wc-before-row" hidden>Earliest Claude Web capture start in the fleet (history before it is "client not recorded"; leave empty if this is the only capturing machine)
+          <input type="date" id="wc-before">
+        </label>
+        <label class="field" id="wc-prompts-row" hidden>Chat prompt text
+          <select id="wc-prompts">
+            <option value="off">Off: keep no chat text</option>
+            <option value="live">Chats typed in this browser</option>
+            <option value="all">Those and swept history</option>
+          </select>
+        </label>
+        <p class="hint" id="wc-prompts-state" hidden></p>
+        <div class="row">
+          <button class="primary" id="wc-install">Install</button>
+        </div>
+      </section>
+
       <section class="card" id="sv">
         <div class="head"><h2>Your own server <span class="muted">optional</span></h2><span class="badge" id="sv-badge"></span></div>
         <p class="lead">A tokenmaxr server receives every event. Leave it off to use GitHub only.</p>

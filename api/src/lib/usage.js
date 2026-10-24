@@ -6,7 +6,7 @@ import { resolveCtx } from './context.js'
 import { limiter, deadline } from './pool.js'
 import { num } from './tables.js'
 import { needsRecompute, needsUpgrade, recomputeDay } from './days.js'
-import { aliasAccts, hasData, legacyShape } from './rollup.js'
+import { ROLLUP_DATA_PROPS, aliasAccts, hasData, legacyShape } from './rollup.js'
 import { PROVIDERS, cleanCountry, cleanLabel } from './validate.js'
 import { privateRollupData, readAccountUsage, reconcileAccountUsage, surroundingDates } from './account-usage.js'
 
@@ -46,7 +46,7 @@ export async function handleUsage(req, rawCtx) {
     lim(() => store.table('rollups').list('r', { rkGte: coverageFrom })),
     lim(() => store.table('dirtydays').list('d', { rkGte: coverageFrom })),
     // Keys only, for firstDate when the range starts after the first data.
-    from == null ? [] : lim(() => store.table('rollups').list('r', { rkLte: from, select: ['gen', 'data', 'accountLedger'] })),
+    from == null ? [] : lim(() => store.table('rollups').list('r', { rkLte: from, select: ['gen', ...ROLLUP_DATA_PROPS, 'accountLedger'] })),
     lim(() => store.table('accounts').list('a', { select: ['provider'] })),
     lim(() => store.table('machines').list('m', { select: ['label', 'cc', 'os', 'enrolledAt', 'lastSeenAt', 'lastIngestAt'] })),
     readAccountUsage(store, lim),

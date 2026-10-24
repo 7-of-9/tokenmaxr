@@ -12,9 +12,9 @@ export interface PromptCountsState {
 }
 
 /** Public, optional enrichment: a failure never blocks or clears token usage. */
-export function usePromptCounts(mock: boolean, reloadKey: number): PromptCountsState {
+export function usePromptCounts(mock: boolean, reloadKey: number, channel = 'all'): PromptCountsState {
   const countsSource = useUsageSource()
-  const source = mock ? 'mock' : countsSource.cacheKey
+  const source = `${mock ? 'mock' : countsSource.cacheKey}:${channel}`
   const previousSource = useRef(source)
   const [state, setState] = useState<PromptCountsState>({ data: null, error: null, loading: !mock })
 
@@ -48,7 +48,7 @@ export function usePromptCounts(mock: boolean, reloadKey: number): PromptCountsS
       const timeout = window.setTimeout(() => { timedOut = true; request.abort() }, TIMEOUT_MS)
       setState(previous => ({ ...previous, loading: true }))
       try {
-        const data = await countsSource.fetchPromptCounts(request.signal)
+        const data = await countsSource.fetchPromptCounts(request.signal, channel)
         if (request.signal.aborted) throw new Error('Prompt model counts timed out.')
         if (!cancelled && controller === request) {
           retryAfter = 0
@@ -85,7 +85,7 @@ export function usePromptCounts(mock: boolean, reloadKey: number): PromptCountsS
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
     }
-  }, [mock, reloadKey, source, countsSource])
+  }, [mock, reloadKey, source, countsSource, channel])
 
   // Do not let the previous API's enrichment appear for a newly selected source.
   return previousSource.current === source ? state : { data: null, error: null, loading: !mock }

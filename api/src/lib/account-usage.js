@@ -4,7 +4,7 @@
 // represented by local events. Comparison always uses the provider's UTC day,
 // never the local calendar day used by the activity view.
 import { isStatus } from './tables.js'
-import { computeRollup, UNKNOWN_COUNTRY, UNKNOWN_MACHINE, UNKNOWN_MODEL } from './rollup.js'
+import { computeRollup, joinRollupData, UNKNOWN_COUNTRY, UNKNOWN_MACHINE, UNKNOWN_MODEL } from './rollup.js'
 import { acctRank } from './merge.js'
 
 const PARTITION = 'usage'
@@ -46,7 +46,7 @@ export function accountLedger(events) {
 // Attach the separate private column only inside the new API. The public
 // serializer removes it. Never trust an embedded ledger from the old layout.
 export function privateRollupData(row) {
-  const data = JSON.parse(row.data)
+  const data = JSON.parse(joinRollupData(row))
   delete data.accountLedger
   if (typeof row.accountLedger === 'string') {
     try { data.accountLedger = JSON.parse(row.accountLedger) } catch { /* Old/malformed coverage stays pending. */ }
@@ -94,6 +94,8 @@ function emptyProvider(date, provider, acct) {
   const p = computeRollup(date, [{ kind: 'usage', provider, acct, q: 'exact' }]).providers[provider]
   p.exact.events = 0
   p.byWorkspace.unknown.exact.events = 0
+  // Account totals do not establish a client channel or an observed request.
+  p.bySource = {}
   return p
 }
 

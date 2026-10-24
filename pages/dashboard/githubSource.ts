@@ -1,6 +1,19 @@
 // The GitHub Pages data source: reads the static files collectors publish to the user's repository
-// (data/index.json, written by scripts/build-index.mjs, lists each machine's files) and builds the same
-// UsageResponse d0m1.com's API serves, so the shared /tokens page (TokensView) shows the same nuance.
+// (data/index.json lists each machine's files) and builds the same UsageResponse d0m1.com's API serves, so the
+// shared /tokens page (TokensView) shows the same nuance.
+//
+// Where it reads them: a public repository's files straight from the repository (raw.githubusercontent.com, its
+// newest commit, cached there for up to 5 minutes), so collectors' commits show without a Pages deploy; the
+// index there is the one collectors commit with their data, joined with the deployed copy's index (a machine
+// whose collector commits no index yet adds files the repository's index does not list until another machine
+// commits; the deployed index lists them after the next hourly deploy, and they are then read live). A private repository (raw.githubusercontent.com
+// answers 404 to a page), a repository whose collectors do not commit an index yet, and any failure before the
+// first live read of a visit read the deployed copy beside the page instead (its index written by
+// scripts/build-index.mjs), which the Pages workflow refreshes hourly. Once a live read has worked, a failed one
+// (rate-limited, offline) fails the poll, so the page keeps its newer data and tries again, rather than step
+// back to the older deployed copy. Both indexes give each file's git object id, so a file is read again only when it
+// changed, and a copy is kept only when its bytes have that id (raw.githubusercontent.com caches each file on its
+// own: a fresh index can list a change whose older copy is still served, which is then read again next time).
 //
 // Every machine publishes its own daily rows; the fleet view sums them here exactly as the server's rollup
 // (api/src/lib/rollup.js) sums events: tokens split into exact and estimated buckets by event quality, prompts
@@ -19,15 +32,23 @@ import {
 } from './accountUsage.ts'
 import { LimitsDenied, type LimitRow } from '../../src/components/agents/limits.ts'
 import type { UsageSource } from '../../src/components/agents/source.ts'
-import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse } from '../../src/components/agents/types.ts'
+import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse, WorkspaceDay } from '../../src/components/agents/types.ts'
 import type { UsageTransfer } from '../../src/components/agents/usageResponse.ts'
 import { decryptOwnerFile, mergeLimitRows, OWNER_FILE } from './owner.ts'
 
 const PROVIDERS: Provider[] = ['anthropic', 'openai', 'xai', 'cursor', 'google']
 /** Column order of schema 1 files, which some early collectors wrote without "cols". */
 export const SCHEMA1_COLS = ['date', 'provider', 'source', 'model', 'acct', 'in', 'cacheW', 'cacheR', 'out', 'events', 'prompts']
-/** A machine whose newest event is this recent is live (the collector publishes about every 15 minutes). */
-export const LIVE_MS = 30 * 60 * 1000
+/**
+ * A machine whose newest event is this recent is live: collectors publish hourly by default, and
+ * raw.githubusercontent.com keeps a copy for up to 5 minutes.
+ */
+export const LIVE_MS = 75 * 60 * 1000
+/**
+ * The same read from the deployed copy, which lags the repository by up to another hour (the hourly deploy at
+ * 17 minutes past, plus its queue): two publish intervals and the deploy's delay.
+ */
+export const DEPLOYED_LIVE_MS = 135 * 60 * 1000
 const UNKNOWN_COUNTRY = 'ZZ'
 const UNKNOWN_MODEL = 'unknown'
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -39,7 +60,8 @@ export interface IndexFile {
   schema?: number
   title?: string
   generatedAt?: string
-  machines?: Array<{ id: string; files?: string[] }>
+  /** Schema 4: each listed file's git object id (blobs), by file name. */
+  machines?: Array<{ id: string; files?: string[]; blobs?: Record<string, string> }>
 }
 
 export interface MetaFile {
@@ -85,6 +107,8 @@ export interface MachineFiles {
 export interface Published {
   title?: string
   generatedAt?: string
+  /** False: read from the deployed copy, so a machine counts as live over DEPLOYED_LIVE_MS (else LIVE_MS). */
+  live?: boolean
   machines: MachineFiles[]
 }
 
@@ -162,12 +186,34 @@ const sorted = <T>(obj: Record<string, T>) => Object.fromEntries(Object.keys(obj
 const TOKEN_FIELDS = ['in', 'cacheW', 'cacheW1h', 'cacheR', 'out', 'reasoning'] as const
 const PLACE_FIELDS = ['in', 'cacheW', 'cacheR', 'out'] as const
 
+const emptySource = (): WorkspaceDay => ({ exact: emptyBucket(), estimated: emptyBucket(), prompts: 0, promptsNoUsage: 0,
+  models: { exact: {}, estimated: {} }, byMachine: {}, byCountry: {} })
+
+function addSourceRow(p: WorkspaceDay, row: UsageRow, cc: string) {
+  const machine = slot(p.byMachine, row.machine, emptyPlace)
+  const place = slot(p.byCountry, cc || UNKNOWN_COUNTRY, emptyPlace)
+  if (row.events > 0 || TOKEN_FIELDS.some(f => row[f] > 0)) {
+    const tier = row.estimated ? 'estimated' : 'exact'
+    const model = slot(p.models[tier], row.model || UNKNOWN_MODEL, emptyModel)
+    for (const f of TOKEN_FIELDS) { p[tier][f] += row[f]; model[f] += row[f] }
+    p[tier].events += row.events
+    for (const f of PLACE_FIELDS) { machine[f] += row[f]; place[f] += row[f] }
+  }
+  p.prompts += row.prompts
+  p.promptsNoUsage += row.promptsNoUsage ?? 0
+  for (const split of [machine, place]) {
+    split.prompts += row.prompts
+    split.promptsNoUsage = (split.promptsNoUsage ?? 0) + (row.promptsNoUsage ?? 0)
+  }
+}
+
 interface ProviderAcc {
   day: ProviderDay
   accts: Set<string>
   promptsByModel: Record<string, number>
   /** Every row has a modelPrompts column: per-model prompt counts are complete for this provider and day. */
   modelsKnown: boolean
+  sourceModelPrompts: Record<string, Record<string, number> | null>
 }
 
 /**
@@ -188,12 +234,20 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
   for (const row of rows) {
     const providers = byDate.get(row.date) ?? {}
     byDate.set(row.date, providers)
-    const acc = providers[row.provider] ??= {
+    const acc: ProviderAcc = providers[row.provider] ??= {
       day: { exact: emptyBucket(), estimated: emptyBucket(), prompts: 0, promptsNoUsage: 0, accts: [],
         models: { exact: {}, estimated: {} }, byMachine: {}, byCountry: {} },
-      accts: new Set(), promptsByModel: {}, modelsKnown: true,
+      accts: new Set(), promptsByModel: {}, modelsKnown: true, sourceModelPrompts: Object.create(null),
     }
     const p = acc.day
+    const channels = p.bySource ??= Object.create(null)
+    addSourceRow(slot(channels, row.source || 'unknown', emptySource), row, country(row.machine))
+    const source = row.source || 'unknown'
+    if (row.modelPrompts === null) acc.sourceModelPrompts[source] = null
+    else if (acc.sourceModelPrompts[source] !== null) {
+      const counts = acc.sourceModelPrompts[source] ??= {}
+      if (row.modelPrompts > 0) counts[row.model || UNKNOWN_MODEL] = (counts[row.model || UNKNOWN_MODEL] ?? 0) + row.modelPrompts
+    }
     if (row.acct) acc.accts.add(aliases.get(row.acct) ?? 'unknown')
     const machine = slot(p.byMachine, row.machine, emptyPlace)
     const place = slot(p.byCountry, country(row.machine) || UNKNOWN_COUNTRY, emptyPlace)
@@ -225,6 +279,9 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
       const acc = accs[provider]
       if (!acc) continue
       const p = acc.day
+      for (const [source, counts] of Object.entries(acc.sourceModelPrompts)) {
+        if (counts) p.bySource![source].promptsByModel = sorted(counts)
+      }
       providers[provider] = {
         ...p,
         ...(acc.modelsKnown ? { promptsByModel: sorted(acc.promptsByModel) } : {}),
@@ -234,7 +291,7 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
         byCountry: sorted(p.byCountry),
       }
     }
-    return { v: 3, date, providers }
+    return { v: 4, date, providers }
   })
 }
 
@@ -242,6 +299,7 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
 export function publicMachines(published: Published, rows: UsageRow[], now: Date): PublicMachine[] {
   const firstRow = new Map<string, string>()
   for (const row of rows) if (!firstRow.has(row.machine) || row.date < firstRow.get(row.machine)!) firstRow.set(row.machine, row.date)
+  const liveMs = published.live === false ? DEPLOYED_LIVE_MS : LIVE_MS
   return published.machines.map(({ id, meta }) => {
     const lastEventAt = validTime(meta?.lastEventAt)
     const firstSeenAt = typeof meta?.firstSeenAt === 'string' && DATE_RE.test(meta.firstSeenAt) ? meta.firstSeenAt : firstRow.get(id) ?? null
@@ -250,7 +308,7 @@ export function publicMachines(published: Published, rows: UsageRow[], now: Date
       label: text(meta?.label).slice(0, 64) || id,
       cc: country(meta?.cc),
       os: text(meta?.os).slice(0, 32),
-      live: lastEventAt !== null && now.getTime() - Date.parse(lastEventAt) < LIVE_MS,
+      live: lastEventAt !== null && now.getTime() - Date.parse(lastEventAt) < liveMs,
       lastSeenAt: lastEventAt ?? validTime(meta?.updatedAt),
       firstSeenAt,
     }
@@ -384,16 +442,55 @@ export function buildUsage(published: Published, now: Date, options: BuildOption
 
 type Fetch = typeof fetch
 
-/** The machines listed in the index, each with its listed files. */
+/** The machines listed in the index, each with its listed files and (schema 4) their git object ids. */
 function listed(index: IndexFile) {
   return (Array.isArray(index.machines) ? index.machines : [])
     .filter(m => isRecord(m) && typeof m.id === 'string' && /^m_[0-9a-f]{12}$/.test(m.id))
-    .map(m => ({ id: m.id, files: Array.isArray(m.files) ? m.files.filter((f): f is string => typeof f === 'string') : [] }))
+    .map(m => ({
+      id: m.id,
+      files: Array.isArray(m.files) ? m.files.filter((f): f is string => typeof f === 'string') : [],
+      blobs: new Map(isRecord(m.blobs) ? Object.entries(m.blobs).filter((e): e is [string, string] => typeof e[1] === 'string') : []),
+    }))
+}
+
+/** git's object id for a file with these bytes (`git hash-object`), or null where WebCrypto is unavailable. */
+export async function blobId(bytes: Uint8Array): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) return null
+  const head = new TextEncoder().encode(`blob ${bytes.length}\0`)
+  const all = new Uint8Array(head.length + bytes.length)
+  all.set(head)
+  all.set(bytes, head.length)
+  return [...new Uint8Array(await subtle.digest('SHA-1', all))].map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** Where a public repository's files are read from as they are on its default branch. */
+export const RAW_ORIGIN = 'https://raw.githubusercontent.com/'
+const REPOSITORY_RE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/
+
+/** Where data/ is read from: the repository itself, or the deployed copy. */
+interface Place {
+  base: string
+  live: boolean
+}
+
+class LoadError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
 }
 
 export interface GithubSourceOptions {
-  /** Where data/ lives, relative to the page (default: beside it). */
+  /** Where the deployed data/ lives, relative to the page (default: beside it). */
   base?: string
+  /**
+   * The repository ("owner/name") whose data/ to read live, or null: the deployed copy only. Read from
+   * raw.githubusercontent.com (`raw`, its default branch); a private repository is read from the deployed copy.
+   */
+  repository?: () => Promise<string | null>
+  raw?: string
   fetch?: Fetch
   now?: () => Date
   /** The owner key while the owner is signed in (owner.ts), else null. It only ever decrypts: no request carries it. */
@@ -406,56 +503,216 @@ export type GithubSource = UsageSource & {
   checkOwnerKey(key: CryptoKey, signal?: AbortSignal): Promise<'ok' | 'none' | 'wrong'>
 }
 
-export function githubSource({ base = '', fetch: get = (...args) => fetch(...args), now = () => new Date(), ownerKey = () => null }: GithubSourceOptions = {}): GithubSource {
+
+export function githubSource({
+  base = '', repository, raw = RAW_ORIGIN, fetch: get = (...args) => fetch(...args), now = () => new Date(), ownerKey = () => null,
+}: GithubSourceOptions = {}): GithubSource {
   // The files behind each response, so one machine can be rebuilt exactly from its own rows.
   const behind = new WeakMap<UsageResponse, { published: Published; at: Date }>()
 
+  const deployed: Place = { base, live: false }
+  // The repository's own files (null: no repository named, or not a name).
+  let repo: Promise<Place | null> | undefined
+  const liveRepo = () => repo ??= Promise.resolve()
+    .then(() => repository?.() ?? null)
+    .then(name => typeof name === 'string' && REPOSITORY_RE.test(name) ? { base: `${raw}${name}/HEAD/`, live: true } : null, () => null)
+  // The repository has no index the collectors wrote (a private repository answers 404, as does one whose
+  // collectors write none): the deployed copy for the rest of this visit.
+  let liveOff = false
+  // Whether the last load read the repository's own files (the footer says so).
+  let readLive = false
+  // A load has read the repository's own files on this visit: a later failure is an error, not the older copy.
+  let liveOk = false
+  // The newest generatedAt served, so the footer's time never steps back (a fallback to the deployed copy).
+  let lastGeneratedAt: string | undefined
+
+  // Each file as last read, with the git object id its bytes have: a file still listed with that id is not read again.
+  const kept = new Map<string, { blob: string; value: unknown }>()
   // Files that may be missing (null): account-usage.json and owner.json behind an index too old to list them.
   const optional = new Set<string>()
-  const read = async (path: string, signal?: AbortSignal, onBytes?: (n: number) => void): Promise<unknown> => {
-    const response = await get(base + path, { cache: 'no-cache', signal, headers: { Accept: 'application/json' } })
-    if (response.status === 404 && path === 'data/index.json') {
-      throw new Error('Nothing has been published yet. Once a collector publishes, this page fills in (the first build takes a few minutes).')
+  const read = async (place: Place, path: string, signal?: AbortSignal, onBytes?: (n: number) => void, blob?: string): Promise<unknown> => {
+    const copy = blob === undefined ? undefined : kept.get(path)
+    if (copy && copy.blob === blob) return copy.value
+    const response = await get(place.base + path, { cache: 'no-cache', signal, headers: { Accept: 'application/json' } })
+    if (response.status === 404 && path === 'data/index.json' && !place.live) {
+      throw new LoadError('Nothing has been published yet. Once a collector publishes, this page fills in (the first build takes a few minutes).', 404)
     }
-    if (response.status === 404 && optional.has(path)) return null
-    if (!response.ok) throw new Error(`Could not load ${path} (${response.status}). Retrying shortly.`)
-    const body = await response.text()
-    onBytes?.(body.length)
+    if (response.status === 404 && (optional.has(path) || (place.live && unlisted.has(path)))) return null
+    if (!response.ok) throw new LoadError(`Could not load ${path} (${response.status}). Retrying shortly.`, response.status)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    onBytes?.(bytes.length)
+    let value: unknown
     try {
-      return JSON.parse(body)
+      value = JSON.parse(new TextDecoder().decode(bytes))
     } catch {
-      throw new Error(`${path} is not valid JSON.`)
+      throw new LoadError(`${path} is not valid JSON.`, response.status)
     }
+    // Kept only when these are the listed bytes: an older copy still cached is read again next time.
+    if (blob !== undefined && await blobId(bytes) === blob) kept.set(path, { blob, value })
+    return value
   }
-  const fetchIndex = async (signal?: AbortSignal) => {
-    const index = await read('data/index.json', signal)
+  const readIndex = async (place: Place, signal?: AbortSignal) => {
+    const index = await read(place, 'data/index.json', signal)
     return isRecord(index) ? index as IndexFile : {}
   }
 
+  // Files only the deployed copy's index lists, read live all the same (null when gone from the repository).
+  const unlisted = new Set<string>()
+  /**
+   * The repository's index with every file the deployed copy's index lists too. Only collectors that write an
+   * index rewrite the repository's, so a file committed since by one that does not (an older collector, a new
+   * machine) is missing from it: the deployed index (build-index.mjs, from the whole data/ folder) lists it.
+   */
+  const withDeployed = async (index: IndexFile, signal?: AbortSignal): Promise<{ index: IndexFile; deployedIndex?: IndexFile }> => {
+    let other: IndexFile
+    try {
+      other = await readIndex(deployed, signal)
+    } catch (error) {
+      if (signal?.aborted) throw error
+      return { index }
+    }
+    const machines = new Map<string, { id: string; files: string[]; blobs: Record<string, string> }>()
+    for (const m of listed(index)) {
+      machines.set(m.id, { id: m.id, files: [...m.files], blobs: Object.fromEntries(m.blobs) })
+      for (const f of m.files) unlisted.delete(`data/machines/${m.id}/${f}`)
+    }
+    for (const m of listed(other)) {
+      const into = machines.get(m.id) ?? { id: m.id, files: [], blobs: {} }
+      machines.set(m.id, into)
+      for (const f of m.files.filter(f => !into.files.includes(f))) {
+        into.files.push(f)
+        const blob = m.blobs.get(f)
+        if (blob) into.blobs[f] = blob
+        unlisted.add(`data/machines/${m.id}/${f}`)
+      }
+      into.files.sort()
+    }
+    return { index: { ...index, machines: [...machines.values()].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0) }, deployedIndex: other }
+  }
+
+  interface IndexLoad {
+    index: IndexFile
+    place: Place
+    /** Read live: the deployed copy's own index, when it loaded (a fallback needs no second read). */
+    deployedIndex?: IndexFile
+    /** The repository's index failed this time (not a 404): why. The index is then the deployed copy's. */
+    liveError?: unknown
+  }
+
+  /** The index to read by: the repository's own, when its collectors commit one (schema 4), else the deployed copy's. */
+  const readIndexes = async (signal: AbortSignal): Promise<IndexLoad> => {
+    const live = liveOff ? null : await liveRepo()
+    let liveError: unknown
+    if (live) {
+      try {
+        const index = await readIndex(live, signal)
+        if ((index.schema ?? 0) >= 4) return { ...await withDeployed(index, signal), place: live }
+        liveOff = true
+      } catch (error) {
+        if (signal.aborted) throw error
+        // A 404: the repository has none (private, or no collector writes one). Anything else (offline,
+        // rate-limited): the deployed copy this time only.
+        if (error instanceof LoadError && error.status === 404) liveOff = true
+        else liveError = error
+      }
+    }
+    return { index: await readIndex(deployed, signal), place: deployed, liveError }
+  }
+
+  // The index load under way, shared by every caller that asks meanwhile (the page's title and its first usage
+  // load start together). It has its own signal, stopped only when every caller waiting on it has given up, so
+  // one caller's abort never fails another's load.
+  let indexLoad: { promise: Promise<IndexLoad>; controller: AbortController; waiting: number } | undefined
+  const loadIndex = (signal?: AbortSignal): Promise<IndexLoad> => {
+    if (signal?.aborted) return Promise.reject(signal.reason)
+    let shared = indexLoad
+    if (!shared) {
+      const controller = new AbortController()
+      const started: NonNullable<typeof indexLoad> = { controller, waiting: 0, promise: readIndexes(controller.signal) }
+      started.promise.then(() => undefined, () => undefined).finally(() => { if (indexLoad === started) indexLoad = undefined })
+      indexLoad = shared = started
+    }
+    const load = shared
+    load.waiting++
+    return new Promise<IndexLoad>((resolve, reject) => {
+      let gone = false
+      const leave = () => {
+        if (gone) return false
+        gone = true
+        load.waiting--
+        signal?.removeEventListener('abort', onAbort)
+        return true
+      }
+      const onAbort = () => {
+        if (!leave()) return
+        if (load.waiting === 0) {
+          // Nobody waits any more: stop the read, and let the next caller start a new one.
+          if (indexLoad === load) indexLoad = undefined
+          load.controller.abort(signal!.reason)
+        }
+        reject(signal!.reason)
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      load.promise.then(value => { if (leave()) resolve(value) }, error => { if (leave()) reject(error) })
+    })
+  }
+
+  /**
+   * load over the index's files; when one of the repository's own does not load, over the deployed copy this
+   * time. keepLive (the usage load): once a live read has worked on this visit, a failed one fails instead, so the
+   * page keeps its newer data and retries rather than stepping back to the older deployed copy.
+   */
+  const fromIndex = async <T>(signal: AbortSignal | undefined, load: (index: IndexFile, place: Place) => Promise<T>, keepLive = false): Promise<T> => {
+    const { index, place, deployedIndex, liveError } = await loadIndex(signal)
+    if (keepLive && liveOk && liveError !== undefined) throw liveError
+    try {
+      const out = await load(index, place)
+      readLive = place.live
+      if (place.live) liveOk = true
+      return out
+    } catch (error) {
+      if (!place.live || signal?.aborted || (keepLive && liveOk)) throw error
+    }
+    const out = await load(deployedIndex ?? await readIndex(deployed, signal), deployed)
+    readLive = false
+    return out
+  }
+
+  // The collectors' index has no title (it is tokenmaxr.json's): read it there once.
+  let title: Promise<string | undefined> | undefined
+  const fetchIndex = async (signal?: AbortSignal): Promise<IndexFile> => {
+    const { index, place } = await loadIndex(signal)
+    if (!place.live || typeof index.title === 'string') return index
+    title ??= read(place, 'tokenmaxr.json').then(c => isRecord(c) && typeof c.title === 'string' ? c.title : undefined, () => undefined)
+    return { ...index, title: await title }
+  }
+
   /** Every machine's owner.json opened with key: how many there are, and the rows of those that open. */
-  const ownerRows = async (key: CryptoKey, signal?: AbortSignal) => {
-    const index = await fetchIndex(signal)
+  const ownerRows = (key: CryptoKey, signal?: AbortSignal) => fromIndex(signal, async (index, place) => {
     // Only a schema 3 index (build-index.mjs since owner files) lists owner.json; under an older one, look.
     const listsOwner = (index.schema ?? 1) >= 3
-    const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id }) => {
+    const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id, blobs }) => {
       const path = `data/machines/${id}/${OWNER_FILE}`
       if (!listsOwner) optional.add(path)
-      const file = await read(path, signal)
+      const file = await read(place, path, signal, undefined, blobs.get(OWNER_FILE))
       return file === null ? null : { id, file }
     }))
     const present = files.filter(f => f !== null)
     const rows = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
     return { present: present.length, opened: rows.filter(r => r !== null) }
-  }
+  })
 
   return {
     cacheKey: `github:${base || './'}`,
-    label: 'Data: daily totals published to this repository',
+    get label() {
+      return readLive ? 'Data: daily totals published to this repository, read live' : 'Data: daily totals published to this repository'
+    },
     loadingLabel: 'published data',
     unavailableText: 'No usage to show yet.',
     collectorHref: 'https://github.com/7-of-9/tokenmaxr',
-    // Pages redeploys a few minutes after each collector push.
-    pollMs: 120_000,
+    // Collectors publish hourly by default; the repository's files are cached for up to 5 minutes and the deployed
+    // copy is refreshed hourly. Between changes a poll reads the two indexes alone.
+    pollMs: 300_000,
 
     fetchIndex,
 
@@ -466,29 +723,40 @@ export function githubSource({ base = '', fetch: get = (...args) => fetch(...arg
         progress({ phase: 'downloading', received, total: null })
       }
       progress({ phase: 'downloading', received, total: null })
-      const index = await fetchIndex(signal)
-      // A schema 1 index (the first template's build-index.mjs) never lists account-usage.json.
-      const listsAccountUsage = (index.schema ?? 1) >= 2
-      const machines = await Promise.all(listed(index).map(async ({ id, files }): Promise<MachineFiles> => {
-        const dir = `data/machines/${id}/`
-        const accountPath = dir + 'account-usage.json'
-        const lookForAccount = !files.includes('account-usage.json') && !listsAccountUsage && files.includes('meta.json')
-        if (lookForAccount) optional.add(accountPath)
-        const [meta, usage, accountUsage] = await Promise.all([
-          files.includes('meta.json') ? read(dir + 'meta.json', signal, onBytes) : null,
-          Promise.all(files.filter(f => USAGE_FILE_RE.test(f)).map(f => read(dir + f, signal, onBytes))),
-          files.includes('account-usage.json') || lookForAccount ? read(accountPath, signal, onBytes) : null,
-        ])
-        return {
-          id,
-          meta: isRecord(meta) ? meta as MetaFile : null,
-          usage: usage.filter(isRecord) as UsageFile[],
-          accountUsage: isRecord(accountUsage) ? accountUsage as AccountUsageFile : null,
-        }
-      }))
+      const loaded = await fromIndex(signal, async (index, place): Promise<Published> => {
+        // A schema 1 index (the first template's build-index.mjs) never lists account-usage.json.
+        const listsAccountUsage = (index.schema ?? 1) >= 2
+        const machines = await Promise.all(listed(index).map(async ({ id, files, blobs }): Promise<MachineFiles | null> => {
+          const dir = `data/machines/${id}/`
+          const accountPath = dir + 'account-usage.json'
+          const lookForAccount = !files.includes('account-usage.json') && !listsAccountUsage && files.includes('meta.json')
+          if (lookForAccount) optional.add(accountPath)
+          const [meta, usage, accountUsage] = await Promise.all([
+            files.includes('meta.json') ? read(place, dir + 'meta.json', signal, onBytes, blobs.get('meta.json')) : null,
+            Promise.all(files.filter(f => USAGE_FILE_RE.test(f)).map(f => read(place, dir + f, signal, onBytes, blobs.get(f)))),
+            files.includes('account-usage.json') || lookForAccount ? read(place, accountPath, signal, onBytes, blobs.get('account-usage.json')) : null,
+          ])
+          const machine: MachineFiles = {
+            id,
+            meta: isRecord(meta) ? meta as MetaFile : null,
+            usage: usage.filter(isRecord) as UsageFile[],
+            accountUsage: isRecord(accountUsage) ? accountUsage as AccountUsageFile : null,
+          }
+          // Listed only by the deployed index, and every file gone from the repository: the machine was removed
+          // since the last deploy, so it is not shown.
+          const gone = place.live && files.length > 0 && files.every(f => unlisted.has(dir + f)) &&
+            machine.meta === null && machine.usage.length === 0 && machine.accountUsage === null
+          return gone ? null : machine
+        }))
+        return { title: index.title, generatedAt: index.generatedAt, live: place.live, machines: machines.filter(m => m !== null) }
+      }, true)
       progress({ phase: 'processing', received, total: null })
-      const published: Published = { title: index.title, generatedAt: index.generatedAt, machines }
       const at = now()
+      // The footer's "updated" time never steps back, as when a read falls back to the older deployed copy.
+      let generatedAt = validTime(loaded.generatedAt) ?? at.toISOString()
+      if (lastGeneratedAt !== undefined && Date.parse(lastGeneratedAt) > Date.parse(generatedAt)) generatedAt = lastGeneratedAt
+      lastGeneratedAt = generatedAt
+      const published: Published = { ...loaded, generatedAt }
       const data = buildUsage(published, at)
       behind.set(data, { published, at })
       return data

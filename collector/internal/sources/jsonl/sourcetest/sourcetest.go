@@ -95,9 +95,13 @@ func Merge(bs ...sources.Batch) Merged {
 			}
 		}
 		for _, a := range b.Activity {
-			if _, ok := m.Activity[a.ID]; !ok {
-				m.Activity[a.ID] = a
+			if old, ok := m.Activity[a.ID]; ok {
+				a.HasUsage = a.HasUsage || old.HasUsage
+				if old.TS.Before(a.TS) {
+					a.TS = old.TS
+				}
 			}
+			m.Activity[a.ID] = a
 		}
 		for _, p := range b.Prompts {
 			if o, ok := m.Prompts[p.ID]; ok {

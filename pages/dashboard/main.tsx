@@ -50,16 +50,17 @@ takeUnlock()
 window.addEventListener('popstate', takeUnlock)
 window.addEventListener('hashchange', takeUnlock)
 
-const source = githubSource({ ownerKey: owner.ready })
-// Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
-const view = storedViewToggle(storage, `${name}:signed-out`, window)
-
 // tokenmaxr.json, served beside the page: on a custom domain, the repository. Missing or unreadable: the default.
 const config: Promise<DashboardConfig> = fetch('tokenmaxr.json', { cache: 'no-cache', headers: { Accept: 'application/json' } })
   .then(response => (response.ok ? response.json() : null))
   .catch(() => null)
   .then(parseDashboardConfig)
 const repository = () => config.then(c => c.repository ?? pagesRepository(window.location.hostname, window.location.pathname))
+
+// The repository's data/ read live when it is public, else the deployed copy (githubSource.ts).
+const source = githubSource({ ownerKey: owner.ready, repository })
+// Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
+const view = storedViewToggle(storage, `${name}:signed-out`, window)
 // Sign in with GitHub (device flow through the relay): the owner key from the repository's fleet key, checked on
 // the published owner files, kept as the handoff keeps it. A signed-out view flag left from before is cleared.
 const signIn = createDeviceSignIn({

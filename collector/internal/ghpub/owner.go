@@ -84,7 +84,8 @@ type OwnerRow struct {
 var (
 	sourceProvider = map[string]string{
 		"claude-code": "anthropic", "codex": "openai", "grok-cli": "xai", "cursor": "cursor",
-		"gemini-cli": "google", "web-claude": "anthropic", "web-chatgpt": "openai", "web-grok": "xai",
+		"gemini-cli": "google", "web-claude": "anthropic", "native-claude": "anthropic", "chat-claude": "anthropic",
+		"web-chatgpt": "openai", "web-grok": "xai",
 	}
 	acctQualities = []string{"recorded", "session", "timeline", "bounded", "lineage", "inferred", "unknown"}
 	orgKinds      = []string{"team", "enterprise", "personal"}

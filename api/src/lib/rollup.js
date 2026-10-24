@@ -1,10 +1,10 @@
-// Day rollups (SPEC "Rollup data", v3). Every figure is an integer sum of
+// Day rollups (SPEC "Rollup data", v4). Every figure is an integer sum of
 // disjoint token buckets, so byMachine, byCountry and models always add up to
 // the provider totals exactly.
 import { TOKEN_FIELDS } from './merge.js'
 import { PROVIDERS } from './validate.js'
 
-export const ROLLUP_VERSION = 3
+export const ROLLUP_VERSION = 4
 
 // Keys for events without a reporter (rows written before v1.1) or country.
 export const UNKNOWN_MACHINE = 'unknown'
@@ -68,10 +68,11 @@ export function computeRollup(date, events) {
   const acc = {}
   for (const ev of events) {
     if (!PROVIDERS.includes(ev.provider)) continue
-    const p = slot(acc, ev.provider, () => ({ ...emptyGroup(), accts: new Set(), byWorkspace: {} }))
+    const p = slot(acc, ev.provider, () => ({ ...emptyGroup(), accts: new Set(), byWorkspace: {}, bySource: {} }))
     if (ev.acct) p.accts.add(ev.acct)
     addEvent(p, ev)
     addEvent(slot(p.byWorkspace, ev.ws || 'unknown', emptyGroup), ev, true)
+    addEvent(slot(p.bySource, ev.source || 'unknown', emptyGroup), ev, true)
   }
   const providers = {}
   for (const name of Object.keys(acc).sort()) {
@@ -79,6 +80,7 @@ export function computeRollup(date, events) {
     providers[name] = {
       ...finishGroup(p), accts: [...p.accts].sort(),
       byWorkspace: Object.fromEntries(Object.keys(p.byWorkspace).sort().map((ws) => [ws, finishGroup(p.byWorkspace[ws])])),
+      bySource: Object.fromEntries(Object.keys(p.bySource).sort().map((source) => [source, finishGroup(p.bySource[source])])),
     }
   }
   return { v: ROLLUP_VERSION, date, providers }
@@ -86,11 +88,42 @@ export function computeRollup(date, events) {
 
 export const isCurrentRollup = (data) => data?.v === ROLLUP_VERSION
 
+// Azure Table caps a string property at 64 KiB (32,768 UTF-16 units). A busy
+// day's rollup JSON can pass that, so it is stored across data, data1, data2,
+// … in that order. A row written before the split has only `data`.
+export const ROLLUP_CHUNK_CHARS = 30000
+export const ROLLUP_DATA_PROPS = ['data', ...Array.from({ length: 7 }, (_, i) => `data${i + 1}`)]
+
+// -> { data, data1?, … } for a rollup JSON string.
+export function splitRollupData(json) {
+  const props = {}
+  let start = 0
+  for (const prop of ROLLUP_DATA_PROPS) {
+    let end = Math.min(start + ROLLUP_CHUNK_CHARS, json.length)
+    // Never split a surrogate pair: a lone half does not survive UTF-8.
+    if (end < json.length && /[\uDC00-\uDFFF]/.test(json[end])) end--
+    props[prop] = json.slice(start, end)
+    start = end
+    if (start >= json.length) return props
+  }
+  throw new Error(`rollup too large to store (${json.length} chars)`)
+}
+
+// The stored rollup JSON of a row, joining any chunks.
+export function joinRollupData(row) {
+  let json = ''
+  for (const prop of ROLLUP_DATA_PROPS) {
+    if (typeof row[prop] !== 'string') break
+    json += row[prop]
+  }
+  return json
+}
+
 // Serves a v1 rollup (whose models were bare effective numbers) in the v2
 // shape until it is recomputed: `v` stays 1, and the model, machine and
 // country splits are empty rather than wrong.
 export function legacyShape(day) {
-  if (isCurrentRollup(day) || day.v === 2) return day
+  if (isCurrentRollup(day) || day.v === 2 || day.v === 3) return day
   const providers = {}
   for (const [name, p] of Object.entries(day.providers || {})) {
     providers[name] = {

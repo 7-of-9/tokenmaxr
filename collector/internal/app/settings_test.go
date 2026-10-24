@@ -150,7 +150,7 @@ func TestSettingsGuards(t *testing.T) {
 	}
 
 	st, raw := getState(t, base)
-	if !st.SetUp || st.GitHub.On || st.Server.Enrolled || st.Server.URL != "" || st.GitHub.PublishEveryMinutes != 30 {
+	if !st.SetUp || st.GitHub.On || st.Server.Enrolled || st.Server.URL != "" || st.GitHub.PublishEveryMinutes != 60 {
 		t.Fatalf("state %s", raw)
 	}
 	if strings.Contains(raw, base64.StdEncoding.EncodeToString(k)) {

@@ -204,6 +204,35 @@ type Emitter struct {
 	// Dir is the raw folder of the events emitted next: the same cwd the
 	// parser passes to Prompt. Usage and activity store its git root.
 	Dir string
+	// Q is the quality of the usage events emitted next ("" is exact).
+	Q string
+	// IDSource replaces Source in event ids when set, so one upstream
+	// record has one id whichever channel reports it (Claude chat:
+	// model.IDSourceClaudeChat).
+	IDSource string
+}
+
+func (e *Emitter) id(kind, nativeKey string) string {
+	src := e.Source
+	if e.IDSource != "" {
+		src = e.IDSource
+	}
+	return model.EventID(kind, e.Provider, src, nativeKey)
+}
+
+// idSource is UsageEvent.IDSource: e.IDSource when it differs from Source.
+func (e *Emitter) idSource() string {
+	if e.IDSource == e.Source {
+		return ""
+	}
+	return e.IDSource
+}
+
+func (e *Emitter) quality() string {
+	if e.Q == "" {
+		return model.QualityExact
+	}
+	return e.Q
 }
 
 // place is the workspace Prompt would store for Dir.
@@ -239,12 +268,12 @@ func (e *Emitter) seen(ts time.Time) {
 	}
 }
 
-// Usage appends an exact usage event.
+// Usage appends a usage event of quality e.Q (exact by default).
 func (e *Emitter) Usage(nativeKey string, ts time.Time, sessionID, modelName string, t model.Tokens) {
 	ts = ts.UTC()
 	acct, q := Attribute(e.Env, e.Provider, ts, sessionID, e.Hint)
 	e.Batch.Usage = append(e.Batch.Usage, model.UsageEvent{
-		ID:          model.EventID(model.KindUsage, e.Provider, e.Source, nativeKey),
+		ID:          e.id(model.KindUsage, nativeKey),
 		Provider:    e.Provider,
 		Source:      e.Source,
 		TS:          ts,
@@ -252,7 +281,8 @@ func (e *Emitter) Usage(nativeKey string, ts time.Time, sessionID, modelName str
 		Model:       modelName,
 		Acct:        acct,
 		AcctQ:       q,
-		Q:           model.QualityExact,
+		Q:           e.quality(),
+		IDSource:    e.idSource(),
 		PV:          e.PV,
 		Session:     model.SessionKey(e.Provider, sessionID),
 		Workspace:   e.place(),
@@ -267,7 +297,7 @@ func (e *Emitter) Activity(nativeKey string, ts time.Time, sessionID string, has
 	ts = ts.UTC()
 	acct, q := Attribute(e.Env, e.Provider, ts, sessionID, e.Hint)
 	e.Batch.Activity = append(e.Batch.Activity, model.ActivityEvent{
-		ID:          model.EventID(model.KindActivity, e.Provider, e.Source, nativeKey),
+		ID:          e.id(model.KindActivity, nativeKey),
 		Provider:    e.Provider,
 		Source:      e.Source,
 		TS:          ts,
@@ -278,6 +308,7 @@ func (e *Emitter) Activity(nativeKey string, ts time.Time, sessionID string, has
 		HasUsage:    hasUsage,
 		Workspace:   e.place(),
 		WS:          e.wsID(),
+		IDSource:    e.idSource(),
 	})
 	e.seen(ts)
 }
@@ -305,7 +336,7 @@ func (e *Emitter) Prompt(nativeKey string, ts time.Time, sessionID, ws, text str
 		machine, home = e.Env.Machine, e.Env.Home
 	}
 	return model.PromptRecord{
-		ID:          model.EventID(model.KindPrompt, e.Provider, e.Source, nativeKey),
+		ID:          e.id(model.KindPrompt, nativeKey),
 		Provider:    e.Provider,
 		Source:      e.Source,
 		TS:          ts,
@@ -320,8 +351,13 @@ func (e *Emitter) Prompt(nativeKey string, ts time.Time, sessionID, ws, text str
 	}
 }
 
-// Emit appends a finished prompt record.
+// Emit appends a finished prompt record. Its IDSource is set here, not in
+// Prompt: a record that waited in a parser's carry lost it there.
 func (e *Emitter) Emit(p model.PromptRecord) {
+	p.IDSource = ""
+	if e.IDSource != "" && e.IDSource != p.Source {
+		p.IDSource = e.IDSource
+	}
 	e.Batch.Prompts = append(e.Batch.Prompts, p)
 	e.seen(p.TS)
 }

@@ -41,7 +41,7 @@ func (a *App) GitHubLoginCLI(ctx context.Context, label string) error {
 	}
 	if instance.Running(a.Home) {
 		_ = instance.Send(a.Home, instance.Sync)
-		a.printf("The app is publishing now; afterwards every %s.\n", publishEveryText(a))
+		a.printf("The app is publishing now; afterwards %s.\n", publishEveryText(a))
 	} else {
 		a.printf("Publishing starts with the next tick (`" + buildinfo.Product + " sync-now` to publish now).\n")
 	}
@@ -49,12 +49,14 @@ func (a *App) GitHubLoginCLI(ctx context.Context, label string) error {
 	return nil
 }
 
+// publishEveryText is this machine's publishing interval as status words it:
+// "every hour", "every 2 h", "every 30 min" (never a Go duration, "1h0m0s").
 func publishEveryText(a *App) string {
 	cfg, err := store.LoadConfig(a.Home)
 	if err != nil || cfg.GitHub == nil {
-		return "30 minutes"
+		return every((&store.GitHubConfig{}).PublishEvery())
 	}
-	return cfg.GitHub.PublishEvery().String()
+	return every(cfg.GitHub.PublishEvery())
 }
 
 // GitHubLogoutCLI stops publishing to GitHub on this machine.

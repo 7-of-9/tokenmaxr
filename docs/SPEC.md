@@ -329,7 +329,7 @@ There is one fleet and one owner, so installs hide the join code. The mechanics 
 
 ### Owner auth (private endpoints)
 
-SWA injects `x-ms-client-principal` (base64 JSON `{identityProvider, userId, userDetails, userRoles}`) into managed Functions. A caller is the owner if `userRoles` contains `owner`, or if `identityProvider + ":" + userDetails`, lowercased, is in the comma-separated app setting `AGENTS_OWNER_IDS` (set to `github:7-of-9,aad:dom@d0m1.com`). Anything else gets `401` (not logged in) or `403` (logged in, not owner). The page logs in through `/.auth/login/github` or `/.auth/login/aad` with `post_login_redirect_uri=/tokens/prompts`.
+SWA injects `x-ms-client-principal` (base64 JSON `{identityProvider, userId, userDetails, userRoles}`) into managed Functions. A caller is the owner if `userRoles` contains `owner`, or if `identityProvider + ":" + userDetails`, lowercased, is in the comma-separated app setting `AGENTS_OWNER_IDS` (set to `github:7-of-9,aad:owner@example.com`). Anything else gets `401` (not logged in) or `403` (logged in, not owner). The page logs in through `/.auth/login/github` or `/.auth/login/aad` with `post_login_redirect_uri=/tokens/prompts`.
 
 ## Server storage (an Azure storage account; app setting `AGENTS_STORAGE_CONNECTION_STRING`; optional `AGENTS_TABLE_PREFIX` for tests)
 

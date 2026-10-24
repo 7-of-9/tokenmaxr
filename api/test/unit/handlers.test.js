@@ -181,9 +181,9 @@ test('v1 rollups are recomputed on read, and served in the v2 shape meanwhile', 
   assert.equal(anthropicOut(old), 5)
 
   const fresh = await usageOn(store, new Date())
-  assert.equal(fresh.days[0].v, 3)
+  assert.equal(fresh.days[0].v, 4)
   assert.equal(fresh.days[0].providers.anthropic.models.exact['claude-test-model'].cacheW1h, 3)
-  assert.equal(JSON.parse((await rollups.get('r', '2026-09-20')).data).v, 3)
+  assert.equal(JSON.parse((await rollups.get('r', '2026-09-20')).data).v, 4)
 })
 
 test('ingest clamps cacheW1h to cacheW and says so', async () => {
@@ -481,7 +481,7 @@ test('workspace tags survive ingest, old rollup upgrade and public aliases witho
   assert.equal(pending.days[0].v, 2)
   assert.equal(pending.days[0].providers.anthropic.models.exact['claude-test-model'].out, 110, 'pending v2 keeps pricing data')
   const upgraded = await usageOn(store, new Date())
-  assert.equal(upgraded.days[0].v, 3)
+  assert.equal(upgraded.days[0].v, 4)
   const p = upgraded.days[0].providers.anthropic
   assert.deepEqual(Object.keys(p.byWorkspace).sort(), ['unknown', 'workspace1', 'workspace2'])
   assert.equal(p.byWorkspace.workspace1.exact.out, 10)

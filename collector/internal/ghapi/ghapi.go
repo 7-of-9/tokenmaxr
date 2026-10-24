@@ -9,7 +9,9 @@ package ghapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -370,13 +372,20 @@ type File struct {
 	Delete  bool
 }
 
-// TreePaths lists every file (blob) path on ref, recursively. A tree too big
-// for one listing is an error rather than a partial list.
-func (c *Client) TreePaths(ctx context.Context, repo, ref string) ([]string, error) {
+// TreeEntry is one file (blob) on a ref: its path and git object id.
+type TreeEntry struct {
+	Path, SHA string
+}
+
+// Tree lists every file (blob) on ref, recursively, with its object id (the
+// BlobSHA of its content). A tree too big for one listing is an error rather
+// than a partial list.
+func (c *Client) Tree(ctx context.Context, repo, ref string) ([]TreeEntry, error) {
 	var t struct {
 		Tree []struct {
 			Path string `json:"path"`
 			Type string `json:"type"`
+			SHA  string `json:"sha"`
 		} `json:"tree"`
 		Truncated bool `json:"truncated"`
 	}
@@ -386,13 +395,36 @@ func (c *Client) TreePaths(ctx context.Context, repo, ref string) ([]string, err
 	if t.Truncated {
 		return nil, errors.New("the repository's file list is too long to read in one request")
 	}
-	var out []string
+	var out []TreeEntry
 	for _, e := range t.Tree {
 		if e.Type == "blob" {
-			out = append(out, e.Path)
+			out = append(out, TreeEntry{Path: e.Path, SHA: e.SHA})
 		}
 	}
 	return out, nil
+}
+
+// TreePaths lists every file (blob) path on ref, recursively (Tree).
+func (c *Client) TreePaths(ctx context.Context, repo, ref string) ([]string, error) {
+	entries, err := c.Tree(ctx, repo, ref)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Path)
+	}
+	return out, nil
+}
+
+// BlobSHA is git's object id for a file with content b (what Tree reports
+// for it, and `git hash-object` prints): SHA-1 of "blob <size>", a zero byte, b.
+func BlobSHA(b []byte) string {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d", len(b))
+	h.Write([]byte{0})
+	h.Write(b)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ErrConflict: the branch moved while committing (another machine published).

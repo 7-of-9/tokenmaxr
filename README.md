@@ -112,13 +112,34 @@ Tick *Run only in the system tray / menu bar* in Settings.
 Settings:
 
 - **GitHub**: sign in or out, rename this machine on the dashboard, publish
-  every 10 minutes to once a day (default 30 minutes), turn quota meters off,
+  every 10 minutes to once a day (default: hourly), turn quota meters off,
   opt in to the country flag and Codex account history.
 - **Your own server** (optional): see below.
 
 The app collects every minute, starts at login and updates itself from this
 repository's signed releases (checked hourly, verified with an ed25519 key
 built into the binary).
+
+## Claude Web capture (optional, Chrome)
+
+tokenmaxr can count Claude chat turns in claude.ai: those typed in a Chrome tab and, if you choose, the chats in your account's history (including those from the Claude desktop app). It is off until you install it, and it needs no release download: the extension is built into the tokenmaxr binary.
+
+1. Run `tokenmaxr web-capture install`. It writes the extension to `<state>/chrome-extension/` and registers the native-messaging host that lets Chrome hand the records to tokenmaxr. You can also use **Install** on the **Claude Web capture** card in the app's settings.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick that `chrome-extension` folder.
+3. Open claude.ai, then run `tokenmaxr web-capture status`. It says *not installed*, *waiting for the extension* or *active*.
+
+The numbers are **estimates**. claude.ai does not report token usage, so the extension estimates each turn from its text. Rows from Claude Web, Claude chat and app chat are shown with `~` on the dashboards. The extension sends tokenmaxr ids, times, the model and the estimate. It never sends cookies or headers. Its only network requests are to claude.ai, using your signed-in browser session.
+
+Settings (all also on the settings card):
+
+- `tokenmaxr web-capture sweeper on|off`: reads your account's chat history every 30 minutes while a claude.ai tab is open, so turns made elsewhere (the desktop app, your phone, other browsers) are counted too. It reads personal organisations only. Turn it on for **one machine only**.
+- `tokenmaxr web-capture prompts off|live|all`: whether chat prompt text is kept. It is `off` by default. `live` keeps the text of turns typed in this browser, and `all` also keeps swept turns. The collector's own prompt capture must also be on.
+- `tokenmaxr web-capture infer-apps on|off`: whether swept turns since capture started that no browser recorded are counted as Claude app chat (`on`) or left out (`off`).
+- `tokenmaxr web-capture history-before <YYYY-MM-DD>|off`: the date before which swept turns are counted as Claude chat with the client not recorded. This matters if more than one machine captures.
+
+**More than one capturing machine with GitHub-only publishing.** GitHub Pages adds up each machine's totals. It does not merge turns by id, so the same chat turn could be counted on two machines. To avoid that, run the sweeper on one machine only. On that machine, set `history-before` to the earliest capture start in your fleet (`web-capture status` shows each machine's) and turn `infer-apps` off. The d0m1.com server merges by id, so it never double counts.
+
+To remove it, run `tokenmaxr web-capture uninstall`. This removes the extension folder and the host registration. Captured records are kept, but their prompt text is deleted. Then remove the extension in `chrome://extensions`. `tokenmaxr uninstall` removes it too.
 
 ## Command line
 
@@ -207,6 +228,8 @@ seed).
 `tokenmaxr uninstall` (add `--purge` to delete local data too). Revoke the
 GitHub app at <https://github.com/settings/installations> and delete the
 `tokenmaxr-usage` repository if you want the published data gone.
+
+`tokenmaxr uninstall` also removes Claude Web capture (the Chrome host registration and the extension folder). With `--purge` it also deletes the captured chat records. Remove the extension itself in `chrome://extensions`.
 
 ## History
 

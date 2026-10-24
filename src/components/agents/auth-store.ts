@@ -51,11 +51,11 @@ export function createAuthStore(read: () => Promise<Response>, now = Date.now) {
 }
 
 /** Both endpoints stay on the current origin, including when Vite bridges production authentication. */
-export function authUrls(location: { pathname: string; search: string; hash: string }) {
+export function authUrls(location: { pathname: string; search: string; hash: string }, persistent = false) {
   const current = location.pathname + location.search + location.hash
   const returnTo = current.startsWith('/') && !current.startsWith('//') && !current.includes('\\') ? current : '/tokens'
   return {
     signIn: `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(returnTo)}`,
-    signOut: `/.auth/logout?post_logout_redirect_uri=${encodeURIComponent(returnTo)}`,
+    signOut: `${persistent ? '/api/session/logout' : '/.auth/logout'}?post_logout_redirect_uri=${encodeURIComponent(returnTo)}`,
   }
 }

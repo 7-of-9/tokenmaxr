@@ -18,7 +18,7 @@ import { resolveCtx } from './context.js'
 import { machineFromToken, patchCachedMachine } from './auth.js'
 import { limiter, deadline } from './pool.js'
 import { isStatus } from './tables.js'
-import { acctRank, legacyPromptQ, mergeEvent, rowToEvent, sameEvent, storedFields } from './merge.js'
+import { acctRank, legacyPromptQ, mergeEvent, rowToEvent, sameEvent, sourceUpgrade, storedFields } from './merge.js'
 import { bumpDirty, recomputeDay, sweepDirty } from './days.js'
 import { decryptJson, encryptJson, parseKey } from './crypto.js'
 import { PROMPT_INDEX, addMonths } from './months.js'
@@ -428,7 +428,8 @@ async function writeEvent(t, lim, budget, date, { ev, row, merged }) {
 // row is re-encrypted only to upgrade its account: when the incoming acctQ
 // ranks above the stored one, its acct and acctLabel are replaced (text,
 // workspace, machine and session stay as first written). Otherwise the
-// ciphertext is never rewritten and only an empty model is filled in.
+// ciphertext is never rewritten and only an empty model is filled in. The
+// plaintext source moves to a better channel (merge.js sourceUpgrade).
 export async function upsertPrompt(store, lim, key, p) {
   const t = store.table('prompts')
   const month = utcMonth(p.tsMs)
@@ -492,9 +493,8 @@ export function storedPromptQ(key, row) {
 
 async function updatePrompt(store, t, lim, key, row, p) {
   for (let i = 0; i < RETRIES; i++) {
-    if (!(p.acct && acctRank(p.acctQ) > acctRank(storedPromptQ(key, row)))) return fillModel(t, lim, row, p)
-    const entity = { partitionKey: row.partitionKey, rowKey: row.rowKey, acctQ: p.acctQ }
-    if (!row.model && p.model) entity.model = p.model
+    if (!(p.acct && acctRank(p.acctQ) > acctRank(storedPromptQ(key, row)))) return fillMeta(t, lim, row, p)
+    const entity = { partitionKey: row.partitionKey, rowKey: row.rowKey, acctQ: p.acctQ, ...metaFill(row, p) }
     const swap = (payload) => ({ ...payload, acct: p.acct, acctLabel: p.acctLabel })
     if (row.blob) {
       const full = await lim(() => store.blobs.get(row.rowKey))
@@ -514,10 +514,20 @@ async function updatePrompt(store, t, lim, key, row, p) {
   }
 }
 
-async function fillModel(t, lim, row, p) {
-  if (row.model || !p.model) return
+// The plaintext fields a later sighting may fill in or move: an empty model,
+// and the channel (sourceUpgrade).
+function metaFill(row, p) {
+  const out = {}
+  if (!row.model && p.model) out.model = p.model
+  if (p.source && sourceUpgrade(row.source, p.source)) out.source = p.source
+  return out
+}
+
+async function fillMeta(t, lim, row, p) {
+  const fill = metaFill(row, p)
+  if (Object.keys(fill).length === 0) return
   try {
-    await lim(() => t.merge({ partitionKey: row.partitionKey, rowKey: row.rowKey, model: p.model }, row.etag))
+    await lim(() => t.merge({ partitionKey: row.partitionKey, rowKey: row.rowKey, ...fill }, row.etag))
   } catch (err) {
     // A concurrent writer changed the row; its model (if any) stands.
     if (!isStatus(err, 412)) throw err

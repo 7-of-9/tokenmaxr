@@ -20,18 +20,21 @@ import { handleLimits } from '../src/lib/limits.js'
 import { handleLink } from '../src/lib/link.js'
 import { handleFleetGitHub } from '../src/lib/fleet-github.js'
 import { handleGithubDevice } from '../src/lib/github-device.js'
+import { handleBrowserSession, withBrowserSession } from '../src/lib/browser-session.js'
 import { resolveConnectionString } from '../scripts/storage-env.js'
 
 const ROUTES = [
+  ['POST', /^\/api\/session$/, handleBrowserSession],
+  ['GET', /^\/api\/session\/(logout)$/, handleBrowserSession, 'action'],
   ['POST', /^\/api\/enroll$/, handleEnroll],
-  ['POST', /^\/api\/invite$/, handleInvite],
-  ['POST', /^\/api\/link$/, handleLink],
+  ['POST', /^\/api\/invite$/, withBrowserSession(handleInvite)],
+  ['POST', /^\/api\/link$/, withBrowserSession(handleLink)],
   ['POST', /^\/api\/ingest$/, handleIngest],
   ['GET', /^\/api\/usage$/, handleUsage],
   ['GET', /^\/api\/prompt-counts$/, handlePromptCounts],
-  ['GET', /^\/api\/limits$/, handleLimits],
-  ['GET', /^\/api\/prompts$/, handlePrompts],
-  ['GET', /^\/api\/prompts\/([^/]+)$/, handlePrompts, 'id'],
+  ['GET', /^\/api\/limits$/, withBrowserSession(handleLimits)],
+  ['GET', /^\/api\/prompts$/, withBrowserSession(handlePrompts)],
+  ['GET', /^\/api\/prompts\/([^/]+)$/, withBrowserSession(handlePrompts), 'id'],
   ['GET,PUT,DELETE', /^\/api\/fleet\/github$/, handleFleetGitHub],
   ['POST,OPTIONS', /^\/api\/github\/device\/(code|token)$/, handleGithubDevice, 'step'],
 ]

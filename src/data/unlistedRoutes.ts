@@ -1,6 +1,4 @@
-import vault from './unlistedRoutes.generated.json'
-import { normalizeRoutePath, openRouteRecord, routeRecordId } from '../utils/pathCipher.js'
-
+// d0m1.com's unlisted page lookup; tokenmaxr has no unlisted pages (the export replaces d0m1's own).
 export interface CvRouteEntry {
   routePath: string
   canonicalPath: string
@@ -15,18 +13,16 @@ export interface CvRouteEntry {
   ogType?: string
 }
 
-// The CV routes, sealed per path by scripts/generate-cv-routes.js: a route resolves only
-// when the visitor has typed it, and the bundle never lists one.
-const records = (vault as { records: Record<string, string> }).records
-const resolved = new Map<string, CvRouteEntry | null>()
-
-export function resolveCvRoute(pathname: string): CvRouteEntry | null {
-  const path = normalizeRoutePath(pathname)
-  if (!resolved.has(path)) {
-    const sealed = records[routeRecordId(path)]
-    resolved.set(path, sealed ? openRouteRecord<CvRouteEntry>(path, sealed) : null)
-  }
-  return resolved.get(path) ?? null
+export function subscribePageRoutes(_listener: () => void) {
+  return () => {}
 }
 
-export const isCvRoutePath = (pathname: string) => resolveCvRoute(pathname) !== null
+export function resolveCvRoute(_pathname: string): CvRouteEntry | null {
+  return null
+}
+
+export const isCvRoutePath = (_pathname: string) => false
+
+export function loadPageRoute(_pathname: string): Promise<CvRouteEntry | null> {
+  return Promise.resolve(null)
+}

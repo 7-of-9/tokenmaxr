@@ -1702,3 +1702,47 @@
     font-size: 0.58rem;
   }
 }
+
+
+.gallery-auth {
+  flex: none;
+  margin-left: auto;
+  padding-left: 1rem;
+}
+
+@media (max-width: 640px) {
+  .gallery-with-auth {
+    --header-height: 100px;
+  }
+
+  .gallery-with-auth .gallery-header {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-rows: 40px 44px;
+    align-content: center;
+    gap: 2px 8px;
+    padding: 6px 12px;
+  }
+
+  .gallery-with-auth .back-button {
+    grid-column: 1;
+    grid-row: 1;
+    width: 32px;
+    min-width: 0;
+    height: 40px;
+    margin-right: 0;
+  }
+
+  .gallery-with-auth .gallery-title {
+    grid-column: 2;
+    grid-row: 1;
+    max-width: none;
+  }
+
+  .gallery-with-auth .gallery-auth {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    padding-left: 0;
+  }
+}

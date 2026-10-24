@@ -99,7 +99,7 @@ type GitHubConfig struct {
 	Branch string `json:"branch,omitempty"`
 	// Label is this machine's public name there (never the hostname by default).
 	Label string `json:"label"`
-	// PublishEveryMinutes is the publishing interval (default 30, minimum 10).
+	// PublishEveryMinutes is the publishing interval (default 60, minimum 10).
 	PublishEveryMinutes int `json:"publishEveryMinutes,omitempty"`
 	// ShowCountry publishes the country of this machine's time zone (a flag
 	// on the dashboard). Off by default: the repository is public and tied to
@@ -155,7 +155,7 @@ func (g *GitHubConfig) PublishEvery() time.Duration {
 	m := g.PublishEveryMinutes
 	switch {
 	case m <= 0:
-		m = 30
+		m = 60
 	case m < 10:
 		m = 10
 	}

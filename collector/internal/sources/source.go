@@ -84,6 +84,10 @@ type Env struct {
 	// CodexQuota is a collector-owned file holding a fresh Codex rate-limit
 	// reading in Codex's rollout format ("" if none). OS home only.
 	CodexQuota string
+	// WebClaude is the collector-owned Claude Web capture directory
+	// (paths.WebClaude: the native-messaging host's spool), "" if none.
+	// OS home only.
+	WebClaude string
 	// Machine is the machine label written into prompt records.
 	Machine string
 	// Attribute returns (acct, acctQ) for an event of provider at ts.
@@ -103,6 +107,11 @@ type Env struct {
 	TZOffsetMin func(t time.Time) int
 	// Prompts disables prompt capture when false (usage/activity still flow).
 	Prompts bool
+	// ScrubSpool lets a source rewrite collector-owned files it has read
+	// (the Claude chat spool's prompt text, sources.Rewriter). Only the
+	// collector's own scan sets it; dry runs and probes leave files as they
+	// are.
+	ScrubSpool bool
 }
 
 // Source is one tool's log reader.
@@ -122,4 +131,12 @@ type Source interface {
 	// It must never consume a trailing line that has no terminating '\n'.
 	// Whole-file sources (e.g. JSON) re-read from 0 and set Offset=Size.
 	Parse(env *Env, path string, cur Cursor) (Batch, Cursor, error)
+}
+
+// Rewriter is a Source whose Parse may rewrite bytes already read, in place
+// (the Claude chat spool's prompt-text scrub keeps every offset, the size and
+// the modification time). The scan hashes such a file's head again after
+// Parse, so its cursor's head hash matches what is now on disk.
+type Rewriter interface {
+	RewritesFiles() bool
 }

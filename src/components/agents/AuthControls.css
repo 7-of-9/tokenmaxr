@@ -1,0 +1,44 @@
+.github-auth-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #9198a1;
+  font-family: var(--mono-font-2, monospace);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.github-auth-controls a,
+.github-auth-controls button {
+  padding: 0.4rem 0.65rem;
+  border: 1px solid rgba(0, 255, 65, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  color: #a5e7b5;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.github-auth-controls a:hover,
+.github-auth-controls a:focus-visible,
+.github-auth-controls button:hover,
+.github-auth-controls button:focus-visible {
+  border-color: #00ff41;
+  color: #00ff41;
+}
+
+@media (max-width: 640px) {
+  .github-auth-controls {
+    gap: 0.4rem;
+    font-size: 0.75rem;
+  }
+
+  .github-auth-controls a,
+  .github-auth-controls button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0.35rem 0.5rem;
+  }
+}

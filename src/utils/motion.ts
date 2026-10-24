@@ -1,5 +1,6 @@
 import type { NavigationType } from 'react-router-dom'
-import { isCvRoutePath } from '../data/unlistedRoutes'
+import { isCvRoutePath } from '../data/unlistedRoutes.ts'
+import { getGalleryCollectionBySlug } from '../data/galleryCollections.ts'
 
 export type EnterDir = 'forward' | 'back' | 'none' | 'zoom-in' | 'zoom-out'
 
@@ -24,22 +25,9 @@ const MENU_PATHS = new Set([
   '/work',
 ])
 
-// Gallery collection routes slide like menu pages. Matched by FNV-1a hash so the
-// unlisted routes never appear as text in the client bundle.
-const COLLECTION_PATH_HASHES = new Set([14843383, 1508697868, 335610735])
-
-const pathHash = (path: string) => {
-  let hash = 0x811c9dc5
-  for (let i = 0; i < path.length; i++) {
-    hash ^= path.charCodeAt(i)
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return hash
-}
-
-// CV routes slide like menu pages too; they resolve per path (unlistedRoutes.ts).
+// Only already-loaded server responses identify unlisted pages; no route hashes.
 const isMenuPath = (path: string) =>
-  MENU_PATHS.has(path) || COLLECTION_PATH_HASHES.has(pathHash(path.toLowerCase())) || isCvRoutePath(path)
+  MENU_PATHS.has(path) || Boolean(getGalleryCollectionBySlug(path)) || isCvRoutePath(path)
 
 export const ZOOM_ORIGIN_KEY = 'd0m1-zoom-origin'
 

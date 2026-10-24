@@ -74,6 +74,16 @@ commands:
                       browser); headless, the settings page
   uninstall [--purge] quit the app, remove autostart and the PATH entry
                       (--purge: all local data)
+  web-capture install [--dev] | status | uninstall | sweeper on|off |
+              infer-apps on|off | prompts off|live|all |
+              history-before <date>|off
+                      Claude Web capture (estimated): write the browser
+                      extension to load unpacked in Chrome and register this
+                      binary as its native-messaging host; sweeper reads the
+                      account's claude.ai history from this machine's browser;
+                      prompts keeps chat prompt text (needs prompt capture
+                      too; all includes swept history); history-before is
+                      the fleet's earliest capture start
   version             print the version
 
 --home DIR (or $TOKENMAXR_HOME) overrides the state directory.
@@ -84,6 +94,12 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// Chrome starts a native-messaging host with the caller's origin first
+	// (and --parent-window=N on Windows) when the host manifest names the
+	// binary itself.
+	if len(args) > 0 && strings.HasPrefix(args[0], "chrome-extension://") {
+		return nativeHost("", args[0], stdout, stderr)
+	}
 	global := flag.NewFlagSet(buildinfo.Product, flag.ContinueOnError)
 	global.SetOutput(stderr)
 	global.Usage = func() { fmt.Fprint(stderr, usage) }
@@ -100,9 +116,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		rest = []string{"app"}
 	}
 	cmd, rest := rest[0], rest[1:]
+	if cmd == "native-host" {
+		origin := ""
+		if len(rest) > 0 {
+			origin = rest[0]
+		}
+		return nativeHost(*home, origin, stdout, stderr)
+	}
 	// github takes its subcommand before any flags: github login --label X.
 	sub := ""
-	if cmd == "github" && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+	if (cmd == "github" || cmd == "web-capture") && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
 		sub, rest = rest[0], rest[1:]
 	}
 
@@ -125,21 +148,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 		dryRun      = fs.Bool("dry-run", false, "required for scan")
 		asJSON      = fs.Bool("json", false, "JSON output")
 		purge       = fs.Bool("purge", false, "also delete the state directory")
+		dev         = fs.Bool("dev", false, "register the development native host (web-capture install)")
 	)
 	allowed := map[string][]string{
-		"app":       {"watchdog", "minimized"},
-		"install":   {"join", "endpoint", "label", "yes", "no-fix-config", "no-autostart", "no-prompts", "no-app"},
-		"run":       {},
-		"sync-now":  {"since"},
-		"scan":      {"dry-run", "json", "since", "until"},
-		"status":    {},
-		"doctor":    {},
-		"invite":    {},
-		"github":    {"label"},
-		"label":     {},
-		"settings":  {},
-		"uninstall": {"purge"},
-		"version":   {},
+		"app":         {"watchdog", "minimized"},
+		"install":     {"join", "endpoint", "label", "yes", "no-fix-config", "no-autostart", "no-prompts", "no-app"},
+		"run":         {},
+		"sync-now":    {"since"},
+		"scan":        {"dry-run", "json", "since", "until"},
+		"status":      {},
+		"doctor":      {},
+		"invite":      {},
+		"github":      {"label"},
+		"label":       {},
+		"settings":    {},
+		"uninstall":   {"purge"},
+		"version":     {},
+		"web-capture": {"dev", "json"},
 	}
 	names, ok := allowed[cmd]
 	if !ok {
@@ -158,10 +183,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case cmd == "github" && sub != "login" && *label != "":
 		fmt.Fprintln(stderr, "--label only goes with github login")
 		return 2
+	case cmd == "web-capture" && !webCaptureArgs(sub, fs.Args()):
+		fmt.Fprintln(stderr, "usage: "+buildinfo.Product+" web-capture install [--dev] | status [--json] | uninstall | sweeper on|off | infer-apps on|off | prompts off|live|all | history-before <date>|off")
+		return 2
 	case cmd == "label" && strings.TrimSpace(newLabel) == "":
 		fmt.Fprintln(stderr, "usage: "+buildinfo.Product+" label NEW_NAME")
 		return 2
-	case cmd != "label" && fs.NArg() > 0:
+	case cmd != "label" && cmd != "web-capture" && fs.NArg() > 0:
 		fmt.Fprintf(stderr, "%s: unexpected argument %q\n", cmd, fs.Arg(0))
 		return 2
 	}
@@ -266,6 +294,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = a.OpenSettingsCLI()
 	case "uninstall":
 		err = a.Uninstall(app.UninstallOptions{Purge: *purge})
+	case "web-capture":
+		err = a.WebCaptureCLI(sub, fs.Args(), *dev, *asJSON)
 	}
 	if err != nil {
 		if errors.Is(err, app.ErrRelaunch) {

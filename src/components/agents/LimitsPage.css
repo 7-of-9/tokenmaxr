@@ -88,7 +88,7 @@
    gauge, the reset. */
 .limits-line {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(0, 1.6fr) minmax(160px, 1fr) 26rem;
   align-items: center;
   gap: 8px 24px;
   padding: 11px 18px;
@@ -171,16 +171,18 @@
 
 .limits-bar {
   display: grid;
-  grid-template-columns: 3.4em minmax(0, 1fr);
+  grid-template-columns: 4ch minmax(0, 1fr);
   align-items: center;
   gap: 10px;
   min-width: 0;
+  font-family: var(--gh-mono);
+  font-size: 24px;
   font-variant-numeric: tabular-nums;
 }
 
 .limits-bar__pct {
   color: var(--meter-color);
-  font-size: 15px;
+  font-size: inherit;
   font-weight: 600;
   line-height: 1;
   text-align: right;
@@ -188,8 +190,7 @@
 }
 
 .limits-bar__pct > span {
-  margin-left: 1px;
-  font-size: 11px;
+  font-size: 16px;
   font-weight: 400;
 }
 
@@ -215,6 +216,7 @@
   align-items: baseline;
   justify-content: flex-end;
   gap: 6px;
+  font-family: var(--gh-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -282,9 +284,9 @@
 .limits-unmetered__reason { margin-left: auto; font-size: 12px; }
 .limits-page .agents-foot { color: var(--gh-muted); font-size: 12px; }
 
-@media (max-width: 1050px) {
+@media (max-width: 1200px) {
   /* The gauge and reset share a second line under who. */
-  .limits-line { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 10px 14px; }
+  .limits-line { grid-template-columns: minmax(0, 1fr) 26rem; gap: 10px 16px; padding: 12px 14px; }
   .limits-line__who { grid-column: 1 / -1; }
   .limits-no-reading { grid-column: 1 / -1; padding-left: 27px; }
 }
@@ -293,9 +295,14 @@
   .limits-unmetered__reason { flex-basis: 100%; margin-left: 67px; }
 }
 
-@media (max-width: 420px) {
+@media (max-width: 700px) {
   .limits-line { grid-template-columns: minmax(0, 1fr); }
-  .limits-reset { justify-content: flex-start; }
+  .limits-reset { justify-content: flex-start; flex-wrap: wrap; white-space: normal; }
+  .limits-reset__date { flex-basis: 100%; }
+  .limits-reset__date::before { content: none; }
+  .limits-box__head { padding: 12px 14px; }
+  .limits-line__who > .limits-track { flex-basis: 100%; }
+  .limits-line__email { white-space: normal; overflow-wrap: anywhere; }
   .limits-unmetered__line > .limits-track { flex-wrap: wrap; }
 }
 

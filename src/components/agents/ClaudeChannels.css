@@ -1,0 +1,12 @@
+.claude-channels { margin: 1.5rem 0; }
+.claude-channels h2 { font-size: 1rem; margin: 0 0 0.7rem; }
+.claude-channels__scroll { overflow-x: auto; }
+.claude-channels table { width: 100%; border-collapse: collapse; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.claude-channels th, .claude-channels td { padding: 0.65rem 0.5rem; text-align: right; border-bottom: 1px solid var(--gh-border); }
+.claude-channels th:first-child { text-align: left; min-width: 10rem; }
+.claude-channels thead th { font-weight: 500; white-space: nowrap; }
+.claude-channels small { display: block; margin-top: 0.3rem; }
+.claude-channels p { font-size: 0.75rem; line-height: 1.5; }
+.claude-channels__badge { display: inline-block; margin-left: 0.5rem; padding: 0 0.4rem; font-size: 0.65rem; font-weight: 500; line-height: 1.4; vertical-align: 0.1em; border: 1px solid var(--gh-border); border-radius: 999px; color: var(--gh-muted); }
+.claude-channels__part th, .claude-channels__part td { padding-top: 0.35rem; padding-bottom: 0.35rem; color: var(--gh-muted); font-size: 0.75rem; }
+.claude-channels__part th:first-child { padding-left: 1.25rem; font-weight: 400; }

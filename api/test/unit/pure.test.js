@@ -178,7 +178,7 @@ test('rollup v2: tiers, models, prompts, accts, byMachine and byCountry', () => 
     at(norm(activity('a2', { hasUsage: false, acct: 'a_' + 'f'.repeat(16) })), '', ''),
   ]
   const r = computeRollup('2026-09-20', evs)
-  assert.equal(r.v, 3)
+  assert.equal(r.v, 4)
   assert.equal(r.date, '2026-09-20')
   const p = r.providers.anthropic
   assert.deepEqual(p.exact, { in: 101, cacheW: 20, cacheW1h: 5, cacheR: 1003, out: 51, reasoning: 10, calls: 3, events: 2 })
@@ -206,7 +206,7 @@ test('rollup v2: tiers, models, prompts, accts, byMachine and byCountry', () => 
     ZZ: { in: 1, cacheW: 0, cacheR: 3, out: 1, prompts: 1 },
   })
   assert.deepEqual(Object.keys(r.providers), ['anthropic'])
-  assert.deepEqual(computeRollup('2026-09-21', []), { v: 3, date: '2026-09-21', providers: {} })
+  assert.deepEqual(computeRollup('2026-09-21', []), { v: 4, date: '2026-09-21', providers: {} })
 })
 
 test('rollup v2: models, byMachine and byCountry always add up to the provider totals', () => {

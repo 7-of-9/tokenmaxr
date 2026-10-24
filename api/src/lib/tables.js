@@ -16,8 +16,8 @@
 import { TableClient, TableServiceClient, odata } from '@azure/data-tables'
 import { BlobServiceClient } from '@azure/storage-blob'
 
-export const TABLES = ['events', 'eventindex', 'rollups', 'dirtydays', 'machines', 'invites', 'accounts', 'prompts', 'fleetsecrets']
-export const CREATED_ON_USE = new Set(['fleetsecrets'])
+export const TABLES = ['events', 'eventindex', 'rollups', 'dirtydays', 'machines', 'invites', 'accounts', 'prompts', 'fleetsecrets', 'browsersessions']
+export const CREATED_ON_USE = new Set(['fleetsecrets', 'browsersessions'])
 export const PROMPTS_CONTAINER = 'prompts'
 
 export function statusOf(err) {

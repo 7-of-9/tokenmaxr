@@ -42,7 +42,7 @@ export interface PlaceBucket {
 }
 
 /** Anonymous workspace aggregate: same token/model/place accounting as its provider. */
-export type WorkspaceDay = Omit<ProviderDay, 'accts' | 'byWorkspace'>
+export type WorkspaceDay = Omit<ProviderDay, 'accts' | 'byWorkspace' | 'bySource'>
 
 export interface InferenceDerivation {
   provider: Provider
@@ -90,6 +90,8 @@ export interface ProviderDay {
   }>
   /** Per-response workspace aliases; no paths, names or persistent hashes. */
   byWorkspace?: Record<string, WorkspaceDay>
+  /** Recorded collection channel, shared by the API and GitHub Pages reports. */
+  bySource?: Record<string, WorkspaceDay>
   /** Per-response account aliases (never hashes). */
   accts: string[]
   models: { exact: Record<string, ModelBucket>; estimated: Record<string, ModelBucket> }
@@ -210,6 +212,7 @@ export interface PromptWorkspaceFacet {
 
 /** GET /api/prompts/facets: every filter value across the whole archive, with counts. */
 export interface PromptFacets {
+  sources?: Array<{ value: string; count: number }>
   total: number
   providers: { provider: Provider; count: number }[]
   accounts: PromptAccountFacet[]

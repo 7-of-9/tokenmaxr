@@ -18,7 +18,7 @@
 // recomputed once its last write is more than 60 s old, by GET /api/usage
 // and by the ingest sweep. A day left dirty by a crashed ingest settles the
 // same way, so no day stays dirty for long.
-import { computeRollup, isCurrentRollup } from './rollup.js'
+import { computeRollup, isCurrentRollup, splitRollupData } from './rollup.js'
 import { rowToEvent } from './merge.js'
 import { isStatus, num } from './tables.js'
 import { ACCOUNT_LEDGER_VERSION, accountLedger } from './account-usage.js'
@@ -79,7 +79,7 @@ export async function recomputeDay(store, lim, date, now, { minAgeMs = 0 } = {})
       partitionKey: 'r',
       rowKey: date,
       gen,
-      data: JSON.stringify(data),
+      ...splitRollupData(JSON.stringify(data)),
       accountLedger: JSON.stringify(ledger),
       accountLedgerVersion: ACCOUNT_LEDGER_VERSION,
       computedAt: now.toISOString(),

@@ -5,8 +5,9 @@ import { useUsageSource } from './source'
 import type { UsageTransfer } from './usageResponse'
 import { readUsageCache, writeUsageCache } from './usageCache'
 
-// Healthy responses take a few seconds. Failed upstream requests can hang for over 30 s.
-const REQUEST_TIMEOUT_MS = 12_000
+// Healthy responses take a few seconds, but a read that upgrades rollups may use
+// the API's whole 20 s budget. Failed upstream requests can hang for over 30 s.
+const REQUEST_TIMEOUT_MS = 25_000
 
 export interface UsageState {
   data: UsageResponse | null
@@ -24,7 +25,7 @@ function initialState(mock: boolean, source: string): UsageState {
   return { data: cached?.data ?? null, error: null, loading: true, loadedAt: cached?.loadedAt ?? 0, progress: null, failures: 0 }
 }
 
-/** Polls the context's source (every 15 s for the d0m1 API) while visible; returning to the tab refreshes immediately. */
+/** Polls the context's source (every 15 s for the d0m1 API) while visible; returning to the tab refreshes immediately unless a request is running. */
 export function useUsage(mock: boolean, reloadKey: number): UsageState {
   const usageSource = useUsageSource()
   const source = usageSource.cacheKey
@@ -46,12 +47,14 @@ export function useUsage(mock: boolean, reloadKey: number): UsageState {
     let cancelled = false
     let timer: number | undefined
     let controller: AbortController | null = null
+    let inFlight: AbortController | null = null
     let failures = 0
 
     const load = async () => {
       controller?.abort()
       const request = new AbortController()
       controller = request
+      inFlight = request
       const timeout = window.setTimeout(() => request.abort(new DOMException('The usage API timed out. Retrying shortly.', 'TimeoutError')), REQUEST_TIMEOUT_MS)
       const startedAt = Date.now()
       setState((prev) => ({ ...prev, loading: true, error: prev.failures >= 3 ? prev.error : null,
@@ -73,6 +76,7 @@ export function useUsage(mock: boolean, reloadKey: number): UsageState {
         setState((prev) => ({ ...prev, error: message, loading: false, progress: null, failures }))
       } finally {
         window.clearTimeout(timeout)
+        if (inFlight === request) inFlight = null
       }
       return !cancelled && controller === request
     }
@@ -82,10 +86,14 @@ export function useUsage(mock: boolean, reloadKey: number): UsageState {
       timer = window.setTimeout(tick, delay)
     }
 
-    const tick = async () => {
-      if (document.hidden) return
+    // Loads now, then schedules the next poll if the tab is still visible.
+    const run = async () => {
       const pollMs = usageSource.pollMs
       if (await load() && !document.hidden) schedule(failures ? Math.min(1000 * 2 ** (failures - 1), pollMs) : pollMs)
+    }
+
+    const tick = () => {
+      if (!document.hidden) void run()
     }
 
     const onVisibility = () => {
@@ -93,16 +101,13 @@ export function useUsage(mock: boolean, reloadKey: number): UsageState {
         window.clearTimeout(timer)
         return
       }
-      schedule(0)
+      // Restarting a running request would throw away its progress; run() schedules the next poll when it ends.
+      if (!inFlight) schedule(0)
     }
 
     document.addEventListener('visibilitychange', onVisibility)
-    if (document.hidden) {
-      // Still show something when opened in a background tab.
-      void load()
-    } else {
-      void tick()
-    }
+    // Load even in a background tab, so there is something to show on return.
+    void run()
 
     return () => {
       cancelled = true

@@ -15,6 +15,12 @@
 // Rebuild starts over (with a full reparse) if old history appears later,
 // e.g. a newly found WSL home.
 //
+// Claude chat events (id source model.IDSourceClaudeChat) are never sealed
+// out: the opt-in history sweep brings turns of any age at any time, long
+// after the dates they fall on were sealed. Their ids are kept for good in
+// sets of their own (one 6-byte prefix per event), so a re-read of the spool
+// still counts nothing twice.
+//
 // The rollup is the only full record of sealed history (its logs may be gone
 // since), so a rebuild never throws an older file away: Salvage keeps its
 // daily totals as a floor, and ApplyFloor puts back whatever the logs no
@@ -58,9 +64,13 @@ const (
 	// added the quality key and the cacheW1h, reasoning and prompt columns;
 	// version 3 the account ledger, which must cover all history: a ledger
 	// that misses local tokens would let account history count them again;
-	// version 4 keys the id sets by UTC day). An older file is salvaged
-	// (Salvage), never dropped.
-	Version = 4
+	// version 4 keys the id sets by UTC day; version 5 backfills the new
+	// Claude Native source, whose older records would otherwise be sealed
+	// out; version 6 the Claude chat sources web-claude and chat-claude,
+	// whose swept history is older than the seal and is exempt from it, and
+	// re-keys ~/.claude lines the desktop app wrote from claude-code to
+	// native-claude). An older file is salvaged (Salvage), never dropped.
+	Version = 6
 	// LiveWindow: how long a usage event keeps its values so that its growth
 	// merges by fieldwise max (same as internal/recent).
 	LiveWindow = 2 * time.Hour
@@ -144,6 +154,10 @@ type live struct {
 	T    tokens    `json:"t"`
 	// L is the event's account ledger entry: UTC date + "|" + ledger key.
 	L string `json:"l,omitempty"`
+	// M: the event is counted in the floor's Moved (movedFromCode).
+	M bool `json:"m,omitempty"`
+	// C: a Claude chat event, whose id retires to the chat sets.
+	C bool `json:"c,omitempty"`
 }
 
 // LedgerKey is the account ledger key of an event: provider|source|acct. The
@@ -195,6 +209,9 @@ type Rollup struct {
 	seen  map[string]map[uint64]struct{} // usage ids
 	seenA map[string]map[uint64]struct{} // activity (prompt) ids
 	seenP map[string]map[uint64]struct{} // prompt record ids
+	// The Claude chat events' id sets, per UTC day as well, never sealed
+	// or pruned (see the package comment).
+	chatSeen, chatSeenA, chatSeenP map[string]map[uint64]struct{}
 	// Revisable counts, per UTC day: id -> where it was counted (local date
 	// + "|" + cell key).
 	noUsage map[string]map[uint64]string // activity counted in PromptsNoUsage
@@ -212,6 +229,7 @@ func New() *Rollup {
 	return &Rollup{Days: map[string]map[string]*Cell{}, Ledger: map[string]map[string]int64{},
 		accounts: map[string]AccountTotal{}, live: map[string]live{},
 		seen: map[string]map[uint64]struct{}{}, seenA: map[string]map[uint64]struct{}{}, seenP: map[string]map[uint64]struct{}{},
+		chatSeen: map[string]map[uint64]struct{}{}, chatSeenA: map[string]map[uint64]struct{}{}, chatSeenP: map[string]map[uint64]struct{}{},
 		noUsage: map[string]map[uint64]string{}, noModel: map[string]map[uint64]string{}, unledgered: map[string]bool{}}
 }
 
@@ -292,6 +310,18 @@ func (r *Rollup) cell(date, key string) *Cell {
 }
 
 func (r *Rollup) sealed(date string) bool { return r.Sealed != "" && date <= r.Sealed }
+
+// isChat reports a Claude chat event by its id source: exempt from the seal.
+func isChat(idSource string) bool { return idSource == model.IDSourceClaudeChat }
+
+// sets returns the id sets an event's ids live in: the chat sets for a
+// Claude chat event, else the given sealable ones.
+func (r *Rollup) sets(chat bool, sealable, chatSets map[string]map[uint64]struct{}) map[string]map[uint64]struct{} {
+	if chat {
+		return chatSets
+	}
+	return sealable
+}
 
 // addLedger adds n tokens to entry (UTC date + "|" + LedgerKey).
 func (r *Rollup) addLedger(entry string, n int64) {
@@ -381,27 +411,38 @@ func (r *Rollup) AddUsage(e model.UsageEvent, now time.Time) {
 		}
 		if changed {
 			grow.addTo(r.cell(l.Date, l.Key))
+			if l.M && r.floor != nil {
+				grow.addTo(r.floor.moved(l.Date, l.Key))
+			}
 			r.addLedger(l.L, grow.ledgerTokens())
 			r.live[e.ID] = l
 			r.dirty = true
 		}
 		return
 	}
-	if r.sealed(date) {
+	chat := isChat(e.IDSource)
+	seen := r.sets(chat, r.seen, r.chatSeen)
+	if !chat && r.sealed(date) {
 		return
 	}
-	if _, ok := r.seen[bucket(e.TS)][prefix(e.ID)]; ok {
+	if _, ok := seen[bucket(e.TS)][prefix(e.ID)]; ok {
 		return
 	}
 	c := r.cell(date, key)
 	tok.addTo(c)
 	c.Events++
+	moved := r.movedFromCode(e.IDSource, e.Source)
+	if moved {
+		m := r.floor.moved(date, key)
+		tok.addTo(m)
+		m.Events++
+	}
 	entry := bucket(e.TS) + "|" + LedgerKey(e.Provider, e.Source, e.Acct, e.AcctQ)
 	r.addLedger(entry, tok.ledgerTokens())
 	if now.Sub(e.TS) < LiveWindow {
-		r.live[e.ID] = live{Key: key, Date: date, TS: e.TS, T: tok, L: entry}
+		r.live[e.ID] = live{Key: key, Date: date, TS: e.TS, T: tok, L: entry, M: moved, C: chat}
 	} else {
-		mark(r.seen, bucket(e.TS), prefix(e.ID))
+		mark(seen, bucket(e.TS), prefix(e.ID))
 	}
 	r.dirty = true
 }
@@ -412,31 +453,46 @@ func (r *Rollup) AddUsage(e model.UsageEvent, now time.Time) {
 func (r *Rollup) AddActivity(e model.ActivityEvent) {
 	r.saw(e.TS)
 	date := localDate(e.TS, e.TZOffsetMin)
-	if r.sealed(date) {
+	chat := isChat(e.IDSource)
+	if !chat && r.sealed(date) {
 		return
 	}
+	seenA := r.sets(chat, r.seenA, r.chatSeenA)
+	moved := r.movedFromCode(e.IDSource, e.Source)
 	k := prefix(e.ID)
-	if _, ok := r.seenA[bucket(e.TS)][k]; ok {
+	if _, ok := seenA[bucket(e.TS)][k]; ok {
 		if !e.HasUsage {
 			return
 		}
 		if at, ok := revise(r.noUsage, bucket(e.TS), k); ok {
-			if d, key := splitCounted(at); !r.sealed(d) {
+			if d, key := splitCounted(at); chat || !r.sealed(d) {
 				if c := r.Days[d][key]; c != nil && c.PromptsNoUsage > 0 {
 					c.PromptsNoUsage--
+				}
+				if moved {
+					if m := r.floor.moved(d, key); m.PromptsNoUsage > 0 {
+						m.PromptsNoUsage--
+					}
 				}
 			}
 			r.dirty = true
 		}
 		return
 	}
-	mark(r.seenA, bucket(e.TS), k)
+	mark(seenA, bucket(e.TS), k)
 	key := Key{e.Provider, e.Source, "", e.Acct, ""}.String()
 	c := r.cell(date, key)
 	c.Prompts++
 	if !e.HasUsage {
 		c.PromptsNoUsage++
 		markKey(r.noUsage, bucket(e.TS), k, counted(date, key))
+	}
+	if moved {
+		m := r.floor.moved(date, key)
+		m.Prompts++
+		if !e.HasUsage {
+			m.PromptsNoUsage++
+		}
 	}
 	r.dirty = true
 }
@@ -448,31 +504,43 @@ func (r *Rollup) AddActivity(e model.ActivityEvent) {
 // it stays on the model "" cell.
 func (r *Rollup) AddPrompt(p model.PromptRecord) {
 	date := localDate(p.TS, p.TZOffsetMin)
-	if r.sealed(date) {
+	chat := isChat(p.IDSource)
+	if !chat && r.sealed(date) {
 		return
 	}
+	seenP := r.sets(chat, r.seenP, r.chatSeenP)
+	moved := r.movedFromCode(p.IDSource, p.Source)
 	k := prefix(p.ID)
 	key := Key{p.Provider, p.Source, p.Model, p.Acct, ""}.String()
-	if _, ok := r.seenP[bucket(p.TS)][k]; ok {
+	if _, ok := seenP[bucket(p.TS)][k]; ok {
 		if p.Model == "" {
 			return
 		}
 		if at, ok := revise(r.noModel, bucket(p.TS), k); ok {
 			// It moves within the date it was counted on (its first sighting's).
-			if d, was := splitCounted(at); !r.sealed(d) {
+			if d, was := splitCounted(at); chat || !r.sealed(d) {
 				if c := r.Days[d][was]; c != nil && c.ModelPrompts > 0 {
 					c.ModelPrompts--
 					r.cell(d, key).ModelPrompts++
+					if moved {
+						if m := r.floor.moved(d, was); m.ModelPrompts > 0 {
+							m.ModelPrompts--
+							r.floor.moved(d, key).ModelPrompts++
+						}
+					}
 				}
 			}
 			r.dirty = true
 		}
 		return
 	}
-	mark(r.seenP, bucket(p.TS), k)
+	mark(seenP, bucket(p.TS), k)
 	r.cell(date, key).ModelPrompts++
 	if p.Model == "" {
 		markKey(r.noModel, bucket(p.TS), k, counted(date, key))
+	}
+	if moved {
+		r.floor.moved(date, key).ModelPrompts++
 	}
 	r.dirty = true
 }
@@ -483,7 +551,7 @@ func (r *Rollup) Settle(now time.Time, scanComplete bool) {
 	for id, l := range r.live {
 		if now.Sub(l.TS) >= LiveWindow {
 			delete(r.live, id)
-			mark(r.seen, bucket(l.TS), prefix(id))
+			mark(r.sets(l.C, r.seen, r.chatSeen), bucket(l.TS), prefix(id))
 			r.dirty = true
 		}
 	}
@@ -494,7 +562,7 @@ func (r *Rollup) Settle(now time.Time, scanComplete bool) {
 	// Never seal a date that still has a live (growing) event: stop the day
 	// before the oldest one.
 	for _, l := range r.live {
-		if l.Date <= cut {
+		if !l.C && l.Date <= cut {
 			if d, err := time.Parse(dateLayout, l.Date); err == nil {
 				cut = d.AddDate(0, 0, -1).Format(dateLayout)
 			}
@@ -513,7 +581,8 @@ func (r *Rollup) Settle(now time.Time, scanComplete bool) {
 			}
 		}
 	}
-	// A sealed date's revisable counts are final.
+	// A sealed date's revisable counts are final (a Claude chat prompt that
+	// has not learnt its model by then keeps the model "" cell).
 	for _, sets := range []map[string]map[uint64]string{r.noUsage, r.noModel} {
 		for d, ids := range sets {
 			for k, at := range ids {
@@ -566,6 +635,39 @@ type floor struct {
 	Seen  map[string]string           `json:"seen,omitempty"`
 	SeenA map[string]string           `json:"seenA,omitempty"`
 	SeenP map[string]string           `json:"seenP,omitempty"`
+	// CodeHeldNative: the older file (before version 6) counted every
+	// ~/.claude line as claude-code, including those the desktop app wrote,
+	// which this version counts as native-claude under the same id (SPEC
+	// "Claude Native").
+	CodeHeldNative bool `json:"codeHeldNative,omitempty"`
+	// Moved is local date -> key -> what the rebuild counted of such lines
+	// (their usage, and the prompts of their activity and prompt records),
+	// so ApplyFloor compares them under claude-code, as the old file held
+	// them.
+	Moved map[string]map[string]*Cell `json:"moved,omitempty"`
+}
+
+// moved returns the floor's Moved cell of a date and key, creating it.
+func (f *floor) moved(date, key string) *Cell {
+	if f.Moved == nil {
+		f.Moved = map[string]map[string]*Cell{}
+	}
+	if f.Moved[date] == nil {
+		f.Moved[date] = map[string]*Cell{}
+	}
+	c := f.Moved[date][key]
+	if c == nil {
+		c = &Cell{}
+		f.Moved[date][key] = c
+	}
+	return c
+}
+
+// movedFromCode reports that an event (its id source and source) is a
+// ~/.claude line the floor's older file counted under claude-code and this
+// rebuild counts under another source.
+func (r *Rollup) movedFromCode(idSource, source string) bool {
+	return r.floor != nil && r.floor.CodeHeldNative && idSource == model.SourceClaudeCode && source != model.SourceClaudeCode
 }
 
 // fields are a cell's counters in file order.
@@ -602,7 +704,7 @@ func Salvage(path string) *Rollup {
 	if json.Unmarshal(b, &old) != nil || old.V < 1 || old.V >= Version {
 		return r // damaged, or a newer format than this version reads
 	}
-	f := &floor{Days: map[string]map[string]*Cell{}}
+	f := &floor{Days: map[string]map[string]*Cell{}, CodeHeldNative: old.V < 6}
 	for date, cells := range old.Days {
 		if d, err := time.Parse(dateLayout, date); err != nil || d.Format(dateLayout) != date {
 			continue
@@ -692,6 +794,33 @@ func (r *Rollup) ApplyFloor() {
 				}
 			}
 		}
+		// Lines the old file held under claude-code compare there, both per
+		// level and per cell (adj: what to add to a rebuilt cell).
+		adj := map[string]*[10]int64{}
+		shift := func(ks string, i int, v int64) {
+			if adj[ks] == nil {
+				adj[ks] = &[10]int64{}
+			}
+			adj[ks][i] += v
+		}
+		for ks, c := range f.Moved[date] {
+			k, ok := parseKey(ks)
+			if !ok {
+				continue
+			}
+			code := k
+			code.Source = model.SourceClaudeCode
+			for i, p := range c.fields() {
+				if l := levels[name(k)]; l != nil {
+					l.now[i] -= *p
+				}
+				if l := levels[name(code)]; l != nil {
+					l.now[i] += *p
+				}
+				shift(ks, i, -*p)
+				shift(code.String(), i, *p)
+			}
+		}
 		for _, n := range slices.Sorted(maps.Keys(levels)) {
 			l := levels[n]
 			slices.Sort(l.keys)
@@ -706,6 +835,9 @@ func (r *Rollup) ApplyFloor() {
 					var have int64
 					if c := r.Days[date][ks]; c != nil {
 						have = *c.fields()[i]
+					}
+					if a := adj[ks]; a != nil {
+						have += a[i]
 					}
 					give := min(need, *f.Days[date][ks].fields()[i]-have)
 					if give <= 0 {
@@ -768,6 +900,10 @@ type fileJSON struct {
 	Seen   map[string]string           `json:"seen,omitempty"`
 	SeenA  map[string]string           `json:"seenA,omitempty"`
 	SeenP  map[string]string           `json:"seenP,omitempty"`
+	// ChatSeen* are the Claude chat events' id sets (never sealed).
+	ChatSeen  map[string]string `json:"chatSeen,omitempty"`
+	ChatSeenA map[string]string `json:"chatSeenA,omitempty"`
+	ChatSeenP map[string]string `json:"chatSeenP,omitempty"`
 	// NoUsage and NoModel are date -> cell key -> packed ids.
 	NoUsage map[string]map[string]string `json:"noUsage,omitempty"`
 	NoModel map[string]map[string]string `json:"noModel,omitempty"`
@@ -874,6 +1010,7 @@ func Load(path string) (*Rollup, error) {
 		r.live = f.Live
 	}
 	r.seen, r.seenA, r.seenP = unpackSets(f.Seen), unpackSets(f.SeenA), unpackSets(f.SeenP)
+	r.chatSeen, r.chatSeenA, r.chatSeenP = unpackSets(f.ChatSeen), unpackSets(f.ChatSeenA), unpackSets(f.ChatSeenP)
 	r.noUsage, r.noModel = unpackKeyed(f.NoUsage), unpackKeyed(f.NoModel)
 	r.last = f.Last
 	if f.Ledger != nil {
@@ -893,6 +1030,7 @@ func Load(path string) (*Rollup, error) {
 func (r *Rollup) Save(path string) error {
 	b, err := json.Marshal(fileJSON{V: Version, Sealed: r.Sealed, Days: r.Days, Live: r.live,
 		Seen: packSets(r.seen), SeenA: packSets(r.seenA), SeenP: packSets(r.seenP),
+		ChatSeen: packSets(r.chatSeen), ChatSeenA: packSets(r.chatSeenA), ChatSeenP: packSets(r.chatSeenP),
 		NoUsage: packKeyed(r.noUsage), NoModel: packKeyed(r.noModel), Last: r.last,
 		Ledger: r.Ledger, Accounts: r.AccountUsage(), AccountsStale: r.accountsStale,
 		Floor: r.floor, Unledgered: slices.Sorted(maps.Keys(r.unledgered))})

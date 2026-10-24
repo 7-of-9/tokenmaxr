@@ -323,6 +323,31 @@ func TestVersion2FileRequiresARebuildForTheLedger(t *testing.T) {
 	}
 }
 
+// Native history predates installation. The v5 rebuild must admit it while
+// preserving Code totals whose original logs may have been deleted.
+func TestVersion4BackfillsNativeBehindSealWithoutLosingCode(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rollup.json")
+	if err := os.WriteFile(p, []byte(`{"v":4,"sealed":"2026-09-20","days":{"2026-01-23":{"anthropic|claude-code|claude-x|a_1|":[100,0,0,0,20,0,1,0,0,0]}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p); err != ErrVersion {
+		t.Fatalf("v4 must rebuild: %v", err)
+	}
+	r := Salvage(p)
+	ts := time.Date(2026, 1, 23, 3, 0, 0, 0, time.UTC)
+	e := usage("fa01", ts, 10, 2)
+	e.Source = model.SourceClaudeNative
+	r.AddUsage(e, now)
+	r.AddUsage(e, now)
+	r.ApplyFloor()
+	if tok, events, _ := total(r, "2026-01-23"); tok != 132 || events != 2 {
+		t.Fatalf("tokens %d, events %d", tok, events)
+	}
+	if len(r.Days["2026-01-23"]) != 2 {
+		t.Fatal("source rows were mixed")
+	}
+}
+
 func codexUsage(id string, ts time.Time, offMin int, acctQ string, in, cacheW, cacheR, out int64) model.UsageEvent {
 	return model.UsageEvent{ID: id, Provider: model.ProviderOpenAI, Source: model.SourceCodex, TS: ts, TZOffsetMin: offMin, Model: "gpt-5",
 		Acct: "a_1", AcctQ: acctQ, Tokens: model.Tokens{In: in, CacheW: cacheW, CacheW1h: 1, CacheR: cacheR, Out: out, Reasoning: 2}}
@@ -605,6 +630,59 @@ func TestSalvageKeepsWhatTheLogsNoLongerHold(t *testing.T) {
 	}
 }
 
+// A rebuild that re-reads desktop-app lines as Claude Native (same ids,
+// SPEC "Claude Native") does not put them back under Claude Code, but still
+// restores Claude Code history whose logs are gone, and an estimated chat
+// cell never stands in for lost exact tokens.
+func TestSalvageFollowsLinesMovedToClaudeNative(t *testing.T) {
+	const code = "anthropic|claude-code|claude-x|a_1"
+	p := v1File(t, map[string]map[string][6]int64{
+		"2026-09-20": {code: {100, 0, 0, 10, 2, 0}}, // one CLI, one desktop line
+		"2026-09-21": {code: {100, 0, 0, 10, 2, 0}}, // the CLI log is gone
+	}, nil)
+	r := Salvage(p)
+	at := func(id, date, source, idSource, q string, in, out int64) model.UsageEvent {
+		ts, _ := time.Parse(dateLayout, date)
+		e := usage(id, ts.Add(12*time.Hour), in, out)
+		e.Source, e.IDSource, e.Q = source, idSource, q
+		return e
+	}
+	r.AddUsage(at("cl20", "2026-09-20", model.SourceClaudeCode, "", "", 40, 4), now)
+	r.AddUsage(at("dt20", "2026-09-20", model.SourceClaudeNative, model.SourceClaudeCode, "", 60, 6), now)
+	r.AddUsage(at("dt21", "2026-09-21", model.SourceClaudeNative, model.SourceClaudeCode, "", 60, 6), now)
+	// Cowork and inferred app chat are new to the rollup: never moved.
+	r.AddUsage(at("cw21", "2026-09-21", model.SourceClaudeNative, "", "", 7, 0), now)
+	r.AddUsage(at("ch21", "2026-09-21", model.SourceClaudeNative, model.IDSourceClaudeChat, model.QualityEstimated, 500, 50), now)
+	// The rebuild spans several ticks.
+	path := filepath.Join(t.TempDir(), "rollup.json")
+	if err := r.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(path)
+	if err != nil || r.floor == nil || !r.floor.CodeHeldNative {
+		t.Fatalf("reloaded mid-rebuild: %v", err)
+	}
+	r.ApplyFloor()
+	cell := func(date, key string) Cell {
+		if c := r.Days[date][key]; c != nil {
+			return *c
+		}
+		return Cell{}
+	}
+	if tok, ev, _ := total(r, "2026-09-20"); tok != 110 || ev != 2 {
+		t.Fatalf("moved lines counted twice: %d tokens, %d events", tok, ev)
+	}
+	if c := cell("2026-09-20", code+"|"); c.In != 40 {
+		t.Fatalf("20 Sep Claude Code: %+v", c)
+	}
+	if c := cell("2026-09-21", code+"|"); c.In != 40 || c.Out != 4 || c.Events != 1 {
+		t.Fatalf("21 Sep lost Claude Code history: %+v", c)
+	}
+	if c := cell("2026-09-21", "anthropic|native-claude|claude-x|a_1|"); c.In != 67 {
+		t.Fatalf("21 Sep native: %+v", c)
+	}
+}
+
 // A version 3 file's account totals come through a rebuild (they do not
 // depend on local logs); without any, the rollup is stale until a read.
 func TestSalvageCarriesAccountTotals(t *testing.T) {
@@ -637,5 +715,200 @@ func TestSalvageCarriesAccountTotals(t *testing.T) {
 	r.AddAccountUsage(nil) // a successful read, even of nothing
 	if r.AccountsStale() || !r.Dirty() {
 		t.Fatal("a read must end stale")
+	}
+}
+
+// v5File writes a version 5 rollup file: date -> cell key (with its quality
+// part) -> the ten counters in file order.
+func v5File(t *testing.T, days map[string]map[string][10]int64) string {
+	t.Helper()
+	b, _ := json.Marshal(map[string]any{"v": 5, "days": days})
+	p := filepath.Join(t.TempDir(), "rollup.json")
+	os.WriteFile(p, b, 0o600)
+	return p
+}
+
+// The prompts of desktop-app lines move with them too: their activity and
+// prompt records are compared under claude-code while the floor is applied,
+// so the old file's Claude Code prompts (which held them) are not restored
+// beside the native ones. A Claude Code prompt whose log is gone still is.
+func TestSalvageFollowsPromptsMovedToClaudeNative(t *testing.T) {
+	const code, codeP = "anthropic|claude-code|claude-x|a_1|", "anthropic|claude-code||a_1|"
+	const native, nativeP = "anthropic|native-claude|claude-x|a_1|", "anthropic|native-claude||a_1|"
+	p := v5File(t, map[string]map[string][10]int64{
+		// one CLI and one desktop turn, both re-read
+		"2026-09-20": {code: {100, 0, 0, 0, 10, 0, 2, 0, 0, 2}, codeP: {0, 0, 0, 0, 0, 0, 0, 2, 1, 0}},
+		// the CLI turn's log is gone, the desktop turn is re-read
+		"2026-09-21": {code: {100, 0, 0, 0, 10, 0, 2, 0, 0, 2}, codeP: {0, 0, 0, 0, 0, 0, 0, 2, 1, 0}},
+	})
+	r := Salvage(p)
+	day := func(date string) time.Time {
+		ts, _ := time.Parse(dateLayout, date)
+		return ts.Add(12 * time.Hour)
+	}
+	desktop := func(date, id string, hasUsage bool) {
+		u := usage("u"+id, day(date), 60, 6)
+		u.Source, u.IDSource = model.SourceClaudeNative, model.SourceClaudeCode
+		r.AddUsage(u, now)
+		a := activity("a"+id, day(date), hasUsage)
+		a.Source, a.IDSource = model.SourceClaudeNative, model.SourceClaudeCode
+		r.AddActivity(a)
+		pr := prompt("p"+id, day(date), "", "")
+		pr.Source, pr.IDSource = model.SourceClaudeNative, model.SourceClaudeCode
+		r.AddPrompt(pr)
+		pr.Model = "claude-x" // a later sighting knows the model
+		r.AddPrompt(pr)
+	}
+	r.AddUsage(usage("ucl20", day("2026-09-20"), 40, 4), now)
+	r.AddActivity(activity("acl20", day("2026-09-20"), true))
+	r.AddPrompt(prompt("pcl20", day("2026-09-20"), "claude-x", ""))
+	desktop("2026-09-20", "dt20", false)
+	desktop("2026-09-21", "dt21", false)
+	// The desktop prompt's usage is found on a later read.
+	a := activity("adt21", day("2026-09-21"), true)
+	a.Source, a.IDSource = model.SourceClaudeNative, model.SourceClaudeCode
+	r.AddActivity(a)
+	r.ApplyFloor()
+
+	cell := func(date, key string) Cell {
+		if c := r.Days[date][key]; c != nil {
+			return *c
+		}
+		return Cell{}
+	}
+	sum := func(date string) (c Cell) {
+		for _, x := range r.Days[date] {
+			for i, p := range x.fields() {
+				*c.fields()[i] += *p
+			}
+		}
+		return c
+	}
+	if s := sum("2026-09-20"); s.Tokens() != 110 || s.Events != 2 || s.Prompts != 2 || s.PromptsNoUsage != 1 || s.ModelPrompts != 2 {
+		t.Fatalf("20 Sep counted twice: %+v", s)
+	}
+	if c := cell("2026-09-20", codeP); c.Prompts != 1 || c.PromptsNoUsage != 0 {
+		t.Fatalf("20 Sep Claude Code prompts: %+v", c)
+	}
+	if c := cell("2026-09-20", nativeP); c.Prompts != 1 || c.PromptsNoUsage != 1 {
+		t.Fatalf("20 Sep native prompts: %+v", c)
+	}
+	if c := cell("2026-09-20", native); c.ModelPrompts != 1 {
+		t.Fatalf("20 Sep native model prompts: %+v", c)
+	}
+	// 21 Sep: the CLI turn whose log is gone is restored under Claude Code,
+	// and only it.
+	if c := cell("2026-09-21", codeP); c.Prompts != 1 {
+		t.Fatalf("21 Sep lost or doubled Claude Code prompts: %+v", c)
+	}
+	if c := cell("2026-09-21", code); c.ModelPrompts != 1 || c.Events != 1 || c.In != 40 || c.Out != 4 {
+		t.Fatalf("21 Sep Claude Code model prompts: %+v", c)
+	}
+	if s := sum("2026-09-21"); s.Prompts != 2 || s.ModelPrompts != 2 {
+		t.Fatalf("21 Sep totals: %+v", s)
+	}
+	// The old file's untracked prompt (1) was the desktop one, now tracked.
+	if s := sum("2026-09-21"); s.PromptsNoUsage != 1 {
+		t.Logf("21 Sep untracked prompts: %d (the old file's count is a floor)", s.PromptsNoUsage)
+	}
+}
+
+// Swept Claude chat history arrives at any time, long after its dates were
+// sealed: it is counted, once, and survives a reload and later seals.
+func TestClaudeChatIsNeverSealedOut(t *testing.T) {
+	r := New()
+	r.AddUsage(usage("cc01", now.Add(-time.Hour), 10, 1), now)
+	later := now.Add(3 * time.Hour)
+	r.Settle(later, true)
+	if r.Sealed == "" {
+		t.Fatal("not sealed")
+	}
+	old := now.Add(-30 * 24 * time.Hour)
+	chat := func() (model.UsageEvent, model.ActivityEvent, model.PromptRecord) {
+		u := usage("chat01", old, 500, 50)
+		u.Source, u.IDSource, u.Q = model.SourceClaudeChat, model.IDSourceClaudeChat, model.QualityEstimated
+		a := activity("chata01", old, true)
+		a.Source, a.IDSource = model.SourceClaudeChat, model.IDSourceClaudeChat
+		p := prompt("chatp01", old, "claude-x", "")
+		p.Source, p.IDSource = model.SourceClaudeChat, model.IDSourceClaudeChat
+		return u, a, p
+	}
+	add := func(at time.Time) {
+		u, a, p := chat()
+		r.AddUsage(u, at)
+		r.AddActivity(a)
+		r.AddPrompt(p)
+	}
+	date := old.Format(dateLayout)
+	check := func(when string) {
+		t.Helper()
+		tok, ev, prompts := total(r, date)
+		var mp int64
+		for _, c := range r.Days[date] {
+			mp += c.ModelPrompts
+		}
+		if tok != 550 || ev != 1 || prompts != 1 || mp != 1 {
+			t.Fatalf("%s: tokens %d events %d prompts %d model prompts %d", when, tok, ev, prompts, mp)
+		}
+	}
+	add(later)
+	check("first sweep")
+	add(later) // the spool re-read
+	check("re-read")
+	path := filepath.Join(t.TempDir(), "rollup.json")
+	if err := r.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	if r, err = Load(path); err != nil {
+		t.Fatal(err)
+	}
+	r.Settle(later.Add(10*24*time.Hour), true)
+	add(later.Add(10 * 24 * time.Hour)) // the weekly full reparse
+	check("after a reload and another seal")
+	// Other sources stay sealed.
+	cc := usage("cc02", old, 7, 0)
+	r.AddUsage(cc, later)
+	check("a sealed Claude Code event")
+
+	// A live (still growing) chat event retires to the chat sets.
+	r2 := New()
+	fresh := usage("chat02", now.Add(-time.Minute), 5, 1)
+	fresh.Source, fresh.IDSource, fresh.Q = model.SourceClaudeWeb, model.IDSourceClaudeChat, model.QualityEstimated
+	r2.AddUsage(fresh, now)
+	r2.Settle(now.Add(30*24*time.Hour), true)
+	r2.AddUsage(fresh, now.Add(30*24*time.Hour))
+	if tok, ev, _ := total(r2, fresh.TS.Format(dateLayout)); tok != 6 || ev != 1 {
+		t.Fatalf("retired chat event: tokens %d events %d", tok, ev)
+	}
+}
+
+// Claude Native history whose logs are gone (Cowork) is restored in full
+// even when desktop-app lines moved into the same native cell: the moved
+// part compares under claude-code, per cell as per level.
+func TestSalvageRestoresNativeBesideMovedLines(t *testing.T) {
+	const code = "anthropic|claude-code|claude-x|a_1|"
+	const native = "anthropic|native-claude|claude-x|a_1|"
+	p := v5File(t, map[string]map[string][10]int64{
+		"2026-09-21": {
+			native: {100, 0, 0, 0, 10, 0, 1, 0, 0, 0}, // Cowork: the log is gone
+			code:   {60, 0, 0, 0, 6, 0, 1, 0, 0, 0},   // a desktop line, re-read
+		},
+	})
+	r := Salvage(p)
+	ts, _ := time.Parse(dateLayout, "2026-09-21")
+	u := usage("dt21", ts.Add(12*time.Hour), 60, 6)
+	u.Source, u.IDSource = model.SourceClaudeNative, model.SourceClaudeCode
+	r.AddUsage(u, now)
+	r.ApplyFloor()
+	c := r.Days["2026-09-21"][native]
+	if c == nil || c.In != 160 || c.Out != 16 || c.Events != 2 {
+		t.Fatalf("native cell %+v", c)
+	}
+	if c := r.Days["2026-09-21"][code]; c != nil && c.Tokens() != 0 {
+		t.Fatalf("moved line restored under Claude Code too: %+v", c)
+	}
+	if tok, ev, _ := total(r, "2026-09-21"); tok != 176 || ev != 2 {
+		t.Fatalf("day total %d tokens, %d events", tok, ev)
 	}
 }

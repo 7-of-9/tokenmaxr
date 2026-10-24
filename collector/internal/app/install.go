@@ -26,6 +26,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 	"github.com/7-of-9/tokenmaxr/collector/internal/upload"
 	"github.com/7-of-9/tokenmaxr/collector/internal/userpath"
+	"github.com/7-of-9/tokenmaxr/collector/internal/webcapture"
 )
 
 type InstallOptions struct {
@@ -542,10 +543,24 @@ func (a *App) Uninstall(o UninstallOptions) error {
 			errs = append(errs, errors.New("the app is still running; quit it from its menu"))
 		}
 	}
+	// Claude Web capture: the native-host registration points at a launcher
+	// in this state directory, so it goes before bin and home.
+	if webcapture.Installed(a.Home) {
+		if err := webcapture.Remove(a.Home); err != nil {
+			errs = append(errs, err)
+		} else {
+			a.printf("Claude Web capture removed (remove the extension from chrome://extensions too)\n")
+		}
+	}
 	if err := a.pathRemove(paths.Bin(a.Home)); err != nil {
 		errs = append(errs, err)
 	}
 	if o.Purge {
+		// The web capture spool first, so it is gone even when the rest of
+		// the directory is removed later.
+		if err := os.RemoveAll(paths.WebClaude(a.Home)); err != nil {
+			errs = append(errs, err)
+		}
 		// Wait for an in-flight tick, then let go of everything in the dir.
 		if lk, err := lock.Acquire(paths.Lock(a.Home), time.Minute); err == nil {
 			lk.Release()

@@ -20,10 +20,21 @@ const (
 
 // Sources.
 const (
-	SourceClaudeCode = "claude-code"
+	SourceClaudeCode   = "claude-code"
+	SourceClaudeNative = "native-claude"
+	SourceClaudeWeb    = "web-claude"
+	// SourceClaudeChat is Claude chat whose client was not recorded: turns
+	// older than the start of this fleet's Claude Web capture (SPEC
+	// "Claude chat").
+	SourceClaudeChat = "chat-claude"
 	SourceCodex      = "codex"
 	SourceGrokCLI    = "grok-cli"
 )
+
+// IDSourceClaudeChat is the source part of every Claude chat event id, so a
+// turn has one id whichever channel (web-claude, native-claude, chat-claude)
+// records it (SPEC "Claude chat").
+const IDSourceClaudeChat = "claude-chat"
 
 // Event quality and account-attribution quality (SPEC "Accounts").
 const (
@@ -115,6 +126,10 @@ type UsageEvent struct {
 	// WS is Workspace hashed with the fleet key (w_ + 16 hex), so the server
 	// can rate tokens per prompt per workspace without the path.
 	WS string `json:"ws,omitempty"`
+	// IDSource is the source part of ID when it is not Source (a ~/.claude
+	// line the desktop app wrote keeps its claude-code id as native-claude;
+	// SPEC "Claude Native"). It stays off the wire.
+	IDSource string `json:"-"`
 	Tokens
 }
 
@@ -131,6 +146,9 @@ type ActivityEvent struct {
 	// Workspace matches the prompt recorded for the same folder. Not uploaded.
 	Workspace string `json:"-"`
 	WS        string `json:"ws,omitempty"`
+	// IDSource is the source part of ID when it is not Source, as on
+	// UsageEvent. It stays off the wire.
+	IDSource string `json:"-"`
 }
 
 type PromptRecord struct {
@@ -147,6 +165,9 @@ type PromptRecord struct {
 	Machine     string    `json:"machine"`
 	Session     string    `json:"session"`
 	Text        string    `json:"text"`
+	// IDSource is the source part of ID when it is not Source, as on
+	// UsageEvent. It stays off the wire (and out of saved cursors).
+	IDSource string `json:"-"`
 }
 
 // MaxPromptBytes caps prompt text; longer text is truncated with a marker.

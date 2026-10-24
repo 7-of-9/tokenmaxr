@@ -226,6 +226,8 @@ test('the port reconciles exactly as api/src/lib/account-usage.js', () => {
   const result = reconcileAccountUsage(withoutWorkspaces(days), [...a, ...b], NOW)
   assert.equal(result.conflicts, 1, 'the fixture has a conflicting window')
   assert.ok(result.days.some(d => (d.providers.openai?.exact.unattributed ?? 0) > 0), 'and recovered history')
+  assert.deepEqual(result.days.find(d => d.date === '2026-09-08')?.providers.openai?.bySource, {},
+    'account-only history does not invent a client channel or request')
 })
 
 test('published files reconcile on the page exactly as the API reconciles the same events', () => {

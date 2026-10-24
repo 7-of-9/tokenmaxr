@@ -115,6 +115,12 @@ func Rollup(home string) string { return filepath.Join(home, "rollup.json") }
 
 func QuotaWork(home string) string { return filepath.Join(Quota(home), "work") }
 
+// WebClaude holds Claude Web capture state (internal/webclaude): the spool
+// the native-messaging host appends to, its settings, enrolment and status.
+// ChromeExtension is the unpacked browser extension that install writes.
+func WebClaude(home string) string       { return filepath.Join(home, "web-claude") }
+func ChromeExtension(home string) string { return filepath.Join(home, "chrome-extension") }
+
 // Desktop app (SPEC "Desktop app (v1.4)"): the running app holds app.lock;
 // other commands leave it a flag file (app.show, app.quit, app.restart);
 // app.stopped marks a Quit from its menu, which the Windows watchdog honours.

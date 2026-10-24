@@ -107,11 +107,52 @@ repository named after your account) or your profile's website.
   embeds (Go's `go:embed` cannot reach outside the collector module).
   Commit both copies. `npm run check:pages` and the collector's Go tests
   fail when the two differ or `version.json` does not match the files.
-- `.github/workflows/pages.yml` rebuilds `data/index.json` (the list of
-  machines and files; Pages cannot list folders) and deploys on every push.
-  `scripts/build-index.mjs` writes schema 3, which lists `owner.json`; under
-  an older index the signed-in dashboard looks for each machine's `owner.json`
-  itself (a 404 means none).
+- `data/index.json` lists every machine's files with each file's git object
+  id (GitHub Pages and raw.githubusercontent.com cannot list folders). The
+  collectors rewrite it in each data commit, from the branch the commit lands
+  on. `.gitattributes` checks `data/` and `site/` out byte for byte (no
+  line-ending conversion), so `scripts/build-index.mjs` gives the same ids on
+  a Windows checkout too; a repository made from an earlier template can copy
+  it from the template.
+- Where the dashboard reads `data/` from: for a public repository, straight
+  from the repository (`raw.githubusercontent.com`, the default branch) each
+  time the page loads and every 5 minutes after, so a collector's commit
+  shows within minutes without a deploy; a file is read again only when its
+  id in the index changes. The repository's index is joined with the
+  deployed copy's, so files committed by a machine whose collector does not
+  write `data/index.json` yet (an older version) still show, from the next
+  hourly deploy on; update every machine for them to show within minutes. A
+  private repository cannot be read that way, so its dashboard reads the
+  deployed copy (as does any dashboard whose collectors do not write
+  `data/index.json` yet, or when a read fails before the first live read of
+  a visit, for that time; after one, a failed read keeps the page's newer
+  data and tries again); the footer says "read live" when the data came from
+  the repository. A machine shows as live when its newest event is under 75
+  minutes old (135 from the deployed copy, which lags by up to an hour).
+- `.github/workflows/pages.yml` deploys `site/` and the deployed copy of
+  `data/`. Data commits do not deploy: a run every hour (at 17 minutes past)
+  redeploys when anything in the repository changed since the last deploy
+  (so also a dashboard change whose own deploy failed) and stops after a few
+  seconds when nothing did. Pushes to `site/` (the collectors' dashboard
+  updates), `tokenmaxr.json`, `scripts/` or the workflow deploy at once, and
+  so does *Run workflow* on the Actions tab. The hourly run starts only once
+  a collector has joined (the `TOKENMAXR_FLEET_KEY` repository variable
+  exists) and is skipped, at no cost, when the repository variable
+  `TOKENMAXR_SCHEDULE` is `off`. Public repositories pay nothing for Actions.
+  In a private repository each hourly run bills at least a minute even when
+  it deploys nothing (about 720 minutes a month); set `TOKENMAXR_SCHEDULE` to
+  `off` to stop it (the dashboard then updates only on a dashboard change or
+  *Run workflow*), or change the `cron` line to run less often. The workflow
+  rebuilds `data/index.json` for the deployed copy with
+  `scripts/build-index.mjs` (schema 4: also the title, the build time and the
+  deployed commit's tree). The collectors update `site/`
+  but cannot change this workflow or `scripts/` (their GitHub App may not
+  write workflows), so a repository made from an earlier template keeps its
+  old workflow, which deploys on every data commit, until you copy the new
+  `.github/workflows/pages.yml` and `scripts/build-index.mjs` from the
+  template; the dashboard works with either. Under an index older than schema
+  3 the signed-in dashboard looks for each machine's `owner.json` itself (a
+  404 means none).
 - `tokenmaxr.json` marks this repository for the collector, and holds the
   dashboard's settings (the Pages workflow serves it beside the page):
   - `title` renames the dashboard (the browser tab).
@@ -160,7 +201,7 @@ machines follow by themselves; there is nothing to change on any of them:
   redirect `https://<you>.github.io/<old name>/`. The collectors point the
   repository's website and this README's links at the new address (only
   where they named the old one; a website or link of your own stays), and the
-  Pages workflow deploys the new address with the next push. Update links you
+  Pages workflow deploys the new address with its next run. Update links you
   shared or bookmarked yourself, and `repository` in `tokenmaxr.json` if you
   set it.
 - The owner key a browser keeps is kept per dashboard address: sign in again

@@ -1,3 +1,7 @@
 # site/ is the built dashboard: collectors embed these exact bytes and site/version.json hashes them,
 # so no line-ending conversion on checkout.
 site/** -text
+# data/ is what the collectors commit (LF JSON). data/index.json lists each file's git object id, and
+# scripts/build-index.mjs hashes the checked-out bytes: converted line endings (core.autocrlf) would give
+# ids the repository does not have.
+data/** -text

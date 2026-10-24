@@ -11,7 +11,7 @@ import {
   activeDayCount, buildCells, DEFAULT_VIEW, normaliseDays, promptModelsOf, summarise, type NormDay,
 } from '../../src/components/agents/usage.ts'
 import {
-  buildUsage, githubSource, readUsageRows, SCHEMA1_COLS, type MachineFiles, type Published, type UsageFile,
+  blobId, buildUsage, githubSource, RAW_ORIGIN, readUsageRows, SCHEMA1_COLS, type MachineFiles, type Published, type UsageFile,
 } from './githubSource.ts'
 
 const NOW = new Date('2026-09-30T12:00:00Z')
@@ -226,6 +226,232 @@ test('a schema 1 index (the first template) cannot list account-usage.json: the 
   await githubSource({ fetch: fakeFetch({ ...fixtures, 'data/index.json': { ...unlisted, schema: 2 } }, asked), now: () => NOW })
     .fetchUsage(new AbortController().signal, () => {})
   assert.ok(!asked.some(p => p.endsWith('account-usage.json')))
+})
+
+// ---- Reading the repository live ----
+
+const LIVE = `${RAW_ORIGIN}octo/usage/HEAD/`
+const bytesOf = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
+
+/** The repository's files on raw.githubusercontent.com, with the index collectors commit (schema 4, no title). */
+async function liveFiles(p: Published, title = 'Live title'): Promise<Record<string, unknown>> {
+  const relative = files(p)
+  const out: Record<string, unknown> = {}
+  const index = { schema: 4, machines: [] as Array<{ id: string; files: string[]; blobs: Record<string, string> }> }
+  for (const m of (relative['data/index.json'] as { machines: Array<{ id: string; files: string[] }> }).machines) {
+    const blobs: Record<string, string> = {}
+    for (const name of m.files) {
+      const body = relative[`data/machines/${m.id}/${name}`]
+      out[`${LIVE}data/machines/${m.id}/${name}`] = body
+      blobs[name] = (await blobId(bytesOf(body)))!
+    }
+    index.machines.push({ id: m.id, files: m.files, blobs })
+  }
+  out[`${LIVE}data/index.json`] = index
+  out[`${LIVE}tokenmaxr.json`] = { tokenmaxr: 1, title }
+  return out
+}
+
+test('blob ids are git’s object ids', async () => {
+  // printf 'hello\n' | git hash-object --stdin
+  assert.equal(await blobId(new TextEncoder().encode('hello\n')), 'ce013625030ba8dba906f756967f9e9ca394464a')
+})
+
+test('a public repository is read live, and a poll reads only the files that changed', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  const requested: string[] = []
+  const source = githubSource({ fetch: fakeFetch(fixtures, requested), now: () => NOW, repository: async () => 'octo/usage' })
+  const data = await source.fetchUsage(new AbortController().signal, () => {})
+  const expected = buildUsage({ ...published(), generatedAt: undefined }, NOW)
+  assert.deepEqual(data, expected, 'the same response as from the deployed copy')
+  assert.ok(requested.length > 2 && requested.every(url => url.startsWith(LIVE) || url === 'data/index.json'), 'only the deployed index from the deployed copy')
+  assert.match(source.label, /read live/)
+  assert.equal((await source.fetchIndex()).title, 'Live title', 'the title from tokenmaxr.json')
+
+  // Nothing changed: the indexes alone.
+  requested.length = 0
+  assert.deepEqual(await source.fetchUsage(new AbortController().signal, () => {}), expected)
+  assert.deepEqual(requested, [`${LIVE}data/index.json`, 'data/index.json'])
+
+  // A collector commits one changed file: that file and the index.
+  const changed = published()
+  changed.machines[0].usage[0] = { ...changed.machines[0].usage[0], rows: changed.machines[0].usage[0].rows!.slice(1) }
+  Object.assign(fixtures, await liveFiles(changed))
+  requested.length = 0
+  const next = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.deepEqual(requested, [`${LIVE}data/index.json`, 'data/index.json', `${LIVE}data/machines/${A}/usage-2026-09.json`])
+  assert.deepEqual(next, buildUsage({ ...changed, generatedAt: undefined }, NOW))
+})
+
+test('a file whose cached copy is older than the index lists is read again next time', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  // raw.githubusercontent.com still serves the previous meta.json of machine B.
+  const meta = `${LIVE}data/machines/${B}/meta.json`
+  fixtures[meta] = { ...(fixtures[meta] as object), label: 'old label' }
+  const requested: string[] = []
+  const source = githubSource({ fetch: fakeFetch(fixtures, requested), now: () => NOW, repository: async () => 'octo/usage' })
+  await source.fetchUsage(new AbortController().signal, () => {})
+  requested.length = 0
+  await source.fetchUsage(new AbortController().signal, () => {})
+  assert.deepEqual(requested, [`${LIVE}data/index.json`, 'data/index.json', meta])
+})
+
+test('files the repository’s index does not list (a collector that writes none) are read live from the deployed index', async () => {
+  // The repository's index (last rewritten by a newer collector) lists machine A only; an older collector on
+  // machine B has committed since, and the hourly deploy listed B's files.
+  const live = await liveFiles(published())
+  const index = live[`${LIVE}data/index.json`] as { machines: Array<{ id: string }> }
+  index.machines = index.machines.filter(m => m.id === A)
+  // B also listed a file it has since deleted from the repository.
+  const deployed = files(published())
+  const deployedIndex = deployed['data/index.json'] as { machines: Array<{ id: string; files: string[] }> }
+  deployedIndex.machines.find(m => m.id === B)!.files.push('usage-2026-01.json')
+  const requested: string[] = []
+  const source = githubSource({ fetch: fakeFetch({ ...deployed, ...live }, requested), now: () => NOW, repository: async () => 'octo/usage' })
+  assert.deepEqual(await source.fetchUsage(new AbortController().signal, () => {}), buildUsage({ ...published(), generatedAt: undefined }, NOW))
+  assert.ok(requested.includes(`${LIVE}data/machines/${B}/meta.json`), 'B read live')
+  assert.ok(requested.filter(url => url !== 'data/index.json').every(url => url.startsWith(LIVE)), 'nothing else from the deployed copy')
+  assert.match(source.label, /read live/)
+})
+
+test('a private repository, or one whose collectors commit no index, reads the deployed copy', async () => {
+  const deployed = files(published())
+  for (const fixtures of [deployed, { ...deployed, [`${LIVE}data/index.json`]: deployed['data/index.json'] }]) {
+    const requested: string[] = []
+    const source = githubSource({ fetch: fakeFetch(fixtures, requested), now: () => NOW, repository: async () => 'octo/usage' })
+    assert.deepEqual(await source.fetchUsage(new AbortController().signal, () => {}), buildUsage(published(), NOW))
+    assert.equal(requested[0], `${LIVE}data/index.json`)
+    assert.ok(requested.slice(1).every(path => !path.startsWith(RAW_ORIGIN)))
+    assert.doesNotMatch(source.label, /live/)
+    // The repository is not asked again on this visit.
+    requested.length = 0
+    await source.fetchUsage(new AbortController().signal, () => {})
+    assert.ok(requested.every(path => !path.startsWith(RAW_ORIGIN)))
+  }
+  // No repository (a custom domain without one): only the deployed copy.
+  const requested: string[] = []
+  await githubSource({ fetch: fakeFetch(deployed, requested), now: () => NOW, repository: async () => null }).fetchUsage(new AbortController().signal, () => {})
+  assert.ok(requested.every(path => !path.startsWith(RAW_ORIGIN)))
+})
+
+test('a live file that fails (rate-limited) reads the deployed copy that time, and the repository again next time', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  const limited = `${LIVE}data/machines/${A}/usage-2026-09.json`
+  let refuse = true
+  const requested: string[] = []
+  const inner = fakeFetch(fixtures, requested)
+  const get: typeof fetch = async (input, init) => refuse && String(input) === limited ? new Response('', { status: 429 }) : inner(input, init)
+  const source = githubSource({ fetch: get, now: () => NOW, repository: async () => 'octo/usage' })
+  assert.deepEqual(await source.fetchUsage(new AbortController().signal, () => {}), buildUsage(published(), NOW))
+  assert.ok(requested.includes('data/index.json'))
+  assert.doesNotMatch(source.label, /live/)
+  refuse = false
+  requested.length = 0
+  await source.fetchUsage(new AbortController().signal, () => {})
+  assert.equal(requested[0], `${LIVE}data/index.json`)
+  assert.match(source.label, /read live/)
+})
+
+test('once a live read has worked, a failed one fails the poll (the page keeps its data), and the next reads live again', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  const usageFile = `${LIVE}data/machines/${A}/usage-2026-09.json`
+  let fault: { url: string; response: () => Response } | null = null
+  const inner = fakeFetch(fixtures)
+  const get: typeof fetch = async (input, init) => fault && String(input) === fault.url ? fault.response() : inner(input, init)
+  const source = githubSource({ fetch: get, now: () => NOW, repository: async () => 'octo/usage' })
+  const first = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.match(source.label, /read live/)
+
+  // A collector commits a change; then each kind of transient failure on the way to it.
+  const changed = published()
+  changed.machines[0].usage[0] = { ...changed.machines[0].usage[0], rows: changed.machines[0].usage[0].rows!.slice(1) }
+  Object.assign(fixtures, await liveFiles(changed))
+  const faults = [
+    { url: usageFile, response: () => new Response('', { status: 429 }) },
+    { url: usageFile, response: () => new Response('', { status: 503 }) },
+    { url: usageFile, response: () => { throw new TypeError('Failed to fetch') } },
+    { url: `${LIVE}data/index.json`, response: () => new Response('', { status: 502 }) },
+  ]
+  for (const f of faults) {
+    fault = f
+    await assert.rejects(source.fetchUsage(new AbortController().signal, () => {}), /(429|503|502)|Failed to fetch/, `${f.url} failing rejects`)
+    assert.match(source.label, /read live/, 'still labelled live: the page keeps the last live data')
+  }
+  fault = null
+  const next = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.deepEqual(next, buildUsage({ ...changed, generatedAt: undefined }, NOW))
+  assert.notDeepEqual(next.days, first.days)
+  // The index fails before any live read has worked: the deployed copy that time (as before).
+  fault = { url: `${LIVE}data/index.json`, response: () => new Response('', { status: 502 }) }
+  const fresh = githubSource({ fetch: get, now: () => NOW, repository: async () => 'octo/usage' })
+  assert.deepEqual(await fresh.fetchUsage(new AbortController().signal, () => {}), buildUsage(published(), NOW))
+})
+
+test('the footer time never steps back when a read falls back to the older deployed copy', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  let clock = NOW.getTime()
+  const source = githubSource({ fetch: fakeFetch(fixtures), now: () => new Date(clock), repository: async () => 'octo/usage' })
+  const live = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.equal(live.generatedAt, NOW.toISOString(), 'read live: the time it was read')
+  // The repository stops answering (made private): the deployed copy, built before that read.
+  delete fixtures[`${LIVE}data/index.json`]
+  clock += 300_000
+  const after = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.doesNotMatch(source.label, /live/)
+  assert.equal(after.generatedAt, NOW.toISOString(), 'not the deployed copy’s older 11:59')
+})
+
+test('a machine only the deployed index lists, whose files are all gone from the repository, is not shown', async () => {
+  const live = await liveFiles(published())
+  const index = live[`${LIVE}data/index.json`] as { machines: Array<{ id: string }> }
+  index.machines = index.machines.filter(m => m.id === A)
+  for (const url of Object.keys(live)) if (url.includes(`/${B}/`)) delete live[url]
+  const source = githubSource({ fetch: fakeFetch({ ...files(published()), ...live }), now: () => NOW, repository: async () => 'octo/usage' })
+  const data = await source.fetchUsage(new AbortController().signal, () => {})
+  assert.deepEqual(data.machines?.map(m => m.id), [A])
+  assert.equal(data.totals.machines, 1)
+  assert.match(source.label, /read live/)
+})
+
+test('a machine is live within 75 minutes of its newest event read live, and 135 minutes from the deployed copy', () => {
+  const at = (minutes: number): Published => ({ machines: [{ id: A, meta: { id: A, lastEventAt: new Date(NOW.getTime() - minutes * 60_000).toISOString() }, usage: [] }] })
+  const live = (p: Published) => buildUsage(p, NOW).machines![0].live
+  assert.equal(live({ ...at(70), live: true }), true)
+  assert.equal(live({ ...at(100), live: true }), false)
+  assert.equal(live(at(100)), false, 'unspecified: as read live')
+  assert.equal(live({ ...at(100), live: false }), true, 'deployed copy: up to another hour behind')
+  assert.equal(live({ ...at(140), live: false }), false)
+})
+
+test('the page’s first title and usage loads share one read of each index, and one caller’s abort fails only its own', async () => {
+  const fixtures = { ...files(published()), ...await liveFiles(published()) }
+  const requested: string[] = []
+  const inner = fakeFetch(fixtures, requested)
+  let open: () => void = () => {}
+  const gate = new Promise<void>(resolve => { open = resolve })
+  const get: typeof fetch = async (input, init) => { await gate; return inner(input, init) }
+  const source = githubSource({ fetch: get, now: () => NOW, repository: async () => 'octo/usage' })
+  const title = new AbortController()
+  const titleLoad = source.fetchIndex(title.signal)
+  const usageLoad = source.fetchUsage(new AbortController().signal, () => {})
+  await new Promise(resolve => setTimeout(resolve, 0))
+  title.abort(new DOMException('gone', 'AbortError'))
+  open()
+  await assert.rejects(titleLoad, /gone/)
+  assert.deepEqual(await usageLoad, buildUsage({ ...published(), generatedAt: undefined }, NOW))
+  assert.equal(requested.filter(url => url === `${LIVE}data/index.json`).length, 1)
+  assert.equal(requested.filter(url => url === 'data/index.json').length, 1)
+  // Both together, neither aborted: still one read of each.
+  requested.length = 0
+  const [index] = await Promise.all([source.fetchIndex(), source.fetchUsage(new AbortController().signal, () => {})])
+  assert.equal(index.title, 'Live title')
+  assert.deepEqual(requested.filter(url => url.endsWith('data/index.json')), [`${LIVE}data/index.json`, 'data/index.json'])
+  // Every caller gone: the shared read stops, and the next call starts afresh.
+  const only = new AbortController()
+  const lone = source.fetchIndex(only.signal)
+  only.abort(new DOMException('gone', 'AbortError'))
+  await assert.rejects(lone, /gone/)
+  assert.equal((await source.fetchIndex()).title, 'Live title')
 })
 
 // ---- Parity with the d0m1 API ----

@@ -82,6 +82,9 @@ const signedIn = () => Response.json({ clientPrincipal: principal })
   assert.equal(new URL(urls.signIn, 'https://d0m1.com').searchParams.get('post_login_redirect_uri'), location.pathname + location.search + location.hash)
   assert.equal(new URL(urls.signOut, 'http://localhost:5173').searchParams.get('post_logout_redirect_uri'), location.pathname + location.search + location.hash)
   assert.match(authUrls({ pathname: '//evil.example', search: '', hash: '' }).signIn, /%2Ftokens$/)
+  const production = new URL(authUrls(location, true).signOut, 'https://d0m1.com')
+  assert.equal(production.pathname, '/api/session/logout')
+  assert.equal(production.searchParams.get('post_logout_redirect_uri'), location.pathname + location.search + location.hash)
 }
 
 console.log('auth-store.test.ts: ok')
