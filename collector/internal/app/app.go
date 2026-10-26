@@ -26,7 +26,6 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/scan"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/claude"
-	"github.com/7-of-9/tokenmaxr/collector/internal/sources/claudeweb"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/codex"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/cursor"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/gemini"
@@ -93,6 +92,9 @@ type App struct {
 	// so a (re)started app checks on its first tick. Headless runs start a
 	// process every minute and keep to updateEvery instead.
 	updateChecked bool
+	// webCleaned is set once this process has removed what 0.4.16's Claude
+	// Web capture left (retired.go).
+	webCleaned bool
 }
 
 // New resolves directories. The log is opened lazily by commands that write.
@@ -126,7 +128,7 @@ func New(homeFlag, version string, out io.Writer) (*App, error) {
 
 // DefaultSources is every parser the collector ships.
 func DefaultSources() []sources.Source {
-	return []sources.Source{claude.New(), claude.NewNative(), claudeweb.New(), codex.New(), grok.New(), cursor.New(), gemini.New()}
+	return []sources.Source{claude.New(), codex.New(), grok.New(), cursor.New(), gemini.New()}
 }
 
 // OpenLog starts writing collector.log; echo copies lines to w (nil: none).
@@ -192,16 +194,14 @@ func hashFn(k []byte) func(provider, nativeID string) string {
 // home) timeline in st, then the harvested evidence in ix.
 func (a *App) envFor(k []byte, cfg *store.Config, st *store.State, h homes.Home, ix *evidence.Index) *sources.Env {
 	key := h.Key()
-	codexQuota, webClaude := "", ""
+	codexQuota := ""
 	if h.Kind == homes.KindOS {
 		codexQuota = paths.CodexQuota(a.Home)
-		webClaude = paths.WebClaude(a.Home)
 	}
 	return &sources.Env{
 		Home:       h.Path,
 		CodexHome:  h.CodexHome(a.CodexHome),
 		CodexQuota: codexQuota,
-		WebClaude:  webClaude,
 		Machine:    cfg.MachineLabel,
 		Attribute: func(provider string, ts time.Time, sessionID string, hint sources.Hint) (string, string) {
 			return accounts.Resolve(st.Accounts, ix, key, provider, ts, sessionID, hint)
@@ -213,7 +213,6 @@ func (a *App) envFor(k []byte, cfg *store.Config, st *store.State, h homes.Home,
 		},
 		TZOffsetMin: TZOffsetMin,
 		Prompts:     cfg.Prompts,
-		ScrubSpool:  true,
 	}
 }
 

@@ -20,8 +20,12 @@ import (
 )
 
 const (
-	// pv 2 added cacheW1h; pv 3 routes lines the desktop app wrote
-	// (entrypoint, see lineSource) to native-claude. Each bump makes every
+	// pv 2 added cacheW1h. Collectors 0.4.16 used pv 3 to file lines the
+	// Claude desktop app wrote (entrypoint claude-desktop, -3p, local-agent)
+	// as native-claude; 0.4.17 counts every line as claude-code again but
+	// keeps pv 3, so machines on 0.4.16 do not re-read and re-send every
+	// transcript (an older pv makes the scan start each file over, and the
+	// server would keep the pv 3 rows anyway). Each bump makes every
 	// transcript reparse, and the server replaces the rows of a higher pv.
 	pv = 3
 	// pendingTimeout is how long a prompt waits for the next assistant line
@@ -107,29 +111,8 @@ func (s *Source) Parse(env *sources.Env, path string, cur sources.Cursor) (sourc
 	return parseTranscript(env, path, cur)
 }
 
-// emitter is the ~/.claude reader's: its ids keep the claude-code source
-// part whichever channel a line is routed to (lineSource), so a line's id
-// never changes with its channel.
 func emitter(env *sources.Env) *jsonl.Emitter {
-	return &jsonl.Emitter{Env: env, Provider: model.ProviderAnthropic, Source: model.SourceClaudeCode,
-		IDSource: model.SourceClaudeCode, PV: pv}
-}
-
-// Desktop entrypoints: Claude Code sets each transcript line's entrypoint
-// from CLAUDE_CODE_ENTRYPOINT. The Claude desktop app sets claude-desktop
-// (claude-desktop-3p for third-party providers) for its Code tab and
-// local-agent for local Cowork tasks; both write SDK transcripts like the
-// CLI's. Every other value (cli, claude-vscode, sdk-*, remote*, mcp, ...)
-// stays Claude Code (SPEC "Claude Native").
-var desktopEntrypoints = map[string]bool{"claude-desktop": true, "claude-desktop-3p": true, "local-agent": true}
-
-// lineSource is the channel of a ~/.claude transcript line whose (last
-// known) entrypoint is ep.
-func lineSource(ep string) string {
-	if desktopEntrypoints[ep] {
-		return model.SourceClaudeNative
-	}
-	return model.SourceClaudeCode
+	return &jsonl.Emitter{Env: env, Provider: model.ProviderAnthropic, Source: model.SourceClaudeCode, PV: pv}
 }
 
 // --- transcripts ---
@@ -154,11 +137,7 @@ type line struct {
 	UUID             string `json:"uuid"`
 	SessionID        string `json:"sessionId"`
 	Timestamp        string `json:"timestamp"`
-	AuditTimestamp   string `json:"_audit_timestamp"`
-	AuditSessionID   string `json:"session_id"`
-	ParentToolUseID  string `json:"parent_tool_use_id"`
 	Cwd              string `json:"cwd"`
-	Entrypoint       string `json:"entrypoint"`
 	RequestID        string `json:"requestId"`
 	IsMeta           bool   `json:"isMeta"`
 	IsSidechain      bool   `json:"isSidechain"`
@@ -201,11 +180,13 @@ type acc struct {
 	Cwd string `json:"cwd,omitempty"`
 	// Hint is the file's credential hint when the key was first seen.
 	Hint sources.Hint `json:"hint,omitzero"`
-	// Source is the channel of the line that first named the key, when it
-	// is not the reader's own (lineSource).
-	Source string `json:"src,omitempty"`
 }
 
+// carry is a transcript cursor's carry. One saved by 0.4.16 may also hold
+// "ep" (the file's desktop entrypoint) and a key's "src" (native-claude);
+// both are ignored, as every line counts as claude-code under the same id.
+// Its pending prompts may carry source native-claude: parseTranscript files
+// them as claude-code too (their ids already are claude-code ids).
 type carry struct {
 	// Recent holds the last usage keys seen, oldest first, so a message
 	// whose streamed lines span two reads is still emitted at its max.
@@ -214,15 +195,9 @@ type carry struct {
 	Last time.Time `json:"last,omitzero"`
 	// Pending holds prompts still waiting for the next assistant model.
 	Pending []model.PromptRecord `json:"pending,omitempty"`
-	// Native prompts start without usage. A following recorded assistant turn
-	// upgrades their activity, even when prompt text capture is disabled.
-	PendingActivity []model.ActivityEvent `json:"pendingActivity,omitempty"`
 	// Hint is the latest credential_org of this file (hashed), so a read
 	// that resumes after that line still attributes by it.
 	Hint sources.Hint `json:"hint,omitzero"`
-	// Entrypoint is the file's latest desktop entrypoint (desktopEntrypoints),
-	// for lines that name none; "" for any other.
-	Entrypoint string `json:"ep,omitempty"`
 }
 
 var (
@@ -234,25 +209,14 @@ var (
 )
 
 func parseTranscript(env *sources.Env, path string, cur sources.Cursor) (sources.Batch, sources.Cursor, error) {
-	return parseTranscriptWith(env, path, cur, emitter(env))
-}
-
-// Cowork writes the same SDK transcript format as Claude Code. Keep token,
-// streaming, prompt and privacy handling identical, with its own source tag.
-// The ~/.claude reader (e.Source claude-code) routes each line by its
-// entrypoint (lineSource); the Cowork reader tags every line native-claude.
-func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *jsonl.Emitter) (sources.Batch, sources.Cursor, error) {
-	base := e.Source
-	cowork := base == model.SourceClaudeNative
-	defer func() { e.Source = base }()
 	var c carry
 	if cur.Offset > 0 && len(cur.Carry) > 0 {
 		_ = json.Unmarshal(cur.Carry, &c) // a bad carry only loses the optimisation
 	}
-	if !c.Hint.IsZero() {
-		e.Hint = c.Hint
-	} else {
-		c.Hint = e.Hint
+	e := emitter(env)
+	e.Hint = c.Hint
+	for i := range c.Pending {
+		c.Pending[i].Source = e.Source // 0.4.16 may have saved native-claude
 	}
 	r, err := jsonl.Open(path, cur.Offset)
 	if err != nil {
@@ -287,24 +251,6 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 		if !jsonl.Decode(b, &l) {
 			continue
 		}
-		if !cowork {
-			if desktopEntrypoints[l.Entrypoint] {
-				c.Entrypoint = l.Entrypoint
-			} else if l.Entrypoint != "" {
-				c.Entrypoint = ""
-			}
-			e.Source = lineSource(c.Entrypoint)
-		} else {
-			if l.Timestamp == "" {
-				l.Timestamp = l.AuditTimestamp
-			}
-			if l.SessionID == "" {
-				l.SessionID = l.AuditSessionID
-			}
-			if l.ParentToolUseID != "" {
-				l.IsSidechain = true
-			}
-		}
 		ts, okTS := jsonl.ParseTime(l.Timestamp)
 		switch l.Type {
 		case "assistant":
@@ -312,11 +258,6 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 				continue
 			}
 			m := l.Message.Model
-			for _, activity := range c.PendingActivity {
-				activity.HasUsage = true
-				e.Batch.Activity = append(e.Batch.Activity, activity)
-			}
-			c.PendingActivity = nil
 			if m != "" {
 				for _, p := range c.Pending {
 					p.Model = m
@@ -348,9 +289,6 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 			a := recent[key]
 			if a == nil {
 				a = &acc{Key: key, TS: ts, Session: l.SessionID, Model: m, Cwd: l.Cwd, Hint: e.Hint}
-				if e.Source != base {
-					a.Source = e.Source
-				}
 				recent[key] = a
 			}
 			if a.Cwd == "" {
@@ -380,10 +318,7 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 				continue
 			}
 			e.Dir = l.Cwd
-			e.Activity(l.UUID, ts, l.SessionID, !cowork)
-			if cowork {
-				c.PendingActivity = append(c.PendingActivity, e.Batch.Activity[len(e.Batch.Activity)-1])
-			}
+			e.Activity(l.UUID, ts, l.SessionID, true)
 			if e.Prompts() {
 				c.Pending = append(c.Pending, e.Prompt(l.UUID, ts, l.SessionID, l.Cwd, text))
 			}
@@ -403,10 +338,7 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 				continue
 			}
 			e.Dir = l.Cwd
-			e.Activity(l.UUID, ts, l.SessionID, !cowork)
-			if cowork {
-				c.PendingActivity = append(c.PendingActivity, e.Batch.Activity[len(e.Batch.Activity)-1])
-			}
+			e.Activity(l.UUID, ts, l.SessionID, true)
 			if e.Prompts() {
 				c.Pending = append(c.Pending, e.Prompt(l.UUID, ts, l.SessionID, l.Cwd, text))
 			}
@@ -416,14 +348,9 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 	for _, a := range order {
 		e.Hint = a.Hint
 		e.Dir = a.Cwd
-		e.Source = base
-		if a.Source != "" {
-			e.Source = a.Source
-		}
 		e.Usage(a.Key, a.TS, a.Session, a.Model, a.Tokens)
 	}
 	e.Hint = c.Hint
-	e.Source = base
 
 	// Prompts with no assistant reply after pendingTimeout go out without a model.
 	keep := c.Pending[:0]
@@ -435,9 +362,6 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 		}
 	}
 	c.Pending = keep
-	// Keep token-coverage metadata until the reply arrives. A long-running
-	// Cowork turn may outlast the prompt-text/model timeout; expiring these
-	// IDs would permanently mark that prompt as lacking recorded tokens.
 
 	c.Recent = c.Recent[:0]
 	if now().Sub(c.Last) < recentTTL {
@@ -460,7 +384,7 @@ func parseTranscriptWith(env *sources.Env, path string, cur sources.Cursor, e *j
 }
 
 func marshalCarry(c carry) json.RawMessage {
-	if len(c.Recent) == 0 && len(c.Pending) == 0 && len(c.PendingActivity) == 0 && c.Hint.IsZero() && c.Entrypoint == "" {
+	if len(c.Recent) == 0 && len(c.Pending) == 0 && c.Hint.IsZero() {
 		return nil
 	}
 	b, err := json.Marshal(c)

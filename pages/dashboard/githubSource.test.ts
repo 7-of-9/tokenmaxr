@@ -454,6 +454,27 @@ test('the page’s first title and usage loads share one read of each index, and
   assert.equal((await source.fetchIndex()).title, 'Live title')
 })
 
+test('every Claude source a collector published counts under Anthropic, as the provider total', () => {
+  // Collectors 0.4.14 to 0.4.16 also published native-claude, web-claude and chat-claude rows; those stay.
+  const usage: UsageFile = { schema: 2, month: '2026-09', cols: COLS2, rows: [
+    row2({ date: '2026-09-29', provider: 'anthropic', source: 'claude-code', model: 'claude-x', acct: H1, in: 100, out: 20, events: 1, prompts: 1, modelPrompts: 1 }),
+    row2({ date: '2026-09-29', provider: 'anthropic', source: 'native-claude', model: 'claude-x', acct: H1, in: 10, out: 2, events: 1, prompts: 1, modelPrompts: 1 }),
+    row2({ date: '2026-09-29', provider: 'anthropic', source: 'web-claude', model: 'claude-y', q: 'e', in: 5, out: 1, events: 1, prompts: 1 }),
+    row2({ date: '2026-09-29', provider: 'anthropic', source: 'chat-claude', model: 'claude-y', q: 'e', in: 1, out: 1, events: 1, prompts: 1, promptsNoUsage: 1 }),
+    row2({ date: '2026-09-29', provider: 'openai', source: 'codex', model: 'gpt-z', acct: H2, in: 50, out: 5, events: 1, prompts: 1 }),
+  ] }
+  const data = buildUsage({ machines: [{ id: A, meta: { id: A, label: A }, usage: [usage] }] }, NOW)
+  const anthropic = data.days[0].providers.anthropic!
+  assert.deepEqual([anthropic.exact.in, anthropic.exact.out, anthropic.exact.events], [110, 22, 2])
+  assert.deepEqual([anthropic.estimated.in, anthropic.estimated.out, anthropic.estimated.events], [6, 2, 2])
+  assert.deepEqual([anthropic.prompts, anthropic.promptsNoUsage], [4, 1])
+  assert.ok(!('bySource' in anthropic), 'reported by provider only')
+  assert.equal(data.days[0].providers.openai!.exact.in, 50)
+  const totals = summarise(buildCells(normaliseDays(data), DEFAULT_VIEW), '2026-09-29', '2026-09-29')
+  assert.equal(totals.providers, 2)
+  assert.equal(totals.prompts, 5)
+})
+
 // ---- Parity with the d0m1 API ----
 
 interface Ev {

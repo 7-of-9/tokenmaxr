@@ -352,7 +352,6 @@ export function buildMockPrompts(now: Date, month?: string): PromptsResponse {
 }
 
 export interface PromptFilters {
-  source?: string
   month: string
   workspace: string
   provider: string
@@ -457,7 +456,6 @@ function mockFacets(items: PromptItem[], months: string[]): PromptFacets {
         b.count - a.count,
     ),
     workspaces: [...workspaces.values()].sort((a, b) => b.count - a.count),
-    sources: [...countBy(items, (item) => item.source)].map(([value, count]) => ({ value, count })).sort(byCount),
     models: [...countBy(items, (item) => item.model)].map(([value, count]) => ({ value, count })).sort(byCount),
     machines: [...countBy(items, (item) => item.machine)].map(([value, count]) => ({ value, count })).sort(byCount),
     months: months.map((month) => ({ month, count: monthCounts.get(month) ?? 0 })),
@@ -478,7 +476,6 @@ export function queryMockArchive(items: PromptItem[], f: PromptFilters, order: P
       (f.month === 'all' || item.month === f.month) &&
       (!f.workspace || item.workspaceKey === f.workspace) &&
       (!f.provider || item.provider === f.provider) &&
-      (!f.source || item.source === f.source) &&
       (!f.model || item.model === f.model) &&
       (!f.acct || item.acct === f.acct) &&
       (!f.machine || item.machine === f.machine) &&

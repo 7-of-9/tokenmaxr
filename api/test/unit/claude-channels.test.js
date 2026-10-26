@@ -2,41 +2,79 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { computeRollup, legacyShape, aliasAccts } from '../../src/lib/rollup.js'
 import { validatePrompt, validateUsage } from '../../src/lib/validate.js'
-import { prompt, usage, principal, testKey } from '../fixtures.js'
+import { KFP, batch, prompt, usage, principal, testKey } from '../fixtures.js'
 import { eventId } from '../../src/lib/ids.js'
 import { memoryStore } from '../../src/lib/tables.js'
 import { encryptJson, parseKey } from '../../src/lib/crypto.js'
 import { handlePrompts } from '../../src/lib/prompts.js'
 import { handlePromptCounts } from '../../src/lib/prompt-counts.js'
 import { mergeEvent, sourceUpgrade } from '../../src/lib/merge.js'
-import { upsertPrompt } from '../../src/lib/ingest.js'
+import { handleIngest, upsertPrompt } from '../../src/lib/ingest.js'
+import { handleUsage } from '../../src/lib/usage.js'
+import { createInvite, handleEnroll } from '../../src/lib/enroll.js'
 import { limiter } from '../../src/lib/pool.js'
 
-const sources = ['claude-code', 'web-claude', 'native-claude']
+// Collectors 0.4.14 to 0.4.16 sent Claude usage under four sources. 0.4.17
+// sends claude-code only, but those records stay, and 0.4.16 collectors still
+// running must not be rejected: every one counts under provider anthropic.
+const sources = ['claude-code', 'web-claude', 'native-claude', 'chat-claude']
+const estimated = new Set(['web-claude', 'chat-claude'])
+const DATE = '2026-09-20'
 
-test('Claude channels retain disjoint token, model, prompt and machine totals', () => {
+async function enrolled(store) {
+  const { invite } = await createInvite(store, new Date(), 'test')
+  const r = await handleEnroll({ method: 'POST', headers: {}, query: {}, body: { invite, machineLabel: 't', kFingerprint: KFP }, now: new Date() }, { store })
+  assert.equal(r.status, 200)
+  return r.jsonBody.token
+}
+
+test('every Claude source is accepted and counts in the anthropic totals; the stored split stays, the response is by provider', () => {
   const events = sources.flatMap((source, i) => [
-    { ...usage(`channel-${i}`, { source, in: 10 + i, cacheW: 20, cacheR: 30, out: 40 + i }), kind: 'usage', machine: `machine-${i}`, cc: 'TH' },
+    { ...usage(`channel-${i}`, { source, q: estimated.has(source) ? 'estimated' : 'exact', in: 10 + i, cacheW: 20, cacheR: 30, out: 40 + i }), kind: 'usage', machine: `machine-${i}`, cc: 'TH' },
     { kind: 'activity', provider: 'anthropic', source, hasUsage: i !== 1, machine: `machine-${i}`, cc: 'TH' },
   ])
-  for (const event of events.filter(e => e.kind === 'usage')) assert.equal(validateUsage(event, new Date()).ok, true)
+  for (const event of events.filter(e => e.kind === 'usage')) assert.equal(validateUsage(event, new Date()).ok, true, event.source)
   const day = computeRollup('2026-10-22', events)
   assert.equal(day.v, 4)
   const p = day.providers.anthropic
+  assert.deepEqual(Object.keys(day.providers), ['anthropic'])
+  assert.equal(p.exact.in + p.estimated.in, 10 + 11 + 12 + 13)
+  assert.equal(p.exact.out + p.estimated.out, 40 + 41 + 42 + 43)
+  assert.equal(p.exact.events + p.estimated.events, 4)
+  assert.equal(p.prompts, 4)
+  assert.equal(p.promptsNoUsage, 1)
+  // The stored rollup format is unchanged: its source split still adds up.
   assert.deepEqual(Object.keys(p.bySource).sort(), [...sources].sort())
-  for (const key of ['in', 'cacheW', 'cacheR', 'out', 'events']) {
-    assert.equal(Object.values(p.bySource).reduce((n, s) => n + s.exact[key], 0), p.exact[key])
+  for (const tier of ['exact', 'estimated']) for (const key of ['in', 'cacheW', 'cacheR', 'out', 'events']) {
+    assert.equal(Object.values(p.bySource).reduce((n, s) => n + s[tier][key], 0), p[tier][key])
   }
-  assert.equal(p.bySource['web-claude'].promptsNoUsage, 1)
-  assert.equal(p.bySource['native-claude'].byMachine['machine-2'].out, 42)
-  assert.deepEqual(aliasAccts([day])[0].providers.anthropic.bySource, p.bySource)
+  // The public response drops it and keeps every provider figure.
+  const pub = aliasAccts([day])[0].providers.anthropic
+  assert.equal(pub.bySource, undefined)
+  assert.deepEqual([pub.exact, pub.estimated, pub.prompts, pub.models, pub.byMachine], [p.exact, p.estimated, p.prompts, p.models, p.byMachine])
   // Until an old rollup is rebuilt, keep its existing model/workspace data.
   const old = { ...day, v: 3 }
   delete old.providers.anthropic.bySource
   assert.deepEqual(legacyShape(old), old)
 })
 
-test('owner prompt filters and public model counts isolate each Claude channel', async () => {
+test('/api/usage counts usage of every Claude source under anthropic', async () => {
+  const store = memoryStore()
+  const token = await enrolled(store)
+  const at = new Date(`${DATE}T12:00:00Z`)
+  const events = sources.map((source, i) => usage(`src-${source}`, { source, q: estimated.has(source) ? 'estimated' : 'exact', in: 100 * (i + 1), out: i + 1, cacheW: 0, cacheR: 0 }))
+  const res = await handleIngest({ method: 'POST', headers: { 'x-d0m1-token': token }, query: {}, body: batch({ usage: events }), now: new Date(at.getTime() - 300_000) }, { store, env: {} })
+  assert.equal(res.status, 200, JSON.stringify(res.jsonBody))
+  assert.deepEqual(res.jsonBody.rejected, [], 'no source is rejected')
+  assert.equal(res.jsonBody.accepted.length, sources.length)
+  const body = (await handleUsage({ method: 'GET', headers: {}, query: { days: 'all' }, now: at }, { store })).jsonBody
+  const p = body.days.find(d => d.date === DATE).providers.anthropic
+  assert.equal(p.exact.in + p.estimated.in, 100 + 200 + 300 + 400)
+  assert.equal(p.exact.out + p.estimated.out, 1 + 2 + 3 + 4)
+  assert.equal(p.bySource, undefined)
+})
+
+test('public model counts cover every Claude source without a filter; owner prompt filters still work', async () => {
   const store = memoryStore()
   const key64 = testKey(), key = parseKey(key64)
   for (const [i, source] of sources.entries()) {
@@ -47,6 +85,11 @@ test('owner prompt filters and public model counts isolate each Claude channel',
   }
   await store.table('accounts').create({ partitionKey: 'meta', rowKey: 'months', months: '["2026-10"]' })
   const ctx = { store, env: { PROMPT_ENC_KEY: key64 } }
+  const all = await handlePromptCounts({ method: 'GET', headers: {}, query: {}, params: {} }, ctx)
+  assert.equal(all.status, 200)
+  assert.equal(all.jsonBody.total, sources.length)
+  assert.deepEqual(all.jsonBody.days[0].providers.anthropic.byModel, Object.fromEntries(sources.map((_, i) => [`model-${i}`, 1])))
+  assert.ok(!JSON.stringify(all.jsonBody).includes('private-'))
   const owner = { 'x-ms-client-principal': principal('github', 'local-test', ['owner']) }
   for (const [i, source] of sources.entries()) {
     const req = { method: 'GET', headers: owner, query: { source, facets: '1' }, params: {} }
@@ -54,11 +97,8 @@ test('owner prompt filters and public model counts isolate each Claude channel',
     assert.equal(privateResponse.status, 200)
     assert.equal(privateResponse.jsonBody.items.length, 1)
     assert.equal(privateResponse.jsonBody.items[0].source, source)
-    assert.equal(privateResponse.jsonBody.facets.sources.length, 3)
     const counts = await handlePromptCounts({ ...req, headers: {} }, ctx)
-    assert.equal(counts.jsonBody.total, 1)
     assert.deepEqual(counts.jsonBody.days[0].providers.anthropic.byModel, { [`model-${i}`]: 1 })
-    assert.ok(!JSON.stringify(counts.jsonBody).includes('private-'))
     assert.equal((await handlePrompts({ ...req, headers: {} }, ctx)).status, 401)
   }
   assert.equal((await handlePromptCounts({ method: 'GET', query: { source: 'invalid' } }, ctx)).status, 400)

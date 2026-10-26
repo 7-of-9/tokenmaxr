@@ -630,8 +630,9 @@ func TestSalvageKeepsWhatTheLogsNoLongerHold(t *testing.T) {
 	}
 }
 
-// A rebuild that re-reads desktop-app lines as Claude Native (same ids,
-// SPEC "Claude Native") does not put them back under Claude Code, but still
+// A rebuild that re-reads desktop-app lines as Claude Native (same ids; only
+// collector 0.4.16 did, SPEC "Retired Claude channels") does not put them
+// back under Claude Code, but still
 // restores Claude Code history whose logs are gone, and an estimated chat
 // cell never stands in for lost exact tokens.
 func TestSalvageFollowsLinesMovedToClaudeNative(t *testing.T) {
@@ -910,5 +911,76 @@ func TestSalvageRestoresNativeBesideMovedLines(t *testing.T) {
 	}
 	if tok, ev, _ := total(r, "2026-09-21"); tok != 176 || ev != 2 {
 		t.Fatalf("day total %d tokens, %d events", tok, ev)
+	}
+}
+
+// A version 6 file, as collector 0.4.16 wrote it, through a rebuild of a
+// later format: its native-claude cells hold desktop-app ~/.claude lines
+// (which a re-read now counts as claude-code) beside Cowork usage (no longer
+// read). The desktop lines are counted once, Cowork and lost Claude Code
+// history come back, and the claude.ai chat cells come back as they were.
+func TestSalvageOfA0416FileCountsDesktopLinesOnce(t *testing.T) {
+	const (
+		code   = "anthropic|claude-code|claude-x|a_1|"
+		native = "anthropic|native-claude|claude-x|a_1|"
+		web    = "anthropic|web-claude|claude-x|a_1|estimated"
+		codex  = "openai|codex|gpt-5|a_2|"
+	)
+	in := func(n int64) []int64 { return []int64{n, 0, 0, 0, 0, 0, 1, 0, 0, 0} }
+	file := map[string]any{"v": 6, "sealed": "2026-09-27", "days": map[string]map[string][]int64{
+		// CLI 100 in claude-code; native-claude: desktop 50 + Cowork 70.
+		"2026-09-20": {code: in(100), native: in(120), web: in(30), codex: in(40)},
+		"2026-09-21": {code: in(100), native: in(120)}, // every log gone
+		"2026-09-22": {code: in(100), native: in(120)}, // the desktop log gone
+	}}
+	b, _ := json.Marshal(file)
+	p := filepath.Join(t.TempDir(), "rollup.json")
+	os.WriteFile(p, b, 0o600)
+	if r := Salvage(p); r.floor != nil {
+		t.Fatal("this version loads version 6: nothing to salvage")
+	}
+	r := salvage(p, Version+1) // a later format
+	if r.floor == nil || !r.floor.CodeOrNative || r.floor.CodeHeldNative {
+		t.Fatalf("floor %+v", r.floor)
+	}
+	at := func(id, date string, in int64) model.UsageEvent {
+		ts, _ := time.Parse(dateLayout, date)
+		return usage(id, ts.Add(12*time.Hour), in, 0)
+	}
+	cx := at("cx20", "2026-09-20", 40)
+	cx.Provider, cx.Source, cx.Model, cx.Acct = model.ProviderOpenAI, model.SourceCodex, "gpt-5", "a_2"
+	for _, e := range []model.UsageEvent{
+		at("cl20", "2026-09-20", 100), at("dt20", "2026-09-20", 50), cx,
+		at("cl22", "2026-09-22", 100),
+	} {
+		r.AddUsage(e, now)
+	}
+	// The rebuild spans several ticks.
+	path := filepath.Join(t.TempDir(), "rollup.json")
+	if err := r.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(path)
+	if err != nil || r.floor == nil || !r.floor.CodeOrNative {
+		t.Fatalf("reloaded mid-rebuild: %v", err)
+	}
+	r.ApplyFloor()
+	in0 := func(date, key string) int64 {
+		if c := r.Days[date][key]; c != nil {
+			return c.In
+		}
+		return 0
+	}
+	for _, w := range []struct {
+		date                     string
+		code, native, web, codex int64
+	}{
+		{"2026-09-20", 150, 70, 30, 40},
+		{"2026-09-21", 100, 120, 0, 0},
+		{"2026-09-22", 100, 120, 0, 0},
+	} {
+		if g := [4]int64{in0(w.date, code), in0(w.date, native), in0(w.date, web), in0(w.date, codex)}; g != [4]int64{w.code, w.native, w.web, w.codex} {
+			t.Errorf("%s: claude-code, native-claude, web-claude, codex %v, want %v", w.date, g, [4]int64{w.code, w.native, w.web, w.codex})
+		}
 	}
 }

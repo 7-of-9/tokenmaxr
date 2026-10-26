@@ -115,9 +115,10 @@ func Rollup(home string) string { return filepath.Join(home, "rollup.json") }
 
 func QuotaWork(home string) string { return filepath.Join(Quota(home), "work") }
 
-// WebClaude holds Claude Web capture state (internal/webclaude): the spool
-// the native-messaging host appends to, its settings, enrolment and status.
-// ChromeExtension is the unpacked browser extension that install writes.
+// WebClaude and ChromeExtension are where collector 0.4.16's Claude Web
+// capture kept its spool, launcher and host manifest, and its unpacked
+// browser extension. Nothing writes them since 0.4.17; internal/webcleanup
+// removes them.
 func WebClaude(home string) string       { return filepath.Join(home, "web-claude") }
 func ChromeExtension(home string) string { return filepath.Join(home, "chrome-extension") }
 

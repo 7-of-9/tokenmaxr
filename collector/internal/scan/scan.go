@@ -321,12 +321,7 @@ func Run(o Options, cursors map[string]map[string]store.FileCursor) (Stats, erro
 				ss.LastEventTS = b.LastEventTS
 			}
 			next.Size, next.MtimeNs, next.PV = j.size, j.mtimeNs, j.src.PV()
-			head := j.head
-			if rw, ok := j.src.(sources.Rewriter); ok && rw.RewritesFiles() {
-				// Parse may have rewritten the head: hash it as it is now.
-				head = &headReader{path: j.path}
-			}
-			next.HeadHash = head.hash(min(HeadBytes, j.size))
+			next.HeadHash = j.head.hash(min(HeadBytes, j.size))
 			fc := store.FileCursor{Cursor: next}
 			// An unchanged file whose parser produced nothing new and whose
 			// carry is unchanged has settled; stop re-opening it.

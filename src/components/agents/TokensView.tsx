@@ -5,8 +5,6 @@ import Heatmap from './Heatmap'
 import MonthCalendar from './MonthCalendar'
 import Numeral from './Numeral'
 import ActivityFeed from './ActivityFeed'
-import ClaudeChannels from './ClaudeChannels'
-import { channelDays, channelOptionLabel, CHANNEL_TOKENS, CLAUDE_CHANNELS, claudeChannelCounts, isClaudeChannel } from './channels'
 import { buildActivity } from './activity'
 import { dayCost, type DayCost } from './cost'
 import { usePriceMode, usePricingTable } from './pricing'
@@ -28,7 +26,6 @@ import {
   formatCount,
   METRIC_LABEL,
   METRIC_NOUN,
-  metricOf,
   normaliseDays,
   isRollingPeriod,
   periodRange,
@@ -72,12 +69,10 @@ const TokensView = () => {
   const site = useTokensSite()
   const mock = searchParams.get('mock') === '1'
   const machine = searchParams.get('machine') || 'all'
-  const requestedChannel = searchParams.get('channel')
-  const channel = isClaudeChannel(requestedChannel) ? requestedChannel : 'all'
   const view: View = searchParams.get('view') === 'detail' ? 'detail' : 'overview'
   const [reloadKey, setReloadKey] = useState(0)
   const { data, error, loading, loadedAt, progress, failures } = useUsage(mock, reloadKey)
-  const { data: promptCounts } = usePromptCounts(mock, reloadKey, channel)
+  const { data: promptCounts } = usePromptCounts(mock, reloadKey)
 
   const requestedPeriod = searchParams.get('period') ?? '30d'
   const period: Period = requestedPeriod === 'recent' || isRollingPeriod(requestedPeriod) || /^\d{4}$/.test(requestedPeriod) ? requestedPeriod as Period : '30d'
@@ -90,9 +85,8 @@ const TokensView = () => {
   const scoped = useMemo(() => {
     const exact = machine === 'all' || !data || mock ? null : source.scopeMachine?.(data, machine)
     const cc = countryLookup(data?.machines ?? [])(machine)
-    return exact ? { days: channelDays(addAssignedHistory(normaliseDays(exact), normalised, machine, cc), channel), partial: false }
-      : machineDays(channelDays(normalised, channel), machine, cc)
-  }, [normalised, machine, data, mock, source, channel])
+    return exact ? { days: addAssignedHistory(normaliseDays(exact), normalised, machine, cc), partial: false } : machineDays(normalised, machine, cc)
+  }, [normalised, machine, data, mock, source])
   const options = useMemo(() => view === 'detail' ? { ...filters, exactOnly: false } : DEFAULT_VIEW, [view, filters])
 
   const today = toIsoDate(loadedAt ? new Date(loadedAt) : new Date())
@@ -113,14 +107,6 @@ const TokensView = () => {
       return sum + (p?.exact.unattributed ?? 0) + (options.exactOnly ? 0 : p?.estimated.unattributed ?? 0)
     }, 0)
   }, 0), [days, options, range])
-  // Claude chat tokens are estimates (claude.ai reports none for chat), and the headline's total includes them:
-  // it says how many, as the channel table marks them, whenever the shown range has any.
-  const chatEstimated = useMemo(() => {
-    if (options.exactOnly || (options.provider !== 'all' && options.provider !== 'anthropic')) return 0
-    return claudeChannelCounts(normalised, range.from, range.to, machine)
-      .filter(row => CHANNEL_TOKENS[row.source] !== 'exact' && (channel === 'all' || row.source === channel))
-      .reduce((sum, row) => sum + metricOf(row.parts.estimated, options.metric), 0)
-  }, [normalised, range, machine, channel, options])
   const machines = useMemo(() => data?.machines?.filter(m => machine === 'all' || m.id === machine), [data?.machines, machine])
   const activity = useMemo(() => buildActivity(days, options, machines ?? [], range.from, range.to), [days, options, machines, range])
   // A calendar year is laid out to 31 December, so every period draws the same 53 weeks at the same width.
@@ -144,7 +130,7 @@ const TokensView = () => {
 
   const noun = METRIC_NOUN[options.metric]
   const live = machine === 'all' ? data?.totals?.machinesLive ?? 0 : machines?.filter(m => m.live).length ?? 0
-  const accounts = summary.accounts || (machine === 'all' && channel === 'all' ? (options.provider === 'all' ? data?.totals?.accounts : data?.totals?.accountsByProvider?.[options.provider]) : 0) || 0
+  const accounts = summary.accounts || (machine === 'all' ? (options.provider === 'all' ? data?.totals?.accounts : data?.totals?.accountsByProvider?.[options.provider]) : 0) || 0
 
   const setMachine = (next: string) => {
     const params = new URLSearchParams(searchParams)
@@ -198,27 +184,12 @@ const TokensView = () => {
                       {data && <span className="agents-headline__period" title="Active days: days with recorded tokens. Empty days and days with only prompts are excluded."> ({activeDays.toLocaleString('en-US')})</span>}
                     </h1>
                     <p className="agents-headline__totals">
-                      <span className="agents-headline__total">{data ? (chatEstimated * 2 > summary.total ? '~' : '') + formatCount(summary.total) : '–'}</span> {noun}
+                      <span className="agents-headline__total">{data ? formatCount(summary.total) : '–'}</span> {noun}
                       {' & '}<span className="agents-headline__total">{data ? formatCount(summary.prompts) : '–'}</span> prompts
                       <span> in {range.phrase}</span>
-                      {data && chatEstimated > 0 && (
-                        <span title="Claude chat (Web, and app chat) reports no token counts: these are estimates, a lower bound. Claude by channel below splits them out.">
-                          {' · incl. ~'}{formatCount(chatEstimated)} estimated Claude chat
-                        </span>
-                      )}
                     </p>
                   </div>
                   <div className="agents-top__end">
-                    <select className="agents-machine" aria-label="Collection channel" value={channel} onChange={event => {
-                      const params = new URLSearchParams(searchParams)
-                      if (event.target.value === 'all') params.delete('channel')
-                      else params.set('channel', event.target.value)
-                      setFilters(DEFAULT_VIEW)
-                      setSearchParams(params, { replace: true })
-                    }}>
-                      <option value="all">All channels</option>
-                      {CLAUDE_CHANNELS.map(value => <option key={value} value={value}>{channelOptionLabel(value)}</option>)}
-                    </select>
                     <select className="agents-machine" aria-label="Machine" value={machine} onChange={event => setMachine(event.target.value)}>
                       <option value="all">All machines</option>
                       {(data?.machines ?? []).map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -298,7 +269,7 @@ const TokensView = () => {
                             <span>in {formatCompact(summary.tokensIn)}</span>
                             <span>out {formatCompact(summary.tokensOut)}</span>
                             {summary.unattributed > 0 && <span title="Source-reported tokens without an input/output split">{formatCompact(summary.unattributed)} account history</span>}
-                            {machine === 'all' && channel === 'all' && <span>{plural(accounts, 'account')}</span>}
+                            {machine === 'all' && <span>{plural(accounts, 'account')}</span>}
                             <span>{plural(summary.providers, 'provider')}</span>
                             <span className="agents-subline__live">
                               {live > 0 && <span className="agents-live" aria-hidden="true" />}
@@ -316,8 +287,6 @@ const TokensView = () => {
                   )}
                 </div>
               </section>
-
-              {data && <ClaudeChannels days={normalised} from={range.from} to={range.to} machine={machine} />}
 
               {view === 'overview' && data && <ActivityFeed key={activePeriod} months={activity} today={today} noun={noun} />}
 

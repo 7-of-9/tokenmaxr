@@ -185,11 +185,12 @@ const pick = (days: NormDay[] | RollupDay[]) => days.map(d => ({
   }])),
 }))
 
-/** The server's output without the workspace split the page does not have. */
+/** The server's output without the workspace and source splits the page does not have. */
 const withoutWorkspaces = (days: LedgerDay[]) => days.map(d => ({
   ...d, providers: Object.fromEntries(Object.entries(d.providers).map(([name, p]) => {
-    const rest = { ...p! }
+    const rest: typeof p & { bySource?: unknown } = { ...p! }
     delete rest.byWorkspace
+    delete rest.bySource
     return [name, rest]
   })),
 }))
@@ -226,8 +227,6 @@ test('the port reconciles exactly as api/src/lib/account-usage.js', () => {
   const result = reconcileAccountUsage(withoutWorkspaces(days), [...a, ...b], NOW)
   assert.equal(result.conflicts, 1, 'the fixture has a conflicting window')
   assert.ok(result.days.some(d => (d.providers.openai?.exact.unattributed ?? 0) > 0), 'and recovered history')
-  assert.deepEqual(result.days.find(d => d.date === '2026-09-08')?.providers.openai?.bySource, {},
-    'account-only history does not invent a client channel or request')
 })
 
 test('published files reconcile on the page exactly as the API reconciles the same events', () => {

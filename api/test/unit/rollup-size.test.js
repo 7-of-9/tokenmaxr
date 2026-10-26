@@ -91,10 +91,11 @@ test('an oversized day upgrades once, is served at the current version, and is r
   const first = await usageOn(store, at(0))
   const day = first.days.find((d) => d.date === DATE)
   assert.equal(day.v, ROLLUP_VERSION, 'upgraded in the first read')
-  assert.ok(day.providers.anthropic.bySource['claude-code'], 'channel split present')
+  assert.equal(day.providers.anthropic.bySource, undefined, 'the response is by provider')
   assert.equal(limits.lists(), 1, 'one listing for the upgrade')
 
   const stored = await store.table('rollups').get('r', DATE)
+  assert.ok(JSON.parse(joinRollupData(stored)).providers.anthropic.bySource['claude-code'], 'the stored v4 keeps its source split')
   assert.ok(typeof stored.data1 === 'string', 'stored across properties')
   for (const [k, v] of Object.entries(stored)) if (typeof v === 'string') assert.ok(v.length <= AZURE_STRING_CHARS, k)
 

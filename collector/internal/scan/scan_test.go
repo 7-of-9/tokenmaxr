@@ -435,28 +435,6 @@ func TestDryRunMergesAndBuckets(t *testing.T) {
 	}
 }
 
-// A reader that emits several sources (the ~/.claude reader routes desktop-app
-// lines to native-claude) is reported per event source, its files under its
-// own name.
-func TestDryRunReportsEventSources(t *testing.T) {
-	ts := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	src := &batchSource{b: sources.Batch{
-		Usage: []model.UsageEvent{
-			{ID: "u1", Provider: "anthropic", Source: "fake", TS: ts, PV: 1, Tokens: model.Tokens{In: 10, Calls: 1}},
-			{ID: "u2", Provider: "anthropic", Source: "native-claude", TS: ts, PV: 1, Tokens: model.Tokens{In: 7, Calls: 1}},
-		},
-		Activity: []model.ActivityEvent{{ID: "a2", Provider: "anthropic", Source: "native-claude", TS: ts, HasUsage: true}},
-	}}
-	rep, err := DryRun([]sources.Source{src}, &sources.Env{}, nil, nil, time.Now(), os.Stderr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, n := rep.Sources["fake"], rep.Sources["native-claude"]
-	if f == nil || n == nil || f.Usage.In != 10 || n.Usage.In != 7 || n.Activity.WithUsage != 1 || f.Files != 1 || n.Files != 0 || n.Provider != "anthropic" {
-		t.Fatalf("fake %+v native %+v", f, n)
-	}
-}
-
 type batchSource struct{ b sources.Batch }
 
 func (s *batchSource) Name() string                         { return "fake" }

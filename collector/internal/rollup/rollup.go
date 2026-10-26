@@ -15,11 +15,13 @@
 // Rebuild starts over (with a full reparse) if old history appears later,
 // e.g. a newly found WSL home.
 //
-// Claude chat events (id source model.IDSourceClaudeChat) are never sealed
-// out: the opt-in history sweep brings turns of any age at any time, long
-// after the dates they fall on were sealed. Their ids are kept for good in
-// sets of their own (one 6-byte prefix per event), so a re-read of the spool
-// still counts nothing twice.
+// Claude chat events (id source model.IDSourceClaudeChat), which only
+// collector 0.4.16 recorded, are never sealed out: its opt-in history sweep
+// brought turns of any age at any time. Their ids are kept for good in sets
+// of their own (one 6-byte prefix per event). Since 0.4.17 no reader emits
+// them; the sets and the cells they counted stay as the file holds them, and
+// those cells (native-claude, web-claude, chat-claude) remain Anthropic usage
+// (SPEC "Retired Claude channels").
 //
 // The rollup is the only full record of sealed history (its logs may be gone
 // since), so a rebuild never throws an older file away: Salvage keeps its
@@ -70,6 +72,11 @@ const (
 	// whose swept history is older than the seal and is exempt from it, and
 	// re-keys ~/.claude lines the desktop app wrote from claude-code to
 	// native-claude). An older file is salvaged (Salvage), never dropped.
+	// 0.4.17 removed those channels but keeps this format: it reads and
+	// writes version 6 as 0.4.16 did, so no file is rebuilt, and its
+	// readers emit only the remaining sources. A later version salvages a
+	// version 6 file with floor.CodeOrNative, so the desktop-app lines it
+	// holds under native-claude are not counted twice.
 	Version = 6
 	// LiveWindow: how long a usage event keeps its values so that its growth
 	// merges by fieldwise max (same as internal/recent).
@@ -637,9 +644,21 @@ type floor struct {
 	SeenP map[string]string           `json:"seenP,omitempty"`
 	// CodeHeldNative: the older file (before version 6) counted every
 	// ~/.claude line as claude-code, including those the desktop app wrote,
-	// which this version counts as native-claude under the same id (SPEC
-	// "Claude Native").
+	// which collector 0.4.16 counted as native-claude under the same id.
+	// 0.4.17 counts them as claude-code again (no event moves), but a
+	// rebuild that 0.4.16 began may still hold lines it moved (SPEC
+	// "Retired Claude channels").
 	CodeHeldNative bool `json:"codeHeldNative,omitempty"`
+	// CodeOrNative: the older file is version 6 or later, which collector
+	// 0.4.16 may have written. Its native-claude cells can hold ~/.claude
+	// lines the desktop app wrote (under their claude-code ids) beside local
+	// Cowork usage, and since 0.4.17 a re-read counts those lines as
+	// claude-code. No event says which they were, so ApplyFloor compares
+	// Anthropic claude-code and native-claude of a model as one level: the
+	// lines are not put back a second time, and what only native-claude held
+	// (Cowork, whose logs are no longer read) still is. Only a later format
+	// version salvages such a file; version 6 itself loads.
+	CodeOrNative bool `json:"codeOrNative,omitempty"`
 	// Moved is local date -> key -> what the rebuild counted of such lines
 	// (their usage, and the prompts of their activity and prompt records),
 	// so ApplyFloor compares them under claude-code, as the old file held
@@ -683,7 +702,11 @@ func ledgerField(i int) bool { return i == 0 || i == 1 || i == 3 || i == 4 }
 // daily totals as its floor (ApplyFloor) and, when the file had them, its
 // account totals. Whatever it cannot read is left out; without account totals
 // the rollup is AccountsStale until the next read.
-func Salvage(path string) *Rollup {
+func Salvage(path string) *Rollup { return salvage(path, Version) }
+
+// salvage is Salvage for a rollup whose format version is current (a test
+// stands in for a later format with it).
+func salvage(path string, current int) *Rollup {
 	r := New()
 	r.accountsStale = true
 	b, err := os.ReadFile(path)
@@ -701,10 +724,10 @@ func Salvage(path string) *Rollup {
 		SeenP    map[string]string `json:"seenP"`
 		Accounts []AccountTotal    `json:"accounts"`
 	}
-	if json.Unmarshal(b, &old) != nil || old.V < 1 || old.V >= Version {
+	if json.Unmarshal(b, &old) != nil || old.V < 1 || old.V >= current {
 		return r // damaged, or a newer format than this version reads
 	}
-	f := &floor{Days: map[string]map[string]*Cell{}, CodeHeldNative: old.V < 6}
+	f := &floor{Days: map[string]map[string]*Cell{}, CodeHeldNative: old.V < 6, CodeOrNative: old.V >= 6}
 	for date, cells := range old.Days {
 		if d, err := time.Parse(dateLayout, date); err != nil || d.Format(dateLayout) != date {
 			continue
@@ -753,8 +776,10 @@ func Salvage(path string) *Rollup {
 // file's totals are higher than the rebuilt ones, the difference is put back,
 // so history whose logs are gone (deleted, pruned, or in a WSL distro that
 // was not running) is never lost. It compares per local date, provider,
-// source and model, counter by counter, and keeps the larger: history re-read
-// under another account or quality key is never counted twice. What it puts
+// source and model (Anthropic claude-code and native-claude as one source for
+// a file of version 6 or later, floor.CodeOrNative), counter by counter, and
+// keeps the larger: history re-read under another account or quality key is
+// never counted twice. What it puts
 // back has no account ledger (its UTC days are unknown), so those dates are
 // recorded as unledgered; and the ids the old file had counted on those
 // dates join the id sets, so a later re-read of them adds nothing again.
@@ -771,7 +796,12 @@ func (r *Rollup) ApplyFloor() {
 			keys     []string
 		}
 		levels := map[string]*level{} // provider|source|model
-		name := func(k Key) string { return k.Provider + "|" + k.Source + "|" + k.Model }
+		name := func(k Key) string {
+			if f.CodeOrNative && k.Provider == model.ProviderAnthropic && k.Source == model.SourceClaudeNative {
+				return k.Provider + "|" + model.SourceClaudeCode + "|" + k.Model
+			}
+			return k.Provider + "|" + k.Source + "|" + k.Model
+		}
 		for ks, c := range f.Days[date] {
 			k, ok := parseKey(ks)
 			if !ok {

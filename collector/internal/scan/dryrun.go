@@ -257,47 +257,6 @@ func DryRunHomes(homes []Home, since, until *Bound, now time.Time, warn io.Write
 	var errs []error
 	var names []string
 	events := map[string]*merged{}
-	// totals returns the totals and merged events of a source, adding it.
-	totals := func(name, provider string) (*SourceTotals, *merged) {
-		st := rep.Sources[name]
-		if st == nil {
-			st = &SourceTotals{Provider: provider, ByMonth: map[string]*MonthTotals{}, ByWorkspace: map[string]*WorkspaceTotals{}}
-			rep.Sources[name] = st
-			names = append(names, name)
-			events[name] = &merged{usage: map[string]model.UsageEvent{}, activity: map[string]model.ActivityEvent{}, prompts: map[string]model.PromptRecord{}}
-		}
-		return st, events[name]
-	}
-	// collect files each event under its own source: one reader may emit
-	// several (~/.claude lines the desktop app wrote are native-claude).
-	collect := func(src sources.Source, b sources.Batch) {
-		parts := map[string]*sources.Batch{}
-		part := func(source, provider string) *sources.Batch {
-			if source == "" {
-				source, provider = src.Name(), src.Provider()
-			}
-			if parts[source] == nil {
-				totals(source, provider)
-				parts[source] = &sources.Batch{}
-			}
-			return parts[source]
-		}
-		for _, e := range b.Usage {
-			p := part(e.Source, e.Provider)
-			p.Usage = append(p.Usage, e)
-		}
-		for _, e := range b.Activity {
-			p := part(e.Source, e.Provider)
-			p.Activity = append(p.Activity, e)
-		}
-		for _, e := range b.Prompts {
-			p := part(e.Source, e.Provider)
-			p.Prompts = append(p.Prompts, e)
-		}
-		for name, p := range parts {
-			events[name].collect(*p)
-		}
-	}
 	for _, h := range homes {
 		env := h.Env
 		if env != nil && env.Home != "" {
@@ -306,7 +265,13 @@ func DryRunHomes(homes []Home, since, until *Bound, now time.Time, warn io.Write
 		}
 		for _, src := range h.Sources {
 			name := src.Name()
-			st, _ := totals(name, src.Provider())
+			st := rep.Sources[name]
+			if st == nil {
+				st = &SourceTotals{Provider: src.Provider(), ByMonth: map[string]*MonthTotals{}, ByWorkspace: map[string]*WorkspaceTotals{}}
+				rep.Sources[name] = st
+				names = append(names, name)
+				events[name] = &merged{usage: map[string]model.UsageEvent{}, activity: map[string]model.ActivityEvent{}, prompts: map[string]model.PromptRecord{}}
+			}
 			if err := src.Prepare(env); err != nil {
 				errs = append(errs, fmt.Errorf("%s prepare: %w", name, err))
 				continue
@@ -317,18 +282,19 @@ func DryRunHomes(homes []Home, since, until *Bound, now time.Time, warn io.Write
 				continue
 			}
 			st.Files += len(files)
+			m := events[name]
 			for _, p := range files {
 				b, cur, err := src.Parse(env, p, sources.Cursor{})
 				if err != nil {
 					fmt.Fprintf(warn, "warning: %s: %v\n", p, err)
 					continue
 				}
-				collect(src, b)
+				m.collect(b)
 				// A second call lets parsers release output held in carry (e.g. a
 				// Claude prompt waiting for its model), as a later tick would.
 				if len(cur.Carry) > 0 {
 					if b, _, err := src.Parse(env, p, cur); err == nil {
-						collect(src, b)
+						m.collect(b)
 					}
 				}
 			}

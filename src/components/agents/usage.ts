@@ -133,7 +133,6 @@ function providerDay(value: unknown, includeWorkspaces = true): ProviderDay | nu
       recoveredTokens: num(raw.recoveredTokens), observedAt: typeof raw.observedAt === 'string' ? raw.observedAt : '',
     })) } : {}),
     ...(includeWorkspaces && isRecord(value.byWorkspace) ? { byWorkspace: workspaceMap(value.byWorkspace) } : {}),
-    ...(includeWorkspaces && isRecord(value.bySource) ? { bySource: workspaceMap(value.bySource) } : {}),
   }
 }
 

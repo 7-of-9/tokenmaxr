@@ -24,8 +24,6 @@ h2 { font-size: 11px; font-weight: 600; margin: 0; color: var(--muted); text-tra
 .muted, .hint, .foot { color: var(--muted); }
 .lead { color: var(--muted); margin: 0 0 12px; }
 
-.steps { margin: 6px 0 10px; padding-left: 22px; }
-code { font: inherit; color: var(--accent); word-break: break-all; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 0 0 16px; }
 .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .head .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }

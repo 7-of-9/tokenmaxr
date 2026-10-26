@@ -77,7 +77,6 @@ const emptyProvider = (acct: string): ProviderDay => ({
   exact: emptyBucket(), estimated: emptyBucket(), prompts: 0, promptsNoUsage: 0, accts: [acct],
   models: { exact: { [UNKNOWN_MODEL]: emptyModel() }, estimated: {} },
   byMachine: { [UNKNOWN_MACHINE]: emptyPlace() }, byCountry: { [UNKNOWN_COUNTRY]: emptyPlace() },
-  bySource: {},
 })
 
 /**

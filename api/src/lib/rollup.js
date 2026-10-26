@@ -144,6 +144,8 @@ export function legacyShape(day) {
 // hash becomes a per-response alias, stable across days, so the page can still
 // count distinct accounts over any range. Workspace tags also become aliases
 // shared across providers and days, without publishing paths or persistent hashes.
+// The stored per-source split (bySource) is not published: the dashboard
+// reports by provider, whose totals already count every source.
 export function aliasAccts(days) {
   const workspaces = new Set()
   for (const d of days) for (const p of Object.values(d.providers || {})) {
@@ -156,7 +158,7 @@ export function aliasAccts(days) {
   return days.map(({ accountLedger: _privateLedger, ...d }) => ({
     ...d,
     providers: Object.fromEntries(
-      Object.entries(d.providers || {}).map(([name, p]) => [name, {
+      Object.entries(d.providers || {}).map(([name, { bySource: _sources, ...p }]) => [name, {
         ...p, accts: (p.accts || []).map((a) => alias.get(a)),
         ...(p.byWorkspace ? { byWorkspace: Object.fromEntries(Object.entries(p.byWorkspace).map(([ws, group]) => [workspaceAliases.get(ws) || 'unknown', group])) } : {}),
       }]),

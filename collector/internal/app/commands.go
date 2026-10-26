@@ -17,7 +17,6 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/accounts"
 	"github.com/7-of-9/tokenmaxr/collector/internal/buildinfo"
 	"github.com/7-of-9/tokenmaxr/collector/internal/evidence"
-	"github.com/7-of-9/tokenmaxr/collector/internal/homes"
 	"github.com/7-of-9/tokenmaxr/collector/internal/lock"
 	"github.com/7-of-9/tokenmaxr/collector/internal/outbox"
 	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
@@ -161,14 +160,9 @@ func (a *App) ScanDryRun(asJSON bool, since, until string) error {
 	var hs []scan.Home
 	for _, h := range hr.Homes {
 		key := h.Key()
-		webClaude := ""
-		if h.Kind == homes.KindOS {
-			webClaude = paths.WebClaude(a.Home)
-		}
 		env := &sources.Env{
 			Home:      h.Path,
 			CodexHome: h.CodexHome(a.CodexHome),
-			WebClaude: webClaude,
 			Machine:   host,
 			Attribute: func(provider string, ts time.Time, sessionID string, hint sources.Hint) (string, string) {
 				return accounts.Resolve(nil, ix, key, provider, ts, sessionID, hint)

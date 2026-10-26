@@ -26,7 +26,7 @@ export interface UsageSource {
   /** The whole history. Aborting `signal` (with a reason) must reject with that reason. */
   fetchUsage(signal: AbortSignal, progress: (transfer: UsageTransfer) => void): Promise<UsageResponse>
   /** Per-model prompt counts, or null when the source has none beyond what fetchUsage returned. */
-  fetchPromptCounts(signal: AbortSignal, channel?: string): Promise<PromptCountsResponse | null>
+  fetchPromptCounts(signal: AbortSignal): Promise<PromptCountsResponse | null>
   /**
    * The same response for one machine, built exactly from that machine's own records, or null when this
    * source cannot (the page then splits the fleet days itself, see machines.ts).
@@ -67,9 +67,8 @@ export function apiSource(origin: string): UsageSource {
       if (!type.includes('json')) throw new Error('The usage API is not reachable from here.')
       return readUsageResponse(response, progress)
     },
-    async fetchPromptCounts(signal, channel) {
-      const query = channel && channel !== 'all' ? `?source=${encodeURIComponent(channel)}` : ''
-      const response = await fetch(`/api/prompt-counts${query}`, {
+    async fetchPromptCounts(signal) {
+      const response = await fetch('/api/prompt-counts', {
         credentials: 'omit', cache: 'no-store', signal,
         headers: { Accept: 'application/json' },
       })

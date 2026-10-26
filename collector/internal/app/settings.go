@@ -29,7 +29,6 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/paths"
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 	"github.com/7-of-9/tokenmaxr/collector/internal/tray"
-	"github.com/7-of-9/tokenmaxr/collector/internal/webcapture"
 )
 
 // settingsIcon is the page's header icon: the app sheet's header icon (the
@@ -229,42 +228,6 @@ func (s *Settings) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				time.AfterFunc(restartDelay, s.restart)
 			}
 		}
-	case "api/webcapture/install":
-		var in struct{}
-		if s.decode(w, r, &in) {
-			_, err := s.a.InstallWebCapture(false)
-			s.reply(w, nil, err)
-		}
-	case "api/webcapture/options":
-		var in struct {
-			Sweeper, InferApps *bool
-			// Prompts: off, live or all; ChatBefore: a local date
-			// (YYYY-MM-DD), or "" to clear it.
-			Prompts, ChatBefore *string
-		}
-		if s.decode(w, r, &in) {
-			var err error
-			if in.Sweeper != nil {
-				err = webcapture.SetSweeper(s.a.Home, *in.Sweeper)
-			}
-			if err == nil && in.InferApps != nil {
-				err = webcapture.SetInferApps(s.a.Home, *in.InferApps)
-			}
-			if err == nil && in.Prompts != nil {
-				err = webcapture.SetPrompts(s.a.Home, *in.Prompts)
-			}
-			if err == nil && in.ChatBefore != nil {
-				v := *in.ChatBefore
-				if v == "" {
-					v = "off"
-				}
-				var t time.Time
-				if t, err = parseHistoryBefore(v); err == nil {
-					err = webcapture.SetChatBefore(s.a.Home, t)
-				}
-			}
-			s.reply(w, nil, err)
-		}
 	case "api/sync":
 		if s.changed != nil {
 			s.changed()
@@ -364,10 +327,8 @@ type settingsState struct {
 		// Tray names the tray: "system tray" or "menu bar".
 		Tray string `json:"tray"`
 	} `json:"app"`
-	// WebCapture is Claude Web capture (internal/webcapture).
-	WebCapture webcapture.Status `json:"webCapture"`
-	Login      *webLogin         `json:"login,omitempty"`
-	Connect    *webTask          `json:"connect,omitempty"`
+	Login   *webLogin `json:"login,omitempty"`
+	Connect *webTask  `json:"connect,omitempty"`
 }
 
 func rfc(t time.Time) string {
@@ -447,7 +408,6 @@ func (s *Settings) state() (settingsState, error) {
 			g.RenamedFrom = renamedFrom(st, a.Now())
 		}
 	}
-	v.WebCapture = webcapture.Read(a.Home, a.Now())
 	sv := &v.Server
 	sv.URL, sv.Default = cfg.Server(), store.DefaultEndpoint
 	if serverOn(&cfg, sec) {

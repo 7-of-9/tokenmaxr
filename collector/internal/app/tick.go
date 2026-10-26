@@ -92,6 +92,7 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	deadline := start.Add(o.Budget)
 	bin := paths.Bin(a.Home)
 	selfupdate.CleanOld(bin)
+	a.cleanWebCapture()
 
 	cfg, err := store.LoadConfig(a.Home)
 	if err != nil {
@@ -108,6 +109,7 @@ func (a *App) Tick(ctx context.Context, o TickOptions) (TickReport, error) {
 	if err != nil {
 		a.Log.Printf("state: %v", err)
 	}
+	dropRetiredSources(st)
 	// The desktop app's local numbers live in state.json and are saved
 	// with the cursors of the events they count.
 	win := st.RecentWindow()

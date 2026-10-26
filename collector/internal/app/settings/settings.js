@@ -65,14 +65,6 @@ function setInput(id, value) {
   if (el.type === "checkbox") el.checked = !!value; else el.value = value ?? "";
 }
 
-// localDay is a time's local date as YYYY-MM-DD.
-function localDay(t) {
-  const d = new Date(t);
-  if (isNaN(d)) return "";
-  const p = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
-}
-
 function render() {
   const s = state;
   if (!s || gone) return;
@@ -167,34 +159,6 @@ function render() {
   $("sv-connect").disabled = connecting;
   $("sv-connect").textContent = v.enrolled ? "Change server" : "Connect";
   show("sv-off", v.enrolled || !!v.url);
-
-  // Claude Web capture.
-  const w = s.webCapture || { state: "not-installed" };
-  const wcBadge = $("wc-badge");
-  wcBadge.className = "badge" + (w.state === "active" ? " on" : "");
-  wcBadge.textContent = w.state === "active" ? "on" : w.state === "waiting" ? "waiting for extension" : "off";
-  show("wc-steps", w.state !== "not-installed");
-  $("wc-dir").textContent = w.extensionDir || "";
-  show("wc-info", w.state === "active");
-  $("wc-ext").textContent = (w.extension ? "v" + w.extension + " · " : "") + "last seen " + ago(w.lastSeen);
-  $("wc-records").textContent = w.recordsToday + " today · " + w.records + " in all · last " + ago(w.lastRecord);
-  show("wc-sweep-row", w.state !== "not-installed");
-  show("wc-infer-row", w.state !== "not-installed" && !!w.sweeper);
-  setInput("wc-sweep", !!w.sweeper);
-  setInput("wc-infer", w.inferApps !== false);
-  show("wc-before-row", w.state !== "not-installed" && !!w.sweeper);
-  setInput("wc-before", w.chatBefore ? localDay(w.chatBefore) : "");
-  show("wc-prompts-row", w.state !== "not-installed");
-  setInput("wc-prompts", w.prompts || "off");
-  show("wc-prompts-state", w.state !== "not-installed");
-  $("wc-prompts-state").textContent = w.sweepPrompts
-    ? "On: the prompt text of chats in this browser and of swept history goes to tokenmaxr's encrypted prompt archive."
-    : w.livePrompts
-      ? "On: the prompt text of chats typed in this browser goes to tokenmaxr's encrypted prompt archive. Swept history: off."
-      : w.prompts && w.prompts !== "off" && !w.promptCapture
-        ? "Off: tokenmaxr's prompt capture is off, so no chat text is kept."
-        : "Off: no chat text is kept.";
-  $("wc-install").textContent = w.state === "not-installed" ? "Install" : "Repair";
 
   // This app: tray only, or with its window (a change restarts it).
   const app = s.app || {};
@@ -352,13 +316,6 @@ $("sv-connect").addEventListener("click", busy($("sv-connect"), async () => {
   $("sv-join").value = "";
 }));
 $("sv-cancel").addEventListener("click", busy($("sv-cancel"), () => api("server/cancel", {})));
-$("wc-install").addEventListener("click", busy($("wc-install"), () => api("webcapture/install", {})));
-for (const [id, key] of [["wc-prompts", "Prompts"], ["wc-before", "ChatBefore"]]) {
-  $(id).addEventListener("change", busy($(id), () => api("webcapture/options", { [key]: $(id).value })));
-}
-for (const [id, key] of [["wc-sweep", "Sweeper"], ["wc-infer", "InferApps"]]) {
-  $(id).addEventListener("change", busy($(id), () => api("webcapture/options", { [key]: $(id).checked })));
-}
 $("app-tray").addEventListener("change", async () => {
   const box = $("app-tray");
   box.disabled = true;

@@ -32,7 +32,7 @@ import {
 } from './accountUsage.ts'
 import { LimitsDenied, type LimitRow } from '../../src/components/agents/limits.ts'
 import type { UsageSource } from '../../src/components/agents/source.ts'
-import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse, WorkspaceDay } from '../../src/components/agents/types.ts'
+import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse } from '../../src/components/agents/types.ts'
 import type { UsageTransfer } from '../../src/components/agents/usageResponse.ts'
 import { decryptOwnerFile, mergeLimitRows, OWNER_FILE } from './owner.ts'
 
@@ -186,34 +186,12 @@ const sorted = <T>(obj: Record<string, T>) => Object.fromEntries(Object.keys(obj
 const TOKEN_FIELDS = ['in', 'cacheW', 'cacheW1h', 'cacheR', 'out', 'reasoning'] as const
 const PLACE_FIELDS = ['in', 'cacheW', 'cacheR', 'out'] as const
 
-const emptySource = (): WorkspaceDay => ({ exact: emptyBucket(), estimated: emptyBucket(), prompts: 0, promptsNoUsage: 0,
-  models: { exact: {}, estimated: {} }, byMachine: {}, byCountry: {} })
-
-function addSourceRow(p: WorkspaceDay, row: UsageRow, cc: string) {
-  const machine = slot(p.byMachine, row.machine, emptyPlace)
-  const place = slot(p.byCountry, cc || UNKNOWN_COUNTRY, emptyPlace)
-  if (row.events > 0 || TOKEN_FIELDS.some(f => row[f] > 0)) {
-    const tier = row.estimated ? 'estimated' : 'exact'
-    const model = slot(p.models[tier], row.model || UNKNOWN_MODEL, emptyModel)
-    for (const f of TOKEN_FIELDS) { p[tier][f] += row[f]; model[f] += row[f] }
-    p[tier].events += row.events
-    for (const f of PLACE_FIELDS) { machine[f] += row[f]; place[f] += row[f] }
-  }
-  p.prompts += row.prompts
-  p.promptsNoUsage += row.promptsNoUsage ?? 0
-  for (const split of [machine, place]) {
-    split.prompts += row.prompts
-    split.promptsNoUsage = (split.promptsNoUsage ?? 0) + (row.promptsNoUsage ?? 0)
-  }
-}
-
 interface ProviderAcc {
   day: ProviderDay
   accts: Set<string>
   promptsByModel: Record<string, number>
   /** Every row has a modelPrompts column: per-model prompt counts are complete for this provider and day. */
   modelsKnown: boolean
-  sourceModelPrompts: Record<string, Record<string, number> | null>
 }
 
 /**
@@ -234,20 +212,12 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
   for (const row of rows) {
     const providers = byDate.get(row.date) ?? {}
     byDate.set(row.date, providers)
-    const acc: ProviderAcc = providers[row.provider] ??= {
+    const acc = providers[row.provider] ??= {
       day: { exact: emptyBucket(), estimated: emptyBucket(), prompts: 0, promptsNoUsage: 0, accts: [],
         models: { exact: {}, estimated: {} }, byMachine: {}, byCountry: {} },
-      accts: new Set(), promptsByModel: {}, modelsKnown: true, sourceModelPrompts: Object.create(null),
+      accts: new Set(), promptsByModel: {}, modelsKnown: true,
     }
     const p = acc.day
-    const channels = p.bySource ??= Object.create(null)
-    addSourceRow(slot(channels, row.source || 'unknown', emptySource), row, country(row.machine))
-    const source = row.source || 'unknown'
-    if (row.modelPrompts === null) acc.sourceModelPrompts[source] = null
-    else if (acc.sourceModelPrompts[source] !== null) {
-      const counts = acc.sourceModelPrompts[source] ??= {}
-      if (row.modelPrompts > 0) counts[row.model || UNKNOWN_MODEL] = (counts[row.model || UNKNOWN_MODEL] ?? 0) + row.modelPrompts
-    }
     if (row.acct) acc.accts.add(aliases.get(row.acct) ?? 'unknown')
     const machine = slot(p.byMachine, row.machine, emptyPlace)
     const place = slot(p.byCountry, country(row.machine) || UNKNOWN_COUNTRY, emptyPlace)
@@ -279,9 +249,6 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
       const acc = accs[provider]
       if (!acc) continue
       const p = acc.day
-      for (const [source, counts] of Object.entries(acc.sourceModelPrompts)) {
-        if (counts) p.bySource![source].promptsByModel = sorted(counts)
-      }
       providers[provider] = {
         ...p,
         ...(acc.modelsKnown ? { promptsByModel: sorted(acc.promptsByModel) } : {}),
@@ -291,7 +258,7 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
         byCountry: sorted(p.byCountry),
       }
     }
-    return { v: 4, date, providers }
+    return { v: 3, date, providers }
   })
 }
 

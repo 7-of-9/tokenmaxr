@@ -2,8 +2,8 @@ package claude
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
@@ -36,131 +36,98 @@ func itoa(n int) string {
 	return string(b)
 }
 
-func parseText(t *testing.T, env *sources.Env, text string) sourcetest.Merged {
+func writeTranscript(t *testing.T, path, text string) {
 	t.Helper()
-	path := filepath.Join(env.Home, ".claude", "projects", "C--work-demo", s1+".jsonl")
-	writeNative(t, path, text)
-	b, _ := sourcetest.Parse(t, New(), env, path, sources.Cursor{})
-	return sourcetest.Merge(b)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
-func TestEntrypointRoutesDesktopLinesWithStableIDs(t *testing.T) {
+// Every ~/.claude line is Claude Code, whichever client wrote it: lines of
+// the desktop app's Code tab and local Cowork tasks (entrypoint
+// claude-desktop, claude-desktop-3p, local-agent) included, under the ids
+// claude-code always gave them.
+func TestEveryEntrypointCountsAsClaudeCode(t *testing.T) {
 	setNow(t, "2026-10-23T12:00:00Z")
-	for _, tc := range []struct{ ep, want string }{
-		{"cli", model.SourceClaudeCode},
-		{"", model.SourceClaudeCode},
-		{"claude-vscode", model.SourceClaudeCode},
-		{"sdk-ts", model.SourceClaudeCode},
-		{"remote_cowork", model.SourceClaudeCode},
-		{"claude-desktop", model.SourceClaudeNative},
-		{"claude-desktop-3p", model.SourceClaudeNative},
-		{"local-agent", model.SourceClaudeNative},
-	} {
-		t.Run(tc.ep, func(t *testing.T) {
+	for _, ep := range []string{"cli", "", "claude-vscode", "sdk-ts", "claude-desktop", "claude-desktop-3p", "local-agent"} {
+		t.Run(ep, func(t *testing.T) {
 			env := sourcetest.Env(t.TempDir())
 			env.Prompts = true
-			m := parseText(t, env, epUser("u-1", "2026-10-23T10:00:00Z", tc.ep, "hello")+
-				epAssistant("msg_1", "2026-10-23T10:00:05Z", tc.ep, 7))
-			// The id is the one claude-code always gave the line, so a turn
-			// already uploaded as Claude Code is replaced, never added again.
+			path := filepath.Join(env.Home, ".claude", "projects", "C--work-demo", s1+".jsonl")
+			writeTranscript(t, path, epUser("u-1", "2026-10-23T10:00:00Z", ep, "hello")+
+				epAssistant("msg_1", "2026-10-23T10:00:05Z", ep, 7))
+			b, _ := sourcetest.Parse(t, New(), env, path, sources.Cursor{})
+			m := sourcetest.Merge(b)
 			u, ok := m.Usage[usageID("msg_1")]
-			if !ok || len(m.Usage) != 1 {
-				t.Fatalf("usage ids changed: %v", m.Usage)
+			if !ok || len(m.Usage) != 1 || u.Source != model.SourceClaudeCode || u.PV != pv || u.Out != 7 || u.CacheR != 100 || u.IDSource != "" {
+				t.Fatalf("usage = %+v", m.Usage)
 			}
-			if u.Source != tc.want || u.Q != model.QualityExact || u.PV != pv || u.Out != 7 || u.CacheR != 100 {
-				t.Fatalf("usage = %+v, want source %s exact", u, tc.want)
-			}
-			a, ok := m.Activity[activityID("u-1")]
-			if !ok || a.Source != tc.want || !a.HasUsage {
+			if a, ok := m.Activity[activityID("u-1")]; !ok || a.Source != model.SourceClaudeCode || !a.HasUsage {
 				t.Fatalf("activity = %+v (ok %v)", a, ok)
 			}
-			p, ok := m.Prompts[promptID("u-1")]
-			if !ok || p.Source != tc.want || p.Model != "claude-opus-5-5" {
+			if p, ok := m.Prompts[promptID("u-1")]; !ok || p.Source != model.SourceClaudeCode || p.Model != "claude-opus-5-5" {
 				t.Fatalf("prompt = %+v (ok %v)", p, ok)
-			}
-			// A routed line says where its id came from (off the wire), so the
-			// rollup's rebuild compares all three under claude-code.
-			wantID := ""
-			if tc.want != model.SourceClaudeCode {
-				wantID = model.SourceClaudeCode
-			}
-			if u.IDSource != wantID || a.IDSource != wantID || p.IDSource != wantID {
-				t.Fatalf("id sources usage %q activity %q prompt %q, want %q", u.IDSource, a.IDSource, p.IDSource, wantID)
 			}
 		})
 	}
 }
 
-func TestEntrypointMixedSession(t *testing.T) {
-	setNow(t, "2026-10-23T12:00:00Z")
-	env := sourcetest.Env(t.TempDir())
-	// A desktop session resumed from the CLI, with lines that name no
-	// entrypoint following each: those take the latest one.
-	text := epUser("u-1", "2026-10-23T10:00:00Z", "claude-desktop", "one") +
-		epAssistant("msg_1", "2026-10-23T10:00:05Z", "", 5) +
-		epUser("u-2", "2026-10-23T10:01:00Z", "cli", "two") +
-		epAssistant("msg_2", "2026-10-23T10:01:05Z", "", 6) +
-		epUser("u-3", "2026-10-23T10:02:00Z", "", "three") +
-		epAssistant("msg_3", "2026-10-23T10:02:05Z", "claude-desktop", 8)
-	m := parseText(t, env, text)
-	want := map[string]string{"msg_1": model.SourceClaudeNative, "msg_2": model.SourceClaudeCode, "msg_3": model.SourceClaudeNative}
-	for key, src := range want {
-		if u := m.Usage[usageID(key)]; u.Source != src {
-			t.Errorf("%s source = %q, want %q", key, u.Source, src)
-		}
-	}
-	for key, src := range map[string]string{"u-1": model.SourceClaudeNative, "u-2": model.SourceClaudeCode, "u-3": model.SourceClaudeCode} {
-		if a := m.Activity[activityID(key)]; a.Source != src {
-			t.Errorf("%s activity source = %q, want %q", key, a.Source, src)
-		}
-	}
-}
-
-// A read that resumes after the last desktop entrypoint keeps routing lines
-// without one, and a message streamed across two reads keeps its channel.
-func TestEntrypointCarriesAcrossReads(t *testing.T) {
+// A cursor saved by 0.4.16 (same pv) resumes where it was: its carry's
+// desktop entrypoint and a streamed key's native-claude channel are ignored,
+// and the message is still emitted once, at its max, under its old id.
+func TestResumesA0416Carry(t *testing.T) {
 	setNow(t, "2026-10-23T10:05:00Z")
 	env := sourcetest.Env(t.TempDir())
 	path := filepath.Join(env.Home, ".claude", "projects", "C--work-demo", s1+".jsonl")
 	first := epUser("u-1", "2026-10-23T10:00:00Z", "claude-desktop", "one") + epAssistant("msg_1", "2026-10-23T10:00:05Z", "claude-desktop", 2)
-	second := epAssistant("msg_1", "2026-10-23T10:00:06Z", "", 9) + epAssistant("msg_2", "2026-10-23T10:00:07Z", "", 4)
-	writeNative(t, path, first)
-	b1, cur := sourcetest.Parse(t, New(), env, path, sources.Cursor{})
-	if !strings.Contains(string(cur.Carry), `"ep":"claude-desktop"`) {
-		t.Fatalf("carry = %s", cur.Carry)
+	second := epAssistant("msg_1", "2026-10-23T10:00:06Z", "", 9)
+	writeTranscript(t, path, first+second)
+	carry := `{"recent":[{"key":"msg_1","ts":"2026-10-23T10:00:05Z","session":"` + s1 + `","model":"claude-opus-5-5",` +
+		`"tokens":{"in":3,"cacheW":10,"cacheR":100,"out":2,"calls":1},"src":"native-claude"}],"last":"2026-10-23T10:00:05Z","ep":"claude-desktop"}`
+	cur := sources.Cursor{Offset: int64(len(first)), PV: pv, Carry: json.RawMessage(carry)}
+	b, next := sourcetest.Parse(t, New(), env, path, cur)
+	m := sourcetest.Merge(b)
+	u, ok := m.Usage[usageID("msg_1")]
+	if !ok || len(m.Usage) != 1 || u.Source != model.SourceClaudeCode || u.Out != 9 || u.In != 3 {
+		t.Fatalf("usage = %+v", m.Usage)
 	}
-	writeNative(t, path, first+second)
-	b2, _ := sourcetest.Parse(t, New(), env, path, cur)
-	m := sourcetest.Merge(b1, b2)
-	if u := m.Usage[usageID("msg_1")]; u.Source != model.SourceClaudeNative || u.Out != 9 {
-		t.Errorf("msg_1 = %+v", u)
+	if next.Offset != int64(len(first+second)) {
+		t.Fatalf("offset %d", next.Offset)
 	}
-	if u := m.Usage[usageID("msg_2")]; u.Source != model.SourceClaudeNative {
-		t.Errorf("msg_2 = %+v", u)
+	var c map[string]json.RawMessage
+	if err := json.Unmarshal(next.Carry, &c); err != nil {
+		t.Fatal(err)
 	}
-
-	// A plain CLI file carries nothing once settled.
-	setNow(t, "2026-10-24T10:05:00Z")
-	writeNative(t, path, epUser("u-9", "2026-10-23T10:00:00Z", "cli", "x")+epAssistant("msg_9", "2026-10-23T10:00:05Z", "cli", 1))
-	if _, cur := sourcetest.Parse(t, New(), env, path, sources.Cursor{}); len(cur.Carry) != 0 {
-		t.Errorf("cli carry = %s", cur.Carry)
+	if _, ok := c["ep"]; ok {
+		t.Fatalf("carry kept the entrypoint: %s", next.Carry)
 	}
 }
 
-// The Cowork reader is unchanged: its own ids and source, whatever the lines'
-// entrypoint says.
-func TestCoworkReaderIgnoresEntrypoint(t *testing.T) {
-	setNow(t, "2026-10-23T12:00:00Z")
+// A prompt that 0.4.16 left waiting for its model in a cursor's carry was
+// saved as native-claude (a desktop-app line); it goes out as claude-code,
+// under the claude-code id it already had, once the reply names the model.
+func TestA0416PendingPromptCountsAsClaudeCode(t *testing.T) {
+	setNow(t, "2026-10-23T10:05:00Z")
 	env := sourcetest.Env(t.TempDir())
-	path := filepath.Join(NativeDir(env.Home), s2, s3, "local_task", ".claude", "projects", "work", s1+".jsonl")
-	writeNative(t, path, epUser("u-1", "2026-10-23T10:00:00Z", "local-agent", "x")+epAssistant("msg_1", "2026-10-23T10:00:05Z", "cli", 3))
-	b, _, err := NewNative().Parse(env, path, sources.Cursor{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	env.Prompts = true
+	path := filepath.Join(env.Home, ".claude", "projects", "C--work-demo", s1+".jsonl")
+	first := epUser("u-1", "2026-10-23T10:00:00Z", "claude-desktop", "one")
+	second := epAssistant("msg_1", "2026-10-23T10:00:05Z", "claude-desktop", 4)
+	writeTranscript(t, path, first+second)
+	carry := `{"pending":[{"id":"` + promptID("u-1") + `","provider":"anthropic","source":"native-claude",` +
+		`"ts":"2026-10-23T10:00:00Z","tzOffsetMin":0,"model":"","acct":"","acctQ":"","acctLabel":"",` +
+		`"workspace":"","machine":"","session":"","text":"one"}],"ep":"claude-desktop"}`
+	cur := sources.Cursor{Offset: int64(len(first)), PV: pv, Carry: json.RawMessage(carry)}
+	b, _ := sourcetest.Parse(t, New(), env, path, cur)
 	m := sourcetest.Merge(b)
-	want := model.EventID(model.KindUsage, model.ProviderAnthropic, model.SourceClaudeNative, "msg_1")
-	if u, ok := m.Usage[want]; !ok || u.Source != model.SourceClaudeNative {
-		t.Fatalf("cowork usage = %v", m.Usage)
+	p, ok := m.Prompts[promptID("u-1")]
+	if !ok || len(m.Prompts) != 1 || p.Source != model.SourceClaudeCode || p.Model != "claude-opus-5-5" || p.IDSource != "" {
+		t.Fatalf("prompts = %+v", m.Prompts)
+	}
+	if u, ok := m.Usage[usageID("msg_1")]; !ok || u.Source != model.SourceClaudeCode {
+		t.Fatalf("usage = %+v", m.Usage)
 	}
 }

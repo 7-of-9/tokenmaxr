@@ -20,21 +20,23 @@ const (
 
 // Sources.
 const (
-	SourceClaudeCode   = "claude-code"
-	SourceClaudeNative = "native-claude"
-	SourceClaudeWeb    = "web-claude"
-	// SourceClaudeChat is Claude chat whose client was not recorded: turns
-	// older than the start of this fleet's Claude Web capture (SPEC
-	// "Claude chat").
-	SourceClaudeChat = "chat-claude"
+	SourceClaudeCode = "claude-code"
 	SourceCodex      = "codex"
 	SourceGrokCLI    = "grok-cli"
 )
 
-// IDSourceClaudeChat is the source part of every Claude chat event id, so a
-// turn has one id whichever channel (web-claude, native-claude, chat-claude)
-// records it (SPEC "Claude chat").
-const IDSourceClaudeChat = "claude-chat"
+// Retired Claude sources: collectors 0.4.14 to 0.4.16 also recorded the
+// Claude desktop app (native-claude) and claude.ai chat (web-claude,
+// chat-claude). No reader emits them since 0.4.17, but a rollup file and the
+// server may still hold their history, which stays Anthropic usage (SPEC
+// "Retired Claude channels").
+const (
+	SourceClaudeNative = "native-claude"
+	SourceClaudeWeb    = "web-claude"
+	SourceClaudeChat   = "chat-claude"
+	// IDSourceClaudeChat was the source part of those chat events' ids.
+	IDSourceClaudeChat = "claude-chat"
+)
 
 // Event quality and account-attribution quality (SPEC "Accounts").
 const (
@@ -126,9 +128,10 @@ type UsageEvent struct {
 	// WS is Workspace hashed with the fleet key (w_ + 16 hex), so the server
 	// can rate tokens per prompt per workspace without the path.
 	WS string `json:"ws,omitempty"`
-	// IDSource is the source part of ID when it is not Source (a ~/.claude
-	// line the desktop app wrote keeps its claude-code id as native-claude;
-	// SPEC "Claude Native"). It stays off the wire.
+	// IDSource is the source part of ID when it is not Source. Only 0.4.16
+	// set it (a ~/.claude line it filed as native-claude kept its claude-code
+	// id; a Claude chat turn had a claude-chat id); the rollup still reads it
+	// to finish a rebuild that 0.4.16 began. It stays off the wire.
 	IDSource string `json:"-"`
 	Tokens
 }
