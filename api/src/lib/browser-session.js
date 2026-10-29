@@ -17,7 +17,7 @@ const authenticated = p => p?.userId && p.identityProvider && p.userRoles.includ
 // Reject cross-origin cookie use, including sibling subdomains. Non-browser machine
 // clients have neither Origin nor Sec-Fetch-Site and retain their existing token auth.
 export const sameOrigin = headers => (!headers['sec-fetch-site'] || ['same-origin', 'none'].includes(headers['sec-fetch-site'])) &&
-  (!headers.origin || headers.origin === 'https://d0m1.com')
+  (!headers.origin || ['https://d0m1.com', 'https://www.d0m1.com'].includes(headers.origin))
 
 async function readSession(req, store) {
   const token = tokenFrom(req.headers)

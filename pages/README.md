@@ -329,7 +329,7 @@ token pages, so the dashboard leaves it out. What differs on purpose:
   rather than a session; Sign out and Sign in then toggle the public view.
 - There is no Prompts page: prompt text is never published.
 - The data footer names this repository as the source, and the browser tab
-  says `<title> · tokenmaxr`, with no favicon.
+  says `<title> · tokenmaxr`, with the desktop app's green heatmap grid as its favicon.
 
 Preview locally:
 

@@ -82,6 +82,24 @@ test('cross-site and sibling-subdomain requests cannot create, use or revoke a s
   assert.equal((await ctx.store.table('browsersessions').list('s')).length, 1)
 })
 
+test('same-origin sign-in, private reads and logout work on both production hostnames', async () => {
+  for (const origin of ['https://d0m1.com', 'https://www.d0m1.com']) {
+    const ctx = { store: memoryStore(), env: { AGENTS_OWNER_IDS: 'github:owner' } }
+    const headers = { origin, 'sec-fetch-site': 'same-origin', 'x-ms-client-principal': encoded(principal) }
+    const login = await handleBrowserSession(req({ headers }), ctx)
+    assert.equal(login.status, 200)
+    assert.deepEqual(login.jsonBody.clientPrincipal, principal)
+    const cookie = login.headers['Set-Cookie'].split(';')[0]
+    const session = req({ headers: { origin, 'sec-fetch-site': 'same-origin', cookie } })
+    assert.deepEqual((await handleBrowserSession(session, ctx)).jsonBody.clientPrincipal, principal)
+    assert.equal((await withBrowserSession(handleLimits)({ ...session, method: 'GET' }, ctx)).status, 200)
+    // Browser requests between the two hosts are same-site, not same-origin.
+    assert.equal((await handleBrowserSession({ ...session, headers: { ...session.headers, 'sec-fetch-site': 'same-site' } }, ctx)).status, 403)
+    assert.equal((await handleBrowserSession({ ...session, method: 'GET', params: { action: 'logout' } }, ctx)).status, 302)
+    assert.equal((await handleBrowserSession(session, ctx)).jsonBody.clientPrincipal, null)
+  }
+})
+
 test('logout redirects are local; platform-only auth still works during migration', async () => {
   const { ctx } = await setup()
   for (const target of ['https://evil.example', '//evil.example', '/%2fexample', '/\\evil.example', '/api/session', '/.auth/login/github', '/%0aLocation:bad']) {
