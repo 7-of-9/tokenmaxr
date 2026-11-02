@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+// worktreeSeg is Claude Code's own worktree folder inside a repository
+// (`isolation: worktree`, EnterWorktree): <repo>/.claude/worktrees/<agent>.
+var worktreeSeg = regexp.MustCompile(`(?i)[\\/]\.claude[\\/]worktrees[\\/]`)
+
 // rootTTL bounds how long a looked-up repository root is reused, so a
 // repository created while the collector runs is picked up without a
 // restart. Prompt ids never depend on the workspace, so a later answer only
@@ -30,15 +34,26 @@ var (
 
 // RepoRoot is the workspace a new prompt record carries: the nearest
 // ancestor of cwd (cwd included) that contains .git (a directory, or a file
-// for worktrees and submodules), else cwd unchanged. The search never
-// accepts home itself, or anything above it, for a cwd below home: a
-// dotfiles repository in the home folder does not swallow every project.
-// cwd is kept as the tool wrote it; only its trailing elements are dropped.
-// A Linux path from a WSL home (\\wsl$\<distro>\home\…) is probed through
-// that distro's share and returned in Linux form.
+// for worktrees and submodules), else cwd unchanged. A git worktree is its
+// main repository's (owner direction 2026-11-02: agents working in
+// <repo>/.claude/worktrees/<agent> spend the repository's tokens, not a
+// project's each): a .git file whose gitdir is under <main>/.git/worktrees/
+// resolves to <main>, and a folder below .claude/worktrees/ resolves to the
+// repository above it even once git has forgotten the worktree. A submodule
+// stays its own workspace. The search never accepts home itself, or anything
+// above it, for a cwd below home: a dotfiles repository in the home folder
+// does not swallow every project. cwd is kept as the tool wrote it; only its
+// trailing elements are dropped. A Linux path from a WSL home
+// (\\wsl$\<distro>\home\…) is probed through that distro's share and
+// returned in Linux form.
 func RepoRoot(home, cwd string) string {
 	if strings.TrimSpace(cwd) == "" {
 		return cwd
+	}
+	// Claude's worktree folder: the repository is the part before it, as
+	// the tool wrote it, so it hashes like the repository's own prompts.
+	if m := worktreeSeg.FindStringIndex(cwd); m != nil && m[0] > 0 {
+		cwd = cwd[:m[0]]
 	}
 	key := home + "\x00" + cwd
 	if v, ok := rootCache.Load(key); ok {
@@ -111,7 +126,12 @@ func findRoot(home, cwd string) string {
 		if belowHome && samePath(dir, homeProbe) {
 			return cwd
 		}
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+		if fi, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			if !fi.IsDir() {
+				if main := worktreeMain(dir); main != "" {
+					return back(main)
+				}
+			}
 			if dir == probe {
 				return cwd
 			}
@@ -123,4 +143,36 @@ func findRoot(home, cwd string) string {
 		}
 		dir = parent
 	}
+}
+
+// worktreeMain is the main repository of a worktree at dir, read from its
+// .git file ("gitdir: <main>/.git/worktrees/<name>"), or "" when dir is not
+// a worktree of another repository (a submodule, an unreadable file).
+func worktreeMain(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, ".git"))
+	if err != nil || len(b) > 4096 {
+		return ""
+	}
+	line := strings.TrimSpace(string(b))
+	gitdir, ok := strings.CutPrefix(line, "gitdir:")
+	if !ok {
+		return ""
+	}
+	gitdir = strings.TrimSpace(strings.SplitN(gitdir, "\n", 2)[0])
+	if gitdir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(gitdir) && !strings.HasPrefix(gitdir, "/") {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	slash := filepath.ToSlash(gitdir)
+	i := strings.LastIndex(strings.ToLower(slash), "/.git/worktrees/")
+	if i <= 0 {
+		return ""
+	}
+	main := filepath.FromSlash(slash[:i])
+	if fi, err := os.Stat(filepath.Join(main, ".git")); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return filepath.Clean(main)
 }

@@ -240,3 +240,12 @@ test('archive facets: qualities, "probably <label>" and the unknown bucket', asy
   const rec = (await get({ acct: `${ACCT.anthropic}~recorded` })).jsonBody.items
   assert.ok(rec.every((i) => i.acctQ === 'recorded' && i.acctLabel === 'synthetic-label'))
 })
+
+test('a higher parser version re-places the workspace tag; a lower or equal one keeps it', () => {
+  const stored = usage('ws-pv', { pv: 3, ws: 'w_0000000000000001' })
+  const reparsed = usage('ws-pv', { pv: 4, ws: 'w_0000000000000002' })
+  assert.equal(mergeEvent(stored, reparsed).ws, 'w_0000000000000002')
+  assert.equal(mergeEvent(reparsed, stored).ws, 'w_0000000000000002')
+  assert.equal(mergeEvent(stored, { ...reparsed, pv: 3 }).ws, 'w_0000000000000001')
+  assert.equal(mergeEvent(stored, { ...reparsed, ws: '' }).ws, 'w_0000000000000001')
+})

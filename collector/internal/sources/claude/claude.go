@@ -27,7 +27,10 @@ const (
 	// transcript (an older pv makes the scan start each file over, and the
 	// server would keep the pv 3 rows anyway). Each bump makes every
 	// transcript reparse, and the server replaces the rows of a higher pv.
-	pv = 3
+	// pv 4 (0.4.21): a git worktree's usage belongs to its main repository
+	// (workspace.RepoRoot), so every event is re-sent with that workspace
+	// tag and the server re-places it (owner direction 2026-11-02).
+	pv = 4
 	// pendingTimeout is how long a prompt waits for the next assistant line
 	// (which names its model) before it is sent with an empty model.
 	pendingTimeout = 10 * time.Minute

@@ -83,6 +83,23 @@ func TestRepoRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	wtSub := mkdir(t, wt, "pkg")
+	// A git worktree of repo, inside and outside it, and Claude's worktree
+	// folder once git has forgotten it; a submodule stays its own.
+	agent := mkdir(t, repo, ".claude", "worktrees", "agent-a1")
+	mkdir(t, repo, ".git", "worktrees", "agent-a1")
+	if err := os.WriteFile(filepath.Join(agent, ".git"), []byte("gitdir: "+filepath.Join(repo, ".git", "worktrees", "agent-a1")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentSub := mkdir(t, agent, "pkg", "deep")
+	away := mkdir(t, home, "src", "app-feature")
+	if err := os.WriteFile(filepath.Join(away, ".git"), []byte("gitdir: "+filepath.ToSlash(filepath.Join(repo, ".git", "worktrees", "feature"))+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forgotten := mkdir(t, repo, ".claude", "worktrees", "agent-gone", "src")
+	submodule := mkdir(t, repo, "vendor", "lib")
+	if err := os.WriteFile(filepath.Join(submodule, ".git"), []byte("gitdir: ../../.git/modules/lib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	loose := mkdir(t, home, "src", "tmp", "scratch")
 	outside := mkdir(t, base, "elsewhere", "proj", "deep")
 	mkdir(t, base, "elsewhere", "proj", ".git")
@@ -91,6 +108,11 @@ func TestRepoRoot(t *testing.T) {
 		{"repo root itself stays as written", repo, repo},
 		{"sub-folder folds to the repo root", sub, repo},
 		{"a .git file (worktree) counts", wtSub, wt},
+		{"Claude's worktree is the repository's", agent, repo},
+		{"below Claude's worktree too", agentSub, repo},
+		{"a worktree elsewhere follows its gitdir home", away, repo},
+		{"a forgotten Claude worktree folder is still the repository's", forgotten, repo},
+		{"a submodule is its own workspace", submodule, submodule},
 		{"no repository: cwd unchanged", loose, loose},
 		{"outside home: searched to the root", outside, filepath.Join(base, "elsewhere", "proj")},
 		{"missing path: unchanged", filepath.Join(home, "gone", "x"), filepath.Join(home, "gone", "x")},

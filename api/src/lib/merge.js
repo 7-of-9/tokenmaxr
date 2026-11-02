@@ -54,6 +54,19 @@ const minTs = (a, b) => (Date.parse(a) <= Date.parse(b) ? a : b)
 export function mergeEvent(existing, incoming) {
   if (!existing) return { ...incoming }
   if (existing.kind === 'activity' || incoming.kind === 'activity') return mergeActivity(existing, incoming)
+  const out = mergeUsage(existing, incoming)
+  // A reparse under a newer rule re-places the event: the higher pv's
+  // workspace tag (a worktree's main repository since pv 4) stands.
+  const epv = existing.pv ?? 0
+  const ipv = incoming.pv ?? 0
+  if (ipv !== epv) {
+    const [hi, lo] = ipv > epv ? [incoming, existing] : [existing, incoming]
+    out.ws = hi.ws || lo.ws || ''
+  }
+  return out
+}
+
+function mergeUsage(existing, incoming) {
   const epv = existing.pv ?? 0
   const ipv = incoming.pv ?? 0
   if (ipv < epv) return mergeMeta({ ...existing }, existing, incoming)
