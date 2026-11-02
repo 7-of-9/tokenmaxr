@@ -7,6 +7,7 @@ import { LimitsDenied, type LimitRow } from './limits'
 import { readPromptCounts, type PromptCountsResponse } from './promptCounts'
 import type { UsageResponse } from './types'
 import { readUsageResponse, type UsageTransfer } from './usageResponse'
+import type { ProjectUsageResponse } from './projectUsage'
 
 export interface UsageSource {
   /** Identifies the data: the session cache is keyed by it, and a change starts the page over. */
@@ -37,6 +38,8 @@ export interface UsageSource {
    * viewer is not the owner; absent: this source has none.
    */
   fetchLimits?(signal: AbortSignal): Promise<LimitRow[]>
+  /** Owner-only project names and timestamp-filtered usage. Never part of public/static usage files. */
+  fetchLimitProjects?(meterId: string, signal: AbortSignal): Promise<ProjectUsageResponse>
 }
 
 /** The owner's public tokenmaxr dashboard on GitHub Pages: the same usage, published by the same collectors. */
@@ -83,6 +86,16 @@ export function apiSource(origin: string): UsageSource {
       if (!response.ok) throw new Error(`The limits API answered ${response.status}.`)
       const body = (await response.json()) as { items?: LimitRow[] }
       return Array.isArray(body.items) ? body.items : []
+    },
+    async fetchLimitProjects(meterId, signal) {
+      const response = await fetch(`/api/limits/${encodeURIComponent(meterId)}/projects`, {
+        headers: { Accept: 'application/json' }, cache: 'no-store', signal,
+      })
+      if (response.status === 401 || response.status === 403) throw new LimitsDenied(response.status)
+      if (!response.ok) throw new Error('Project usage is temporarily unavailable. Try again shortly.')
+      const body = await response.json() as ProjectUsageResponse
+      if (typeof body.available !== 'boolean' || !Array.isArray(body.projects)) throw new Error('Project usage is not available here yet.')
+      return body
     },
   }
 }

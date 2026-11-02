@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import React, { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import LoadingIndicator from '../LoadingIndicator'
 import { accountName, accountTrackingKey, ago, availablePercent, buildAccounts, initializeTracking, LimitsDenied, mockLimits, parsePlanOverrides, parseTracking, resetClock, resetSeverity, severityColor, sortByAvailability, trackedChoice, weeklyMeter, type Account, type AccountTracking, type LimitRow, type Meter } from './limits'
@@ -6,6 +6,8 @@ import TokensShell from './TokensShell'
 import AuthGate from './AuthGate'
 import { LOCAL_PREFS, useTokensSite, type SitePrefs } from './site'
 import { useUsageSource } from './source'
+import AccountProjects, { type ProjectExpansionProps } from './AccountProjects'
+import { useProjectUsage } from './projectUsageStore'
 import './agents-base.css'
 import './LimitsPage.css'
 
@@ -181,19 +183,46 @@ function OrgName({ account }: { account: Account }) {
   return account.org && named ? <span className="limits-line__org">{account.org}</span> : null
 }
 
-/** One dense line, like Other's: identity and its notes, the available-quota
- * gauge, then the weekly reset countdown. */
-function AccountLine({ account, now, onTrack }: { account: Account; now: number; onTrack: (account: Account, tracked: boolean) => void }) {
+/** A click anywhere on a row that is not a control opens or closes its projects (owner direction 2026-11-02). */
+function rowToggle(onToggle: () => void) {
+  return (event: React.MouseEvent<HTMLElement>) => {
+    if ((event.target as Element).closest('input, label, button, a')) return
+    if (window.getSelection()?.toString()) return
+    onToggle()
+  }
+}
+
+/** The square plus at the start of a row that opens its projects; a minus while open (owner direction 2026-11-02). */
+function ProjectToggle({ expanded, panelId, name, onToggle }: { expanded: boolean; panelId: string; name: string; onToggle: () => void }) {
+  return (
+    <button type="button" className="limits-toggle" aria-expanded={expanded} aria-controls={panelId}
+      aria-label={`${expanded ? 'Hide' : 'Show'} projects for ${name}`} title={expanded ? 'Hide projects' : 'Show projects'} onClick={onToggle}>
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path className="limits-toggle__h" d="M3.5 8h9" />
+        <path className="limits-toggle__v" d="M8 3.5v9" />
+      </svg>
+    </button>
+  )
+}
+
+/** One dense line, like Other's: the projects toggle, identity and its notes,
+ * the available-quota gauge, then the weekly reset countdown. */
+function AccountLine({ account, now, onTrack, expansion }: { account: Account; now: number; onTrack: (account: Account, tracked: boolean) => void; expansion: ProjectExpansionProps }) {
+  const [expanded, setExpanded] = useState(false)
+  const panelId = useId()
+  const supportsProjects = expansion.usage.supported
   const week = weeklyMeter(account)
   const observedAt = week?.observedAt ?? account.observedAt
   const oldReading = now - observedAt >= 86_400_000
   return (
-    <li className={`limits-line${week?.full ? ' is-full' : ''}`}>
-      <div className="limits-line__who">
-        <label className="limits-track">
+    <li className={`limits-account${week?.full ? ' is-full' : ''}`}>
+      <div className={`limits-line${supportsProjects ? ' has-toggle' : ''}`} onClick={supportsProjects ? rowToggle(() => setExpanded(value => !value)) : undefined}>
+        {supportsProjects && <ProjectToggle expanded={expanded} panelId={panelId} name={account.label ? accountName(account) : 'unknown account'} onToggle={() => setExpanded(value => !value)} />}
+        <div className="limits-line__who">
+        <span className="limits-track">
           <input type="checkbox" checked onChange={() => onTrack(account, false)} aria-label={`Track ${account.tool} ${account.label ? accountName(account) : 'unknown account'}`} />
           <span className="limits-line__email" title={accountName(account)}>{account.email || 'Unknown account'}</span>
-        </label>
+        </span>
         <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
         <OrgName account={account} />
         <span className={`limits-reading${oldReading ? ' is-old' : ''}`} title={`Reading from ${FULL_DATE.format(new Date(observedAt))}`}>
@@ -209,12 +238,16 @@ function AccountLine({ account, now, onTrack }: { account: Account; now: number;
         <WeeklyBar meter={week} label={accountName(account)} />
         <ResetCountdown meter={week} now={now} />
       </> : <div className="limits-no-reading">{account.week?.lapsed ? 'Reset passed · awaiting a new reading' : 'No weekly reading available'}</div>}
+      </div>
+      {supportsProjects && expanded && <div id={panelId} className="limits-projects" role="region" aria-label={`Project usage for ${accountName(account)}`}>
+        <AccountProjects meterId={account.week?.key} resetsAt={account.week?.resetsAt} {...expansion} />
+      </div>}
     </li>
   )
 }
 
 /** One box per tool (Claude, Codex, …), its accounts one line each. */
-function ProviderBox({ tool, accounts, now, onTrack }: { tool: string; accounts: Account[]; now: number; onTrack: (account: Account, tracked: boolean) => void }) {
+function ProviderBox({ tool, accounts, now, onTrack, expansion }: { tool: string; accounts: Account[]; now: number; onTrack: (account: Account, tracked: boolean) => void; expansion: ProjectExpansionProps }) {
   return (
     <section className="limits-box" aria-label={tool}>
       <header className="limits-box__head">
@@ -225,29 +258,42 @@ function ProviderBox({ tool, accounts, now, onTrack }: { tool: string; accounts:
       </header>
       <ul className="limits-lines">
         {sortByAvailability(accounts).map((account) => (
-          <AccountLine key={account.key} account={account} now={now} onTrack={onTrack} />
+          <AccountLine key={account.key} account={account} now={now} onTrack={onTrack} expansion={expansion} />
         ))}
       </ul>
     </section>
   )
 }
 
-function OtherAccounts({ accounts, onTrack }: { accounts: Account[]; onTrack: (account: Account, tracked: boolean) => void }) {
+function OtherAccountLine({ account, onTrack, expansion }: { account: Account; onTrack: (account: Account, tracked: boolean) => void; expansion: ProjectExpansionProps }) {
+  const [expanded, setExpanded] = useState(false)
+  const panelId = useId()
+  const supportsProjects = expansion.usage.supported
+  return <li>
+    <div className={`limits-unmetered__line${supportsProjects ? ' has-toggle' : ''}`} onClick={supportsProjects ? rowToggle(() => setExpanded(value => !value)) : undefined}>
+      {supportsProjects && <ProjectToggle expanded={expanded} panelId={panelId} name={account.label ? accountName(account) : 'unknown account'} onToggle={() => setExpanded(value => !value)} />}
+      <span className="limits-track">
+        <input type="checkbox" checked={false} onChange={() => onTrack(account, true)} aria-label={`Track ${account.tool} ${account.label ? accountName(account) : 'unknown account'}`} />
+        <span className="limits-unmetered__tool">{account.tool}</span>
+        <span className="limits-line__email" title={accountName(account)}>{account.email || 'Unknown account'}</span>
+      </span>
+      <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
+      <OrgName account={account} />
+      <span className="limits-unmetered__reason">{weeklyMeter(account) ? 'Not tracked' : account.week?.lapsed ? 'Awaiting a new reading' : 'No weekly reading'}</span>
+    </div>
+    {supportsProjects && expanded && <div id={panelId} className="limits-projects" role="region" aria-label={`Project usage for ${accountName(account)}`}>
+      <AccountProjects meterId={account.week?.key} resetsAt={account.week?.resetsAt} {...expansion} />
+    </div>}
+  </li>
+}
+
+function OtherAccounts({ accounts, onTrack, expansion }: { accounts: Account[]; onTrack: (account: Account, tracked: boolean) => void; expansion: ProjectExpansionProps }) {
   return (
     <details className="limits-unmetered">
       <summary>Other <span className="limits-unmetered__count">{accounts.length}</span></summary>
       <p className="limits-unmetered__hint">Tick an account to track it above.</p>
       <ul className="limits-lines">
-        {accounts.map(account => <li className="limits-unmetered__line" key={account.key}>
-          <label className="limits-track">
-            <input type="checkbox" checked={false} onChange={() => onTrack(account, true)} aria-label={`Track ${account.tool} ${account.label ? accountName(account) : 'unknown account'}`} />
-            <span className="limits-unmetered__tool">{account.tool}</span>
-            <span className="limits-line__email" title={accountName(account)}>{account.email || 'Unknown account'}</span>
-          </label>
-          <span className="limits-plan">{account.plan || 'Plan unavailable'}</span>
-          <OrgName account={account} />
-          <span className="limits-unmetered__reason">{weeklyMeter(account) ? 'Not tracked' : account.week?.lapsed ? 'Awaiting a new reading' : 'No weekly reading'}</span>
-        </li>)}
+        {accounts.map(account => <OtherAccountLine key={account.key} account={account} onTrack={onTrack} expansion={expansion} />)}
       </ul>
     </details>
   )
@@ -267,6 +313,8 @@ const LimitsPage = () => {
   const planLabels = usePlanLabels(prefs)
   const accounts = useMemo(() => (items ? buildAccounts(items, now, planLabels) : []), [items, now, planLabels])
   const { choices, setTracked, saveFailed } = useTracking(accounts, mock, prefs)
+  const usage = useProjectUsage(accounts, mock, reloadKey, owner.key)
+  const expansion: ProjectExpansionProps = { mock, usage }
   const isTracked = (account: Account) => trackedChoice(choices, account)
   const tracked = accounts.filter(isTracked)
   const other = accounts.filter(account => !isTracked(account))
@@ -327,12 +375,12 @@ const LimitsPage = () => {
               ) : (
                 <div className="limits-boxes">
                   {byTool.map(([tool, list]) => (
-                    <ProviderBox key={tool} tool={tool} accounts={list} now={now} onTrack={setTracked} />
+                    <ProviderBox key={tool} tool={tool} accounts={list} now={now} onTrack={setTracked} expansion={expansion} />
                   ))}
                 </div>
               )}
               {accounts.length > 0 && tracked.length === 0 && <p className="limits-sub">Choose accounts from Other to track their weekly quota.</p>}
-              {other.length > 0 && <OtherAccounts accounts={other} onTrack={setTracked} />}
+              {other.length > 0 && <OtherAccounts accounts={other} onTrack={setTracked} expansion={expansion} />}
             </>
           )}
 

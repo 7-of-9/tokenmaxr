@@ -255,10 +255,14 @@ export function accountName(account: Account): string {
   return [account.label || account.tool, org].filter(Boolean).join(' · ')
 }
 
-/** Whether an account is tracked: the saved choice (see saved), else tracked when it has a weekly reading. */
+/**
+ * Whether an account is tracked: the saved choice (see saved), else tracked. A new account always lands in its
+ * provider's box (owner direction 2026-11-02): right after a login switch the collector reports the plan before its
+ * first weekly reading, and that moment must not decide where the account lives.
+ */
 export function trackedChoice(choices: AccountTracking, account: Account): boolean {
   const choice = saved(choices, account)
-  return typeof choice === 'boolean' ? choice : !!weeklyMeter(account)
+  return typeof choice === 'boolean' ? choice : true
 }
 
 /** Recover valid choices from storage, without treating malformed entries as unchecked accounts. */
@@ -290,9 +294,9 @@ export function parsePlanOverrides(raw: string | null): AccountPlanOverrides {
 }
 
 /**
- * Set defaults once. A later lapse, refresh, or temporary disappearance never changes a saved choice. A choice
- * saved under an earlier key (the email alone, before organisations were reported) carries over to each of its
- * organisations' accounts, and stays, for older pages.
+ * Set defaults once, so every account has an explicit, durable choice. A later lapse, refresh, or temporary
+ * disappearance never changes a saved choice. A choice saved under an earlier key (the email alone, before
+ * organisations were reported) carries over to each of its organisations' accounts, and stays, for older pages.
  */
 export function initializeTracking(accounts: Account[], choices: AccountTracking): AccountTracking {
   let result = choices

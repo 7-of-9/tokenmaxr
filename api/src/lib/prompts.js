@@ -194,6 +194,20 @@ async function getIndex(store, key, nowMs) {
   return pending
 }
 
+// Owner-only project lookup. Reuse the archive's decryption/cache and workspace
+// rules, but never pass prompt text to the project-usage handler.
+export async function getPromptWorkspaces(store, key, nowMs = Date.now()) {
+  const index = await getIndex(store, key, nowMs)
+  return {
+    undecryptable: index.undecryptable,
+    workspaces: index.facets.workspaces,
+    entries: index.entries.map(e => ({
+      provider: e.provider, session: e.session, ts: e.ts, tzOffsetMin: e.tzOffsetMin,
+      workspace: e.workspace, wsKey: e.wsKey,
+    })),
+  }
+}
+
 // Public counts share the private index's lifetime and ingest invalidation,
 // but construct a new allow-listed result. Never return or spread an entry.
 export async function getPromptCountAggregates(store, key, machines, nowMs = Date.now(), source = '') {

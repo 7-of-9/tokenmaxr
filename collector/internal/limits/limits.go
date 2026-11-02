@@ -297,6 +297,7 @@ type claudeFile struct {
 		Tier        string `json:"organizationRateLimitTier"`
 		OrgType     string `json:"organizationType"`
 		SeatTier    string `json:"seatTier"`
+		PlanName    string `json:"planDisplayName"`
 	} `json:"oauthAccount"`
 	Cache *struct {
 		FetchedAtMs int64  `json:"fetchedAtMs"`
@@ -344,6 +345,28 @@ func claudePlan(tier string) string {
 	default:
 		return sanitize(tier)
 	}
+}
+
+// claudePlanLabel is the plan as Claude Code itself displays it
+// (planDisplayName: "Ultra", "Max", "Pro", "Team"; owner report 2026-11-02:
+// "claude renamed Max to Ultra"), keeping the detail the tier or seat adds to
+// that name ("Max (20x)", "Team (Premium)"). Without a display name it is the
+// plan the tier code names, else the organisation's.
+func claudePlanLabel(display, tier, orgType, seat string) string {
+	fromTier, fromOrg := claudePlan(tier), claudeOrgPlan(orgType, seat)
+	name := sanitize(display)
+	if name == "" {
+		if fromTier != "" {
+			return fromTier
+		}
+		return fromOrg
+	}
+	for _, p := range []string{fromTier, fromOrg} {
+		if strings.HasPrefix(strings.ToLower(p), strings.ToLower(name)+" (") {
+			return p
+		}
+	}
+	return name
 }
 
 // claudeOrgPlan is the plan an organisation's type names ("claude_team",
@@ -474,12 +497,9 @@ func claudeLimits(env *sources.Env) ([]model.LimitSnapshot, *claudeLogin) {
 	var login *claudeLogin
 	var switched time.Time
 	if f.OAuth != nil && f.OAuth.AccountUUID != "" {
-		login = &claudeLogin{name: sanitize(f.OAuth.OrgName), plan: claudePlan(f.OAuth.Tier)}
-		if login.plan == "" {
-			// A Team or Enterprise seat reports an internal tier code
-			// (default_raven); the organisation's type names the plan.
-			login.plan = claudeOrgPlan(f.OAuth.OrgType, f.OAuth.SeatTier)
-		}
+		// A Team or Enterprise seat reports an internal tier code
+		// (default_raven); the organisation's type names the plan.
+		login = &claudeLogin{name: sanitize(f.OAuth.OrgName), plan: claudePlanLabel(f.OAuth.PlanName, f.OAuth.Tier, f.OAuth.OrgType, f.OAuth.SeatTier)}
 		if env.HashID != nil {
 			login.acct = env.HashID(model.ProviderAnthropic, f.OAuth.AccountUUID)
 			if f.OAuth.OrgUUID != "" {

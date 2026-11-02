@@ -128,11 +128,14 @@ export function azureStore({ connectionString, prefix } = {}) {
           if (!isStatus(err, 404)) throw err
         }
       },
-      async list(pk, { rkGte, rkLte, select } = {}) {
+      async list(pk, { rkGte, rkLte, select, provider, acct, kind } = {}) {
         await ready
         let filter = odata`PartitionKey eq ${pk}`
         if (rkGte != null) filter += ' and ' + odata`RowKey ge ${rkGte}`
         if (rkLte != null) filter += ' and ' + odata`RowKey le ${rkLte}`
+        if (provider != null) filter += ' and ' + odata`provider eq ${provider}`
+        if (acct != null) filter += ' and ' + odata`acct eq ${acct}`
+        if (kind != null) filter += ' and ' + odata`kind eq ${kind}`
         const queryOptions = { filter }
         if (select) queryOptions.select = ['PartitionKey', 'RowKey', ...select]
         const out = []
@@ -266,13 +269,16 @@ export function memoryStore() {
       async delete(pk, rk) {
         rows.delete(key(pk, rk))
       },
-      async list(pk, { rkGte, rkLte } = {}) {
+      async list(pk, { rkGte, rkLte, provider, acct, kind } = {}) {
         const out = []
         for (const row of rows.values()) {
           const e = row.entity
           if (e.partitionKey !== pk) continue
           if (rkGte != null && e.rowKey < rkGte) continue
           if (rkLte != null && e.rowKey > rkLte) continue
+          if (provider != null && e.provider !== provider) continue
+          if (acct != null && e.acct !== acct) continue
+          if (kind != null && e.kind !== kind) continue
           out.push(read(row))
         }
         return out.sort((a, b) => (a.rowKey < b.rowKey ? -1 : a.rowKey > b.rowKey ? 1 : 0))

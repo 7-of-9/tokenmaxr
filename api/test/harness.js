@@ -17,6 +17,7 @@ import { handleUsage } from '../src/lib/usage.js'
 import { handlePrompts } from '../src/lib/prompts.js'
 import { handlePromptCounts } from '../src/lib/prompt-counts.js'
 import { handleLimits } from '../src/lib/limits.js'
+import { handleLimitProjects } from '../src/lib/limit-projects.js'
 import { handleLink } from '../src/lib/link.js'
 import { handleFleetGitHub } from '../src/lib/fleet-github.js'
 import { handleGithubDevice } from '../src/lib/github-device.js'
@@ -33,6 +34,7 @@ const ROUTES = [
   ['GET', /^\/api\/usage$/, handleUsage],
   ['GET', /^\/api\/prompt-counts$/, handlePromptCounts],
   ['GET', /^\/api\/limits$/, withBrowserSession(handleLimits)],
+  ['GET', /^\/api\/limits\/([a-f0-9]{32})\/projects$/, withBrowserSession(handleLimitProjects), 'id'],
   ['GET', /^\/api\/prompts$/, withBrowserSession(handlePrompts)],
   ['GET', /^\/api\/prompts\/([^/]+)$/, withBrowserSession(handlePrompts), 'id'],
   ['GET,PUT,DELETE', /^\/api\/fleet\/github$/, handleFleetGitHub],

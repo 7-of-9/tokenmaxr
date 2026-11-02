@@ -182,6 +182,50 @@ func TestFingerprintIgnoresObservedAt(t *testing.T) {
 	}
 }
 
+// Claude Code's own plan name wins (owner report 2026-11-02: "claude renamed
+// Max to Ultra"), keeping the multiplier or seat detail a tier or seat adds
+// to that same name; without one, the tier code, then the organisation.
+func TestClaudePlanLabel(t *testing.T) {
+	for _, c := range []struct{ display, tier, orgType, seat, want string }{
+		{"Ultra", "default_claude_max_20x", "claude_max", "", "Ultra"},
+		{"Max", "default_claude_max_20x", "claude_max", "", "Max (20x)"},
+		{"Max", "default_claude_max_5x", "claude_max", "", "Max (5x)"},
+		{"Pro", "default_claude_pro", "claude_pro", "", "Pro"},
+		{"Team", "default_raven", "claude_team", "team_premium", "Team (Premium)"},
+		{"Enterprise", "default_raven", "claude_enterprise", "", "Enterprise"},
+		{"", "default_claude_max_20x", "claude_max", "", "Max (20x)"},
+		{"", "default_raven", "claude_team", "standard", "Team (Standard)"},
+		{"person@example.com", "default_claude_max_20x", "claude_max", "", "Max (20x)"},
+		{"", "", "", "", ""},
+	} {
+		if got := claudePlanLabel(c.display, c.tier, c.orgType, c.seat); got != c.want {
+			t.Errorf("%q/%s/%s/%s: %q, want %q", c.display, c.tier, c.orgType, c.seat, got, c.want)
+		}
+	}
+}
+
+// The display name reaches every snapshot of the login, meters and plan row.
+func TestClaudeCacheDisplayName(t *testing.T) {
+	home := t.TempDir()
+	body := `{
+	  "oauthAccount": {"accountUuid": "acct-1", "organizationName": "Example Org", "organizationRateLimitTier": "default_claude_max_20x", "organizationType": "claude_max", "planDisplayName": "Ultra", "emailAddress": "person@example.com"},
+	  "cachedUsageUtilization": {"fetchedAtMs": 1790734254355, "accountUuid": "acct-1", "utilization": {"limits": [
+	    {"kind": "weekly_all", "percent": 60, "resets_at": "2026-10-06T15:00:00Z"}]}}
+	}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := Collect(&sources.Env{Home: home, HashID: func(p, id string) string { return "a_" + id }})
+	if len(got) == 0 {
+		t.Fatal("no snapshots")
+	}
+	for _, s := range got {
+		if s.Plan != "Ultra" {
+			t.Fatalf("%s plan %q, want Ultra", s.Window, s.Plan)
+		}
+	}
+}
+
 // A Team or Enterprise seat's tier code names no plan; the organisation's
 // type does (owner report 2026-10-09: "Plan unavailable" on a Team account).
 func TestClaudePlanFromOrgType(t *testing.T) {

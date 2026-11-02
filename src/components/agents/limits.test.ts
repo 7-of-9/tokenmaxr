@@ -169,11 +169,13 @@ assert.equal(countdown(50 * H), '2d 2h')
   const accounts = buildAccounts(rows, NOW)
   const [metered, noMeter] = accounts
   const initial = initializeTracking(accounts, {})
+  // A new account is tracked whether or not its first row is a weekly reading (owner direction 2026-11-02).
   assert.equal(initial[accountTrackingKey(metered)], true)
-  assert.equal(initial[accountTrackingKey(noMeter)], false)
+  assert.equal(initial[accountTrackingKey(noMeter)], true)
+  assert.equal(trackedChoice({}, noMeter), true)
   assert.equal(initializeTracking(buildAccounts(rows, NOW + 2 * H), initial), initial)
   assert.equal(initializeTracking([], initial), initial)
-  const explicit = { ...initial, [accountTrackingKey(metered)]: false, [accountTrackingKey(noMeter)]: true }
+  const explicit = { ...initial, [accountTrackingKey(metered)]: false, [accountTrackingKey(noMeter)]: false }
   assert.equal(initializeTracking(accounts, explicit), explicit)
   assert.equal(initializeTracking(buildAccounts(rows, NOW + 2 * H), explicit), explicit)
   const [newAccount] = buildAccounts([{ ...rows[0], label: 'new@example.com' }], NOW)
@@ -181,7 +183,7 @@ assert.equal(countdown(50 * H), '2d 2h')
   assert.notEqual(expanded, explicit)
   assert.equal(expanded[accountTrackingKey(newAccount)], true)
   assert.equal(expanded[accountTrackingKey(metered)], false)
-  assert.equal(expanded[accountTrackingKey(noMeter)], true)
+  assert.equal(expanded[accountTrackingKey(noMeter)], false)
   assert.equal(Object.hasOwn(explicit, accountTrackingKey(newAccount)), false)
 }
 
