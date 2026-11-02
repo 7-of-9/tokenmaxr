@@ -7,8 +7,11 @@ import { useTokensSite } from './site'
 
 /** Project usage is read for every account as soon as the meters arrive, so opening a panel is instant. */
 const PROJECTS_REFRESH_MS = 180_000
-/** Requests in flight at once: each one reads a week of the owner's events. */
-const PARALLEL = 4
+/** Requests in flight at once: each one reads a week of the owner's events, and the API's time budget is per request
+ * on a shared host, so too many at once make the first ones time out (owner report 2026-11-02). */
+const PARALLEL = 2
+/** A failed read is retried this many times, with these pauses, before the panel says anything. */
+const RETRY_AFTER_MS = [1500, 4000, 8000]
 
 export type ProjectLoad =
   | { status: 'loading' }
@@ -72,13 +75,31 @@ export function useProjectUsage(accounts: Account[], mock: boolean, reloadKey: n
       const controller = new AbortController()
       inflight.set(meterId, controller)
       try {
-        const data = await fetchProjects(meterId, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]))
-        if (cancelled) return
-        done.current.byMeter.set(meterId, resetsAt)
-        update(meterId, { status: 'ok', data, at: Date.now() })
+        for (let attempt = 0; ; attempt++) {
+          try {
+            const data = await fetchProjects(meterId, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]))
+            if (cancelled) return
+            done.current.byMeter.set(meterId, resetsAt)
+            update(meterId, { status: 'ok', data, at: Date.now() })
+            return
+          } catch (error: unknown) {
+            if (cancelled) return
+            if (error instanceof LimitsDenied) {
+              onDenied.current?.(error.status)
+              throw error
+            }
+            // The server's first answer under load is often a timeout that a retry a moment later gets through;
+            // the owner never sees that. A table already on screen stays while retries run.
+            if (attempt >= RETRY_AFTER_MS.length) throw error
+            await new Promise<void>(resolve => {
+              const timer = window.setTimeout(resolve, RETRY_AFTER_MS[attempt])
+              controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); resolve() }, { once: true })
+            })
+            if (cancelled || controller.signal.aborted) return
+          }
+        }
       } catch (error: unknown) {
         if (cancelled) return
-        if (error instanceof LimitsDenied) onDenied.current?.(error.status)
         update(meterId, { status: 'error', message: error instanceof Error && error.name === 'TimeoutError'
           ? 'Reading project usage timed out. Try again.' : error instanceof Error ? error.message : 'Could not read project usage.' })
       } finally {
