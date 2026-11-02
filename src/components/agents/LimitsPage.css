@@ -7,6 +7,9 @@
   --lim-stop: #f85149;
 }
 
+/* Wider than the token pages: every account is one line with fixed gauge, limited and reset slots. */
+.agents-page.limits-page { max-width: 1680px; }
+
 .limits-page .agents-sheet h1,
 .limits-page .agents-sheet p { margin: 0; }
 
@@ -88,16 +91,22 @@
    gauge, the reset. */
 .limits-line {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(160px, 1fr) 26rem;
+  grid-template-columns: minmax(0, 1fr) 220px 10rem 22rem;
   align-items: center;
-  gap: 8px 24px;
+  gap: 8px 20px;
   padding: 11px 18px;
   font-size: 13px;
 }
 
 /* A row with a projects toggle starts with it; the panel below it is indented
    under the same square with a rail from it. */
-.limits-line.has-toggle { grid-template-columns: auto minmax(0, 1.6fr) minmax(160px, 1fr) 26rem; cursor: pointer; }
+.limits-line.has-toggle { grid-template-columns: auto minmax(0, 1fr) 220px 10rem 22rem; cursor: pointer; }
+
+/* The limited slot sits between the gauge and the reset; empty when the account is not limited. */
+.limits-limited { color: var(--lim-stop); font-size: 12px; white-space: nowrap; }
+.limits-limited__clock { font-family: var(--gh-mono); font-variant-numeric: tabular-nums; }
+.limits-limited__clock strong { font-weight: 600; }
+.limits-limited__clock > span + span { margin-left: 3px; }
 .limits-unmetered__line.has-toggle { cursor: pointer; }
 .limits-line.has-toggle:hover,
 .limits-unmetered__line.has-toggle:hover { background: rgba(255, 255, 255, 0.025); }
@@ -196,13 +205,22 @@
 .limits-page .limits-projects__empty { margin: 12px 0; color: var(--gh-muted); font-size: 13px; }
 .limits-projects__error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--gh-muted); font-size: 13px; }
 
+/* One line, never wrapped: the email gives way first. */
 .limits-line__who {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px 10px;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
+
+.limits-line__who > * { flex: none; }
+.limits-line__who > .limits-reading,
+.limits-line__who > .limits-line__org,
+.limits-line__who > .limits-fresh,
+.limits-line__who > .limits-line__detail { flex: 0 1 auto; overflow: hidden; min-width: 0; text-overflow: ellipsis; }
 
 .limits-line__who > .limits-track { min-width: 0; }
 .limits-line__detail { color: var(--gh-muted); font-size: 12px; }
@@ -217,10 +235,8 @@
 }
 
 .limits-line__email {
-  overflow: hidden;
   color: var(--gh-fg);
   font-weight: 500;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -264,7 +280,6 @@
 
 .limits-reading.is-old { color: var(--lim-warn); }
 .limits-fresh { color: var(--lim-go); font-size: 12px; font-weight: 600; }
-.limits-session-notice { color: var(--lim-stop); font-size: 12px; }
 
 .limits-bar {
   display: grid;
@@ -383,8 +398,8 @@
 
 @media (max-width: 1200px) {
   /* The gauge and reset share a second line under who. */
-  .limits-line { grid-template-columns: minmax(0, 1fr) 26rem; gap: 10px 16px; padding: 12px 14px; }
-  .limits-line.has-toggle { grid-template-columns: auto minmax(0, 1fr) 26rem; }
+  .limits-line { grid-template-columns: minmax(0, 1fr) 10rem 22rem; gap: 10px 16px; padding: 12px 14px; }
+  .limits-line.has-toggle { grid-template-columns: auto minmax(0, 1fr) 10rem 22rem; }
   .limits-line__who { grid-column: 1 / -1; }
   .limits-line.has-toggle .limits-line__who { grid-column: 2 / -1; }
   .limits-line.has-toggle .limits-bar { grid-column: 2; }
@@ -402,7 +417,10 @@
   .limits-line { grid-template-columns: minmax(0, 1fr); }
   .limits-line.has-toggle { grid-template-columns: auto minmax(0, 1fr); }
   .limits-line.has-toggle .limits-bar,
+  .limits-line.has-toggle .limits-limited,
   .limits-line.has-toggle .limits-reset { grid-column: 2; }
+  .limits-limited:not(.is-on) { display: none; }
+  .limits-line__who { flex-wrap: wrap; white-space: normal; }
   .limits-reset { justify-content: flex-start; flex-wrap: wrap; white-space: normal; }
   .limits-reset__date { flex-basis: 100%; }
   .limits-reset__date::before { content: none; }

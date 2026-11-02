@@ -176,6 +176,17 @@ function ResetCountdown({ meter, now }: { meter: Meter; now: number }) {
   )
 }
 
+/** A full session window, between the gauge and the weekly reset: how long until the account is back. */
+function LimitedFor({ meter, now }: { meter?: Meter; now: number }) {
+  if (!meter) return <span className="limits-limited" aria-hidden="true" />
+  const parts = meter.resetsAt !== null && meter.resetsAt > now ? resetClock(meter.resetsAt - now) : []
+  return (
+    <span className="limits-limited is-on" title={meter.resetsAt !== null ? `Session limit lifts at ${FULL_DATE.format(new Date(meter.resetsAt))}` : 'Session limit reached'}>
+      limited{parts.length > 0 && <> · back in <span className="limits-limited__clock">{parts.map(part => <span key={part.unit}><strong>{part.value}</strong>{part.unit}</span>)}</span></>}
+    </span>
+  )
+}
+
 /** A Team or Enterprise organisation's name, or any organisation's when there is no plan: with the plan, it tells
  * apart two accounts of one email (a Team seat and a personal plan). A personal organisation's name is the person's. */
 function OrgName({ account }: { account: Account }) {
@@ -231,11 +242,11 @@ function AccountLine({ account, now, onTrack, expansion }: { account: Account; n
         {week?.passedAt !== undefined && <span className="limits-fresh" title={`The weekly reset the last reading named passed at ${FULL_DATE.format(new Date(week.passedAt))}: a full week since`}>
           reset {RESET_DATE.format(new Date(Math.round(week.passedAt / 60_000) * 60_000))} · full
         </span>}
-        {account.blockedBy?.window === 'session' && <span className="limits-session-notice">Temporarily limited</span>}
         {week?.detail && <span className="limits-line__detail">{week.detail}</span>}
       </div>
       {week ? <>
         <WeeklyBar meter={week} label={accountName(account)} />
+        <LimitedFor meter={account.blockedBy?.window === 'session' ? account.blockedBy : undefined} now={now} />
         <ResetCountdown meter={week} now={now} />
       </> : <div className="limits-no-reading">{account.week?.lapsed ? 'Reset passed · awaiting a new reading' : 'No weekly reading available'}</div>}
       </div>
