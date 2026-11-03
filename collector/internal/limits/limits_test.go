@@ -246,3 +246,55 @@ func TestClaudePlanFromOrgType(t *testing.T) {
 		}
 	}
 }
+
+// A Claude window at 100 is full only when Claude says it is locked: the percentage is a rounded estimate that
+// reads 100 while Claude Code still answers (owner, 2026-11-03).
+func TestClaudeFullNeedsLock(t *testing.T) {
+	run := func(fiveHour string) map[string]model.LimitSnapshot {
+		home := t.TempDir()
+		body := `{
+		  "oauthAccount": {"accountUuid": "acct-1", "organizationRateLimitTier": "default_claude_max_20x", "emailAddress": "person@example.com"},
+		  "cachedUsageUtilization": {"fetchedAtMs": 1790734254355, "accountUuid": "acct-1", "utilization": {
+		    "five_hour": ` + fiveHour + `,
+		    "seven_day": {"utilization": 100, "resets_at": "2026-10-06T15:00:00+00:00", "locked_reason": null},
+		    "limits": [
+		      {"kind": "session", "percent": 100, "resets_at": "2026-09-30T06:50:00+00:00", "severity": "critical", "is_active": true},
+		      {"kind": "weekly_all", "percent": 100, "resets_at": "2026-10-06T15:00:00+00:00", "is_active": false},
+		      {"kind": "weekly_scoped", "percent": 100, "resets_at": "2026-10-06T15:00:00+00:00", "scope": {"model": {"display_name": "Fable"}}}
+		    ]}}}`
+		if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		env := &sources.Env{Home: home, HashID: func(p, id string) string { return "a_1111111111111111" }}
+		by := map[string]model.LimitSnapshot{}
+		for _, s := range Collect(env) {
+			by[s.Window+"/"+s.Scope] = s
+		}
+		return by
+	}
+	by := run(`{"utilization": 100, "resets_at": "2026-09-30T06:50:00+00:00", "locked_reason": null}`)
+	for _, k := range []string{"session/", "week/", "week/Fable"} {
+		if by[k].Status != "ok" || by[k].UsedPercent == nil || *by[k].UsedPercent != 100 {
+			t.Fatalf("%s at 100 without a lock %+v", k, by[k])
+		}
+	}
+	by = run(`{"utilization": 100, "resets_at": "2026-09-30T06:50:00+00:00", "locked_reason": "limit_reached"}`)
+	if by["session/"].Status != "full" || by["week/"].Status != "ok" {
+		t.Fatalf("locked session %+v week %+v", by["session/"], by["week/"])
+	}
+	// Older caches without the limits array use the windows' own locks.
+	home := t.TempDir()
+	old := `{"oauthAccount": {"accountUuid": "acct-1"}, "cachedUsageUtilization": {"fetchedAtMs": 1790734254355, "accountUuid": "acct-1", "utilization": {
+	  "five_hour": {"utilization": 100, "resets_at": "2026-09-30T06:50:00Z", "locked_reason": "limit_reached"},
+	  "seven_day": {"utilization": 100, "resets_at": "2026-10-06T15:00:00Z"}}}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	by = map[string]model.LimitSnapshot{}
+	for _, s := range Collect(&sources.Env{Home: home, HashID: func(p, id string) string { return "a_1111111111111111" }}) {
+		by[s.Window+"/"+s.Scope] = s
+	}
+	if by["session/"].Status != "full" || by["week/"].Status != "ok" {
+		t.Fatalf("old cache session %+v week %+v", by["session/"], by["week/"])
+	}
+}

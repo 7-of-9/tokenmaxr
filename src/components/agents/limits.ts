@@ -126,7 +126,8 @@ function toMeter(row: LimitRow, now: number): Meter {
   const windowKey = `${row.source}|${row.window}`
   const length = Object.hasOwn(WINDOW_MS, windowKey) ? WINDOW_MS[windowKey] : undefined
   const lapsed = resetsAt !== null ? resetsAt <= now : length !== undefined && observedAt > 0 && observedAt + length <= now
-  const hit = row.status === 'full' || (used !== null && used >= 100)
+  // Only the tool's own word blocks: Claude reports a rounded 100 while still answering, so the percentage never does.
+  const hit = row.status === 'full'
   if (lapsed && row.window === 'week' && resetsAt !== null && observedAt > 0) {
     const next = resetsAt + Math.max(1, Math.ceil((now - resetsAt + 1) / WEEK_MS)) * WEEK_MS
     return {

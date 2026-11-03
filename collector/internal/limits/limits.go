@@ -254,9 +254,8 @@ func sanitize(s string) string {
 
 func pct(v float64) *float64 { return &v }
 
-// statusFor is "full" once a window is used up. Claude's is_active only marks
-// the limit its UI leads with (a 3% session is inactive beside a 60% week),
-// so it never means the window is paused.
+// statusFor is "full" once a Codex window is used up (Codex reports the
+// percentage it enforces). Claude windows use claudeStatus.
 func statusFor(used float64) string {
 	if used >= 100 {
 		return "full"
@@ -325,8 +324,20 @@ type claudeFile struct {
 }
 
 type claudeWin struct {
-	Utilization float64 `json:"utilization"`
-	ResetsAt    string  `json:"resets_at"`
+	Utilization  float64 `json:"utilization"`
+	ResetsAt     string  `json:"resets_at"`
+	LockedReason string  `json:"locked_reason"`
+}
+
+// claudeStatus is "full" only when Claude says the window is locked. Its
+// percentage is a rounded estimate: a session reads 100 while Claude Code still
+// answers (owner, 2026-11-03: "it is not currently limited"), so 100 alone
+// means an empty gauge, not a limit.
+func claudeStatus(w *claudeWin) string {
+	if w != nil && strings.TrimSpace(w.LockedReason) != "" {
+		return "full"
+	}
+	return "ok"
 }
 
 func claudePlan(tier string) string {
@@ -581,14 +592,21 @@ func claudeLimits(env *sources.Env) ([]model.LimitSnapshot, *claudeLogin) {
 			if row.Scope != nil && row.Scope.Model != nil {
 				scope = sanitize(row.Scope.Model.DisplayName)
 			}
-			add(claudeWindow(row.Kind), scope, "", statusFor(row.Percent), row.Percent, true, parseRFC(row.ResetsAt))
+			var win *claudeWin
+			switch row.Kind {
+			case "session":
+				win = u.FiveHour
+			case "weekly_all":
+				win = u.SevenDay
+			}
+			add(claudeWindow(row.Kind), scope, "", claudeStatus(win), row.Percent, true, parseRFC(row.ResetsAt))
 		}
 	} else {
 		if u.FiveHour != nil {
-			add("session", "", "", statusFor(u.FiveHour.Utilization), u.FiveHour.Utilization, true, parseRFC(u.FiveHour.ResetsAt))
+			add("session", "", "", claudeStatus(u.FiveHour), u.FiveHour.Utilization, true, parseRFC(u.FiveHour.ResetsAt))
 		}
 		if u.SevenDay != nil {
-			add("week", "", "", statusFor(u.SevenDay.Utilization), u.SevenDay.Utilization, true, parseRFC(u.SevenDay.ResetsAt))
+			add("week", "", "", claudeStatus(u.SevenDay), u.SevenDay.Utilization, true, parseRFC(u.SevenDay.ResetsAt))
 		}
 	}
 	if u.Extra != nil {
