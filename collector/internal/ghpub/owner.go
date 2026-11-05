@@ -185,9 +185,9 @@ func ownerRow(s model.LimitSnapshot, now time.Time) (OwnerRow, bool) {
 	}
 	r.Org, r.OrgKind = s.Org, s.OrgKind
 	if s.QuotaSource != "" {
-		if s.Source != model.SourceCodex || s.Acct == "" ||
+		if s.Acct == "" ||
 			!((s.QuotaSource == "account-api" && s.AcctQ == model.AcctRecorded) ||
-				(s.QuotaSource == "login-timeline" && s.AcctQ == model.AcctTimeline)) {
+				(s.QuotaSource == "login-timeline" && s.Source == model.SourceCodex && s.AcctQ == model.AcctTimeline)) {
 			return OwnerRow{}, false
 		}
 		r.QuotaSource = s.QuotaSource

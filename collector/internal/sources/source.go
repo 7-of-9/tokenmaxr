@@ -84,6 +84,9 @@ type Env struct {
 	// CodexQuota is a collector-owned file holding a fresh Codex rate-limit
 	// reading in Codex's rollout format ("" if none). OS home only.
 	CodexQuota string
+	// AccountQuotas contains independent, account-bound provider snapshots.
+	// Sign-in methods and credentials belong to the provider adapters, not here.
+	AccountQuotas string
 	// Machine is the machine label written into prompt records.
 	Machine string
 	// Attribute returns (acct, acctQ) for an event of provider at ts.

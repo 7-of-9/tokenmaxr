@@ -4,6 +4,8 @@ import type { Provider } from './types'
 
 /** One plan window as the tool last wrote it. */
 export interface LimitRow {
+  /** Client-resolved identity: a verified adapter has named this account ID. */
+  identityAcct?: boolean
   quotaSource?: 'account-api' | 'login-timeline'
   id: string
   provider: Provider
@@ -221,6 +223,7 @@ function orgIdentity(account: Pick<Account, 'orgId' | 'org'>): string {
  */
 export function accountTrackingKey(account: Account): string {
   const email = account.email.trim().toLowerCase()
+  if (account.identity.startsWith(`${account.provider}|account:`)) return JSON.stringify([account.provider, 'account', account.key])
   const base = [account.provider, email ? 'email' : 'account', email || account.key]
   if (!email || !account.orgKind) return JSON.stringify(base)
   const org = namedKind(account.orgKind) ? orgIdentity(account) : ''
@@ -233,6 +236,9 @@ export function accountTrackingKey(account: Account): string {
  * its pre-organisation identity.
  */
 function earlierTrackingKeys(account: Account): string[] {
+  if (account.identity.startsWith(`${account.provider}|account:`) && account.email) {
+    return [JSON.stringify([account.provider, 'email', account.email.trim().toLowerCase()])]
+  }
   if (!account.orgKind) return []
   const email = account.email.trim().toLowerCase()
   if (!email) return [JSON.stringify([account.provider, 'account', account.identity])]
@@ -381,6 +387,7 @@ function toAccount(rows: LimitRow[], now: number): Account {
 
 /** Provider and email (else acct, else source): an account before organisations were reported. */
 function identityOf(row: LimitRow): string {
+  if (row.identityAcct && row.acct) return `${row.provider}|account:${row.acct}`
   return `${row.provider}|${(row.label || '').trim().toLowerCase() || row.acct || row.source}`
 }
 
@@ -433,6 +440,8 @@ function attachLegacy(row: LimitRow, groups: AwareGroup[]): string | undefined {
 
 /** One account per provider, email and organisation, in a fixed provider order so cards never reshuffle as states change. */
 export function buildAccounts(items: LimitRow[], now: number, planOverrides: AccountPlanOverrides = {}): Account[] {
+  const verified = new Set(items.filter(item => item.quotaSource === 'account-api' && item.acct).map(item => `${item.provider}|${item.acct}`))
+  items = items.map(item => verified.has(`${item.provider}|${item.acct}`) ? { ...item, identityAcct: true } : item)
   // A collector cannot label a logged-out account from the current login.
   // Recover its label from another row with the same provider/account hash.
   // Conflicting labels are ambiguous; never guess or merge by matching quota.

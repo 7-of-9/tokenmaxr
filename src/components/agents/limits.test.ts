@@ -36,6 +36,9 @@ const base = { acct: '', acctQ: 'unknown', observedAt: iso(-60_000), label: 'a@e
   const recovered = complete.find(account => account.email === 'old@example.com')!
   assert.equal(recovered.week?.resetsAt, NOW + 24 * H)
   assert.equal(recovered.week?.observedAt, NOW - 1000)
+  const independent = buildAccounts([{ ...meter,label:'same@example.com',quotaSource:'account-api' },{ ...other,label:'same@example.com',quotaSource:'account-api' }],NOW)
+  assert.equal(independent.length,2)
+  assert.notEqual(accountTrackingKey(independent[0]),accountTrackingKey(independent[1]))
 }
 
 // A stored "paused" from an older collector is not a block: Claude only marks which limit it leads with.

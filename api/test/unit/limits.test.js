@@ -12,8 +12,11 @@ test('Codex quota provenance survives validation and prevents old collectors ove
   const codex = snap({ provider: 'openai', source: 'codex', acctQ: 'recorded', quotaSource: 'account-api' })
   assert.equal(validateLimit(codex, NOW).value.quotaSource, 'account-api')
   assert.equal(validateLimit({ ...codex, quotaSource: 'login-timeline', acctQ: 'timeline' }, NOW).ok, true)
-  for (const invalid of [{ acct: '' }, { quotaSource: 'thread' }, { acctQ: 'inferred' }, { source: 'claude-code', provider: 'anthropic' }]) {
+  for (const invalid of [{ acct: '' }, { quotaSource: 'thread' }, { acctQ: 'inferred' }, { quotaSource:'login-timeline',source: 'claude-code', provider: 'anthropic',acctQ:'timeline' }]) {
     assert.equal(validateLimit({ ...codex, ...invalid }, NOW).ok, false)
+  }
+  for (const [provider,source] of [['anthropic','claude-code'],['xai','grok-cli'],['cursor','cursor'],['google','gemini-cli']]) {
+    assert.equal(validateLimit({...codex,provider,source},NOW).value.quotaSource,'account-api')
   }
   const store = memoryStore()
   const safe = validateLimit(codex, NOW).value

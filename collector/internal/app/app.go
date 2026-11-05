@@ -195,14 +195,17 @@ func hashFn(k []byte) func(provider, nativeID string) string {
 func (a *App) envFor(k []byte, cfg *store.Config, st *store.State, h homes.Home, ix *evidence.Index) *sources.Env {
 	key := h.Key()
 	codexQuota := ""
+	accountQuotas := ""
 	if h.Kind == homes.KindOS {
 		codexQuota = paths.CodexQuota(a.Home)
+		accountQuotas = filepath.Join(paths.Quota(a.Home), "accounts")
 	}
 	return &sources.Env{
-		Home:       h.Path,
-		CodexHome:  h.CodexHome(a.CodexHome),
-		CodexQuota: codexQuota,
-		Machine:    cfg.MachineLabel,
+		Home:          h.Path,
+		CodexHome:     h.CodexHome(a.CodexHome),
+		CodexQuota:    codexQuota,
+		AccountQuotas: accountQuotas,
+		Machine:       cfg.MachineLabel,
 		Attribute: func(provider string, ts time.Time, sessionID string, hint sources.Hint) (string, string) {
 			return accounts.Resolve(st.Accounts, ix, key, provider, ts, sessionID, hint)
 		},

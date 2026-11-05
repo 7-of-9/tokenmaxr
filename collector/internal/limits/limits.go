@@ -37,6 +37,7 @@ func Collect(env *sources.Env) []model.LimitSnapshot {
 	out = append(out, claude...)
 	out = append(out, codexLimits(env)...)
 	out = append(out, grokLimits(env)...)
+	out = append(out, accountQuotas(env)...)
 	return applyAccounts(env, out, login)
 }
 
