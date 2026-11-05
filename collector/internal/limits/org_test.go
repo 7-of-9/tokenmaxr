@@ -212,7 +212,9 @@ func TestCodexResetsInSeconds(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rollout-2026-09-19T19-10-05-x.jsonl"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := Collect(&sources.Env{Home: home})
+	got := Collect(&sources.Env{Home: home, Attribute: func(string, time.Time, string, sources.Hint) (string, string) {
+		return "a_user", model.AcctTimeline
+	}})
 	if len(got) != 1 || got[0].ResetsAt == nil || !got[0].ResetsAt.Equal(time.Date(2026, 9, 19, 20, 10, 5, 0, time.UTC)) {
 		t.Fatalf("%+v", got)
 	}

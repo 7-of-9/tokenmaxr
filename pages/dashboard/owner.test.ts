@@ -107,6 +107,10 @@ test('merged as the API merges: one row per id, the newest reading wins, the API
   const session = row({ id: 'c'.repeat(32), window: 'session' })
   const merged = mergeLimitRows([[codex, older], [newer, session], [same]])
   assert.deepEqual(merged.map(r => [r.id[0], r.usedPercent]), [['c', undefined], ['a', 60], ['b', undefined]])
+  const safe: LimitRow = { ...codex, quotaSource: 'account-api', acctQ: 'recorded', acct: 'a_0123456789abcdef', usedPercent: 1 }
+  const legacy = { ...codex, usedPercent: 90, observedAt: '2026-10-01T11:00:00.000Z' }
+  assert.deepEqual(mergeLimitRows([[legacy], [safe]]), [safe])
+  assert.deepEqual(mergeLimitRows([[safe], [legacy]]), [safe])
 })
 
 // ---- Unlocking ----

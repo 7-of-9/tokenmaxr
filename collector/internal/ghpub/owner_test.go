@@ -224,6 +224,15 @@ func TestOwnerRowsMatchTheServersValidation(t *testing.T) {
 	}
 	now := at("2026-10-01T12:00:00Z")
 	snaps := ownerFixtures()
+	for i, provenance := range []string{"account-api", "login-timeline", "thread"} {
+		s := snaps[0]
+		s.ID = strings.Repeat([]string{"da", "db", "dc"}[i], 16)
+		s.Source, s.Provider, s.QuotaSource = "codex", "openai", provenance
+		if provenance == "login-timeline" {
+			s.AcctQ = "timeline"
+		}
+		snaps = append(snaps, s)
+	}
 	in, _ := json.Marshal(snaps) // as the collector uploads them
 	script := `import { validateLimit } from ` + jsString("file:///"+filepath.ToSlash(validate)) + `
 let s = ''

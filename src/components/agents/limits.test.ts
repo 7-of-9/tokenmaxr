@@ -5,8 +5,38 @@ import { accountName, accountTrackingKey, buildAccounts, countdown, countdownPar
 const NOW = Date.parse('2026-10-01T12:00:00Z')
 const iso = (ms: number) => new Date(NOW + ms).toISOString()
 const H = 3_600_000
-
 const base = { acct: '', acctQ: 'unknown', observedAt: iso(-60_000), label: 'a@example.com' } as const
+
+// A login switch removes the old login's email from fresh meter rows, but
+// the persisted plan row still maps its account hash to the correct email.
+{
+  const old: LimitRow = { ...base, id: 'old-plan', provider: 'openai', source: 'codex', acct: 'old', window: 'plan', label: 'old@example.com', observedAt: iso(-24 * H) }
+  const meter: LimitRow = { ...old, id: 'old-meter', label: undefined, window: 'week', plan: 'Pro', usedPercent: 25, resetsAt: iso(24 * H), observedAt: iso(-1000) }
+  const other: LimitRow = { ...meter, id: 'new-meter', acct: 'new', label: 'new@example.com' }
+  const accounts = buildAccounts([old, meter, other], NOW)
+  assert.equal(accounts.length, 2)
+  const restored = accounts.find(a => a.email === 'old@example.com')!
+  assert.equal(restored.week?.used, 25)
+  assert.equal(restored.plan, 'Pro')
+  assert.equal(restored.observedAt, NOW - 1000)
+  assert.equal(meter.label, undefined, 'input rows must not be mutated')
+  // Same quota is not identity; missing hashes and conflicting labels stay separate.
+  assert.equal(buildAccounts([old, { ...meter, acct: '' }], NOW).length, 2)
+  assert.equal(buildAccounts([old, { ...old, id: 'conflict', label: 'different@example.com' }, meter], NOW).length, 3)
+  assert.equal(buildAccounts([old, { ...meter, provider: 'xai', source: 'grok-cli' }], NOW).length, 2)
+  const migrated = buildAccounts([old, meter, { ...other, quotaSource: 'account-api' }], NOW)
+  assert.equal(migrated.length, 2)
+  assert.equal(migrated.find(a => a.email === 'old@example.com')?.week, undefined, 'legacy contaminated quota must not be relabelled as valid')
+  assert.equal(migrated.find(a => a.email === 'new@example.com')?.week?.used, 25)
+  const refreshed = buildAccounts([old, { ...meter, quotaSource: 'login-timeline' }, { ...other, quotaSource: 'account-api' }], NOW)
+  assert.equal(refreshed.find(a => a.email === 'old@example.com')?.week?.used, 25)
+  const otherProviders = mockLimits(NOW).filter(row => row.provider !== 'openai')
+  const complete = buildAccounts([...otherProviders, old, { ...meter, quotaSource: 'login-timeline' }, { ...other, quotaSource: 'account-api' }], NOW)
+  assert.deepEqual(complete.filter(account => account.provider !== 'openai'), buildAccounts(otherProviders, NOW), 'Codex recovery must preserve every other provider')
+  const recovered = complete.find(account => account.email === 'old@example.com')!
+  assert.equal(recovered.week?.resetsAt, NOW + 24 * H)
+  assert.equal(recovered.week?.observedAt, NOW - 1000)
+}
 
 // A stored "paused" from an older collector is not a block: Claude only marks which limit it leads with.
 {

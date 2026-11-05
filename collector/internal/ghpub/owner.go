@@ -76,8 +76,9 @@ type OwnerRow struct {
 	UsedPercent *float64 `json:"usedPercent,omitempty"`
 	// Org is the hashed organisation and OrgKind its kind ("team",
 	// "enterprise", "personal"); absent when unknown.
-	Org     string `json:"org,omitempty"`
-	OrgKind string `json:"orgKind,omitempty"`
+	Org         string `json:"org,omitempty"`
+	OrgKind     string `json:"orgKind,omitempty"`
+	QuotaSource string `json:"quotaSource,omitempty"`
 }
 
 // sourceProvider, acctQualities and the patterns below are validate.js's.
@@ -183,6 +184,14 @@ func ownerRow(s model.LimitSnapshot, now time.Time) (OwnerRow, bool) {
 		return r, false
 	}
 	r.Org, r.OrgKind = s.Org, s.OrgKind
+	if s.QuotaSource != "" {
+		if s.Source != model.SourceCodex || s.Acct == "" ||
+			!((s.QuotaSource == "account-api" && s.AcctQ == model.AcctRecorded) ||
+				(s.QuotaSource == "login-timeline" && s.AcctQ == model.AcctTimeline)) {
+			return OwnerRow{}, false
+		}
+		r.QuotaSource = s.QuotaSource
+	}
 	if !field(s.Status, 32) || s.Status != "" && !windowRE.MatchString(s.Status) {
 		return r, false
 	}

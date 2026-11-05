@@ -113,12 +113,15 @@ const WINDOW_ORDER = ['session', 'week', 'extra', 'plan']
 /**
  * Every machine's rows as GET /api/limits serves them: one row per id, the newest reading winning (an equal or
  * older one never replaces it), in the API's order (api/src/lib/limits.js readLimits).
+ * Corrected Codex quota attribution takes precedence over legacy thread-owner readings.
  */
 export function mergeLimitRows(lists: LimitRow[][]): LimitRow[] {
+  const attributed = (row?: LimitRow) => row?.source === 'codex' && !!row.quotaSource
   const byId = new Map<string, LimitRow>()
   for (const row of lists.flat()) {
     const held = byId.get(row.id)
-    if (!held?.observedAt || held.observedAt < row.observedAt) byId.set(row.id, row)
+    if (!held || (attributed(row) && !attributed(held)) ||
+      (attributed(row) === attributed(held) && held.observedAt < row.observedAt)) byId.set(row.id, row)
   }
   const rank = (list: string[], value: string) => {
     const i = list.indexOf(value)

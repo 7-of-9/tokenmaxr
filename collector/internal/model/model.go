@@ -208,15 +208,17 @@ type TZInfo struct {
 // merged by max: a window resets and the percent falls. Name is an
 // organization or plan label, never an email or a raw account id.
 type LimitSnapshot struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Source   string `json:"source"`
-	Acct     string `json:"acct"`
-	AcctQ    string `json:"acctQ"`
-	Plan     string `json:"plan,omitempty"`
-	Window   string `json:"window"`
-	Scope    string `json:"scope,omitempty"`
-	Name     string `json:"name,omitempty"`
+	// QuotaSource distinguishes safe Codex quota attribution from legacy thread-owner readings.
+	QuotaSource string `json:"quotaSource,omitempty"`
+	ID          string `json:"id"`
+	Provider    string `json:"provider"`
+	Source      string `json:"source"`
+	Acct        string `json:"acct"`
+	AcctQ       string `json:"acctQ"`
+	Plan        string `json:"plan,omitempty"`
+	Window      string `json:"window"`
+	Scope       string `json:"scope,omitempty"`
+	Name        string `json:"name,omitempty"`
 	// Label is the account email. Owner-only: GET /api/limits returns it, public usage does not.
 	Label string `json:"label,omitempty"`
 	// Org is the hashed organisation the meter belongs to (Claude: one

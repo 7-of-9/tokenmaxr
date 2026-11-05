@@ -18,6 +18,7 @@ const PRIVATE = { 'Cache-Control': 'private, no-store' }
 const PROVIDER_ORDER = ['anthropic', 'openai', 'xai', 'cursor', 'google']
 const WINDOW_ORDER = ['session', 'week', 'extra', 'plan']
 const RETRIES = 6
+const attributedCodex = item => item?.source === 'codex' && !!item.quotaSource
 export const STALE_MS = 14 * 24 * 3600 * 1000
 
 function authorise(req, env) {
@@ -28,6 +29,8 @@ function authorise(req, env) {
 }
 
 // upsertLimits writes each snapshot when it is newer than the stored one.
+// Corrected Codex attribution supersedes legacy thread-owner readings even
+// when older, and legacy writers cannot downgrade it again.
 // The write is conditional on the row read (create, or replace at its etag),
 // so of two writers racing on one id the newer observedAt always ends up
 // stored. A batch holding one id twice keeps its newest. An id that could not
@@ -38,13 +41,20 @@ export async function upsertLimits(store, lim, items) {
   const byId = new Map()
   for (const item of items) {
     const held = byId.get(item.id)
-    if (!held || held.observedAt < item.observedAt) byId.set(item.id, item)
+    if (!held || (attributedCodex(item) && !attributedCodex(held)) ||
+      (attributedCodex(item) === attributedCodex(held) && held.observedAt < item.observedAt)) byId.set(item.id, item)
   }
   await Promise.all([...byId.values()].map(async (item) => {
     try {
       for (let i = 0; i < RETRIES; i++) {
         const row = await lim(() => t.get(PK, item.id))
-        if (row?.observedAt && row.observedAt >= item.observedAt) return
+        // Older collectors can keep publishing a resumed thread's new quota
+        // under its old creator. Never let them replace a corrected reading.
+        let previous
+        try { previous = JSON.parse(row?.body) } catch { /* replace corrupt data */ }
+        if (attributedCodex(previous) && !attributedCodex(item)) return
+        const correctingLegacy = attributedCodex(item) && !attributedCodex(previous)
+        if (!correctingLegacy && row?.observedAt && row.observedAt >= item.observedAt) return
         const entity = {
           partitionKey: PK,
           rowKey: item.id,

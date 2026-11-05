@@ -713,11 +713,10 @@ func codexFile(env *sources.Env, path string) []model.LimitSnapshot {
 	if err != nil {
 		return nil
 	}
-	var sessionID, creator string
+	var creator string
 	for _, line := range bytes.Split(head, []byte("\n")) {
 		var l codexLine
 		if jsonl.Decode(line, &l) && l.Type == "session_meta" {
-			sessionID = l.Payload.ID
 			creator = l.Payload.CreatorAccountID
 			break
 		}
@@ -751,14 +750,28 @@ func codexFile(env *sources.Env, path string) []model.LimitSnapshot {
 		scope = sanitize(*rl.LimitName)
 	}
 	acct, q := "", model.AcctUnknown
-	if env.Attribute != nil {
-		hint := jsonl.HintFor(env, model.ProviderOpenAI, sources.HintAccount, creator, foundTS)
-		acct, q = env.Attribute(model.ProviderOpenAI, foundTS, sessionID, hint)
-		if q == "" {
-			q = model.AcctUnknown
+	if env.CodexQuota != "" && filepath.Clean(path) == filepath.Clean(env.CodexQuota) {
+		// Only our account/rateLimits/read response names the quota owner.
+		// A normal rollout's creator names the thread's ORIGINAL account.
+		if creator != "" && env.HashID != nil {
+			acct, q = env.HashID(model.ProviderOpenAI, creator), model.AcctRecorded
+		}
+	} else if env.Attribute != nil {
+		// No thread id or creator hint: both survive account switches. Only
+		// an observed login timeline is strong enough for a rollout meter.
+		acct, q = env.Attribute(model.ProviderOpenAI, foundTS, "", sources.Hint{})
+		if q != model.AcctTimeline {
+			return nil
 		}
 	}
+	if acct == "" {
+		return nil
+	}
 	primaryName := ""
+	quotaSource := "login-timeline"
+	if q == model.AcctRecorded {
+		quotaSource = "account-api"
+	}
 	if rl.Primary != nil {
 		primaryName = minutesWindow(rl.Primary.WindowMinutes)
 	}
@@ -789,6 +802,7 @@ func codexFile(env *sources.Env, path string) []model.LimitSnapshot {
 		used := w.UsedPercent
 		out = append(out, model.LimitSnapshot{
 			ID:          snapshotID(model.ProviderOpenAI, model.SourceCodex, acct, window, sc),
+			QuotaSource: quotaSource,
 			Provider:    model.ProviderOpenAI,
 			Source:      model.SourceCodex,
 			Acct:        acct,

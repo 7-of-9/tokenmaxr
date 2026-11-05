@@ -350,6 +350,12 @@ export const validateLimit = wrap((x, now) => {
   if (!out.label) delete out.label
   if (org) out.org = org
   if (orgKind) out.orgKind = orgKind
+  if (x.quotaSource != null) {
+    if (source !== 'codex' || !acct ||
+      !((x.quotaSource === 'account-api' && acctQ === 'recorded') ||
+        (x.quotaSource === 'login-timeline' && acctQ === 'timeline'))) fail('quotaSource requires matching Codex account attribution')
+    out.quotaSource = x.quotaSource
+  }
   return out
 })
 

@@ -4,6 +4,7 @@ import type { Provider } from './types'
 
 /** One plan window as the tool last wrote it. */
 export interface LimitRow {
+  quotaSource?: 'account-api' | 'login-timeline'
   id: string
   provider: Provider
   source: string
@@ -432,6 +433,31 @@ function attachLegacy(row: LimitRow, groups: AwareGroup[]): string | undefined {
 
 /** One account per provider, email and organisation, in a fixed provider order so cards never reshuffle as states change. */
 export function buildAccounts(items: LimitRow[], now: number, planOverrides: AccountPlanOverrides = {}): Account[] {
+  // A collector cannot label a logged-out account from the current login.
+  // Recover its label from another row with the same provider/account hash.
+  // Conflicting labels are ambiguous; never guess or merge by matching quota.
+  const labels = new Map<string, Map<string, string>>()
+  for (const item of items) {
+    const email = item.label?.trim()
+    if (!item.acct || !email) continue
+    const key = `${item.provider}|${item.acct}`
+    const known = labels.get(key) ?? new Map<string, string>()
+    known.set(email.toLowerCase(), email)
+    labels.set(key, known)
+  }
+  items = items.map(item => {
+    if (item.label?.trim() || !item.acct) return item
+    const known = labels.get(`${item.provider}|${item.acct}`)
+    return known?.size === 1 ? { ...item, label: [...known.values()][0] } : item
+  })
+  // Once an updated collector is present, legacy Codex meters cannot be
+  // trusted: they may contain another login's quota from a resumed thread.
+  // Keep their account identities, but require a newly attributed meter.
+  if (items.some(item => item.source === 'codex' && item.quotaSource)) {
+    items = items.map(item => item.source === 'codex' && !item.quotaSource && item.window !== 'plan'
+      ? { ...item, window: 'plan', plan: undefined, usedPercent: undefined, resetsAt: null, status: undefined }
+      : item)
+  }
   const groups = new Map<string, LimitRow[]>()
   const add = (key: string, row: LimitRow) => {
     const list = groups.get(key)

@@ -8,6 +8,28 @@ import { principal } from '../fixtures.js'
 const NOW = new Date('2026-10-01T12:00:00Z')
 const ID = 'a'.repeat(32)
 
+test('Codex quota provenance survives validation and prevents old collectors overwriting corrected rows', async () => {
+  const codex = snap({ provider: 'openai', source: 'codex', acctQ: 'recorded', quotaSource: 'account-api' })
+  assert.equal(validateLimit(codex, NOW).value.quotaSource, 'account-api')
+  assert.equal(validateLimit({ ...codex, quotaSource: 'login-timeline', acctQ: 'timeline' }, NOW).ok, true)
+  for (const invalid of [{ acct: '' }, { quotaSource: 'thread' }, { acctQ: 'inferred' }, { source: 'claude-code', provider: 'anthropic' }]) {
+    assert.equal(validateLimit({ ...codex, ...invalid }, NOW).ok, false)
+  }
+  const store = memoryStore()
+  const safe = validateLimit(codex, NOW).value
+  await upsertLimits(store, fn => fn(), [safe])
+  const legacy = validateLimit({ ...codex, quotaSource: undefined, usedPercent: 99, observedAt: NOW.toISOString() }, NOW).value
+  await upsertLimits(store, fn => fn(), [legacy])
+  assert.deepEqual(await readLimits(store, NOW), [safe])
+  const batch = memoryStore()
+  await upsertLimits(batch, fn => fn(), [safe, legacy])
+  assert.deepEqual(await readLimits(batch, NOW), [safe])
+  const upgrade = memoryStore()
+  await upsertLimits(upgrade, fn => fn(), [legacy])
+  await upsertLimits(upgrade, fn => fn(), [safe])
+  assert.deepEqual(await readLimits(upgrade, NOW), [safe])
+})
+
 function snap(over = {}) {
   return {
     id: ID,

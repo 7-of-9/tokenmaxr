@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/7-of-9/tokenmaxr/collector/internal/accounts"
 )
 
 var (
@@ -246,6 +248,10 @@ func RefreshGrok(ctx context.Context, userHome, workDir string) error {
 // writes them to outPath as a two-line Codex rollout (session_meta, then a
 // token_count with rate_limits), stamped now.
 func RefreshCodex(ctx context.Context, userHome, codexHome, outPath string, now time.Time) error {
+	before, ok := accounts.CodexAccount(codexHome)
+	if !ok {
+		return ErrNoAccount
+	}
 	exe := findCodex(userHome)
 	if exe == "" {
 		return ErrNoClient
@@ -271,6 +277,13 @@ func RefreshCodex(ctx context.Context, userHome, codexHome, outPath string, now 
 	raw, err := s.rpc(ctx, what, false, 2, "account/rateLimits/read", map[string]any{"excludeResetCreditDetails": true})
 	if err != nil {
 		return err
+	}
+	var identity struct {
+		AccountID string `json:"accountId"`
+	}
+	after, ok := accounts.CodexAccount(codexHome)
+	if json.Unmarshal(raw, &identity) != nil || !ok || before.NativeID != after.NativeID || identity.AccountID != before.NativeID {
+		return errors.New("Codex quota account changed or did not match the response; retrying later")
 	}
 	body, err := CodexRollout(raw, now)
 	if err != nil {
@@ -302,9 +315,9 @@ func toRolloutWindow(w *codexAppWindow) *rolloutWindow {
 	return out
 }
 
-// CodexRollout converts an account/rateLimits/read result into the rollout
-// lines Codex itself writes, so internal/limits attributes and names the
-// meter exactly as it does for Codex's own session files.
+// CodexRollout converts an account/rateLimits/read result into rollout lines.
+// Only this collector-owned file's creator_account_id identifies the quota
+// account; a real session file's creator identifies the original thread owner.
 func CodexRollout(raw json.RawMessage, now time.Time) ([]byte, error) {
 	var r struct {
 		AccountID  *string `json:"accountId"`
@@ -318,6 +331,9 @@ func CodexRollout(raw json.RawMessage, now time.Time) ([]byte, error) {
 	}
 	if json.Unmarshal(raw, &r) != nil || r.RateLimits == nil {
 		return nil, errors.New("Codex quota read returned no rate limits")
+	}
+	if r.AccountID == nil || *r.AccountID == "" {
+		return nil, errors.New("Codex quota read returned no account identity")
 	}
 	primary, secondary := toRolloutWindow(r.RateLimits.Primary), toRolloutWindow(r.RateLimits.Secondary)
 	if primary == nil && secondary == nil {

@@ -88,8 +88,8 @@ func TestCodexTailAndDedupe(t *testing.T) {
 	tailBytes = 500
 	t.Cleanup(func() { tailBytes = prev })
 	env := &sources.Env{Home: home, Attribute: func(provider string, ts time.Time, sessionID string, hint sources.Hint) (string, string) {
-		if sessionID == "11111111-2222-3333-4444-555555555555" {
-			return "a_2222222222222222", model.AcctInferred
+		if sessionID == "" && hint.IsZero() {
+			return "a_2222222222222222", model.AcctTimeline
 		}
 		return "", model.AcctUnknown
 	}}
