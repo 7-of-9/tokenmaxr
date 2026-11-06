@@ -435,6 +435,29 @@ func TestDryRunMergesAndBuckets(t *testing.T) {
 	}
 }
 
+func TestMergeUsagePrefersEventTimeInEitherArrivalOrder(t *testing.T) {
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	event := model.UsageEvent{ID: "same", PV: 3, TS: at, TSQ: "event", TZOffsetMin: 420, Workspace: "/actual", Tokens: model.Tokens{In: 10}}
+	for _, quality := range []string{"", "session-start"} {
+		fallback := model.UsageEvent{ID: "same", PV: 3, TS: at.Add(-24 * time.Hour), TSQ: quality, Workspace: "/old", Tokens: model.Tokens{Out: 20}}
+		for _, pair := range [][2]model.UsageEvent{{event, fallback}, {fallback, event}} {
+			have := pair[0]
+			MergeUsage(&have, pair[1])
+			if have.TSQ != "event" || !have.TS.Equal(at) || have.TZOffsetMin != 420 || have.Workspace != "/actual" || have.In != 10 || have.Out != 20 {
+				t.Fatalf("merge lost actual message time or token maximum: %+v", have)
+			}
+		}
+		fallback.PV = 2
+		for _, pair := range [][2]model.UsageEvent{{event, fallback}, {fallback, event}} {
+			have := pair[0]
+			MergeUsage(&have, pair[1])
+			if have.TSQ != "event" || !have.TS.Equal(at) || have.PV != 3 {
+				t.Fatalf("older parser changed timing evidence: %+v", have)
+			}
+		}
+	}
+}
+
 type batchSource struct{ b sources.Batch }
 
 func (s *batchSource) Name() string                         { return "fake" }

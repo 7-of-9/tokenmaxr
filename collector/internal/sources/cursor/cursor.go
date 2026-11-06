@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	pv = 2 // Re-read existing bubbles to preserve timestamp provenance.
+	pv = 3 // Re-read bubbles after correcting same-batch timestamp merges.
 
 	// Provider and Source are both "cursor" (SPEC "Providers"): Cursor is
 	// its own provider with its own model catalogue.

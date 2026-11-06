@@ -183,14 +183,26 @@ func MergeUsage(have *model.UsageEvent, e model.UsageEvent) {
 		return
 	}
 	have.Tokens.Max(e.Tokens)
-	earlier := e.TS.Before(have.TS)
-	if earlier {
+	timingRank := func(q string) int {
+		switch q {
+		case "event":
+			return 2
+		case "session-start":
+			return 1
+		default:
+			return 0
+		}
+	}
+	hr, er := timingRank(have.TSQ), timingRank(e.TSQ)
+	useTime := er > hr || (er == hr && e.TS.Before(have.TS))
+	if useTime {
 		have.TS, have.TZOffsetMin = e.TS, e.TZOffsetMin
+		have.TSQ = e.TSQ
 	}
 	if have.Model == "" {
 		have.Model = e.Model
 	}
-	if e.Workspace != "" && (have.Workspace == "" || earlier) {
+	if e.Workspace != "" && (have.Workspace == "" || useTime) {
 		have.Workspace, have.WS = e.Workspace, e.WS
 	}
 }
