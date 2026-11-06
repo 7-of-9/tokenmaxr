@@ -67,8 +67,8 @@ export function useProjectUsage(accounts: Account[], mock: boolean, reloadKey: n
     for (const account of accounts) {
       const meterId = account.projectMeterId ?? account.week?.key
       if (!meterId) continue
-      const range = Object.hasOwn(ranges, account.key) ? ranges[account.key] : DEFAULT_PROJECT_RANGE
       const resetsAt = account.week?.resetsAt ?? 0
+      const range = Object.hasOwn(ranges, account.key) ? ranges[account.key] : resetsAt ? DEFAULT_PROJECT_RANGE : '7d'
       targets.push({ accountKey: account.key, meterId, range, resetsAt,
         cacheKey: JSON.stringify([meterId, range, range === 'reset' ? resetsAt : 0]) })
     }
@@ -162,7 +162,7 @@ export function useProjectUsage(accounts: Account[], mock: boolean, reloadKey: n
         const target = targets.find(t => t.accountKey === accountKey)
         return target && loads.epoch === epoch ? loads.byMeter[target.cacheKey] : undefined
       },
-      range: (accountKey: string) => Object.hasOwn(ranges, accountKey) ? ranges[accountKey] : DEFAULT_PROJECT_RANGE,
+      range: (accountKey: string) => targets.find(t => t.accountKey === accountKey)?.range ?? DEFAULT_PROJECT_RANGE,
       select: (accountKey: string, range: ProjectRange) => {
         if (!isProjectRange(range)) return
         const next = { ...ranges, [accountKey]: range }

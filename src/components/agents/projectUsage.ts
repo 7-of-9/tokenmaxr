@@ -1,10 +1,11 @@
 export const PROJECT_RANGES = [
+  ['reset', 'Since weekly reset'],
   ['30m', 'Last 30 minutes'], ['1h', 'Last 1 hour'], ['3h', 'Last 3 hours'],
   ['6h', 'Last 6 hours'], ['12h', 'Last 12 hours'], ['24h', 'Last 24 hours'],
-  ['3d', 'Last 3 days'], ['7d', 'Last 7 days'], ['reset', 'Since weekly reset'],
+  ['3d', 'Last 3 days'], ['7d', 'Last 7 days'],
 ] as const
 export type ProjectRange = typeof PROJECT_RANGES[number][0]
-export const DEFAULT_PROJECT_RANGE: ProjectRange = '7d'
+export const DEFAULT_PROJECT_RANGE: ProjectRange = 'reset'
 export function isProjectRange(value: unknown): value is ProjectRange {
   return PROJECT_RANGES.some(([range]) => range === value)
 }
