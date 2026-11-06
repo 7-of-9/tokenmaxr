@@ -111,17 +111,19 @@ func (t Tokens) Effective() float64 {
 }
 
 type UsageEvent struct {
-	ID          string    `json:"id"`
-	Provider    string    `json:"provider"`
-	Source      string    `json:"source"`
-	TS          time.Time `json:"ts"`
-	TZOffsetMin int       `json:"tzOffsetMin"`
-	Model       string    `json:"model"`
-	Acct        string    `json:"acct"`
-	AcctQ       string    `json:"acctQ"`
-	Q           string    `json:"q"`
-	PV          int       `json:"pv"`
-	Session     string    `json:"session"`
+	ID       string    `json:"id"`
+	Provider string    `json:"provider"`
+	Source   string    `json:"source"`
+	TS       time.Time `json:"ts"`
+	// TSQ distinguishes a message's own time from a conversation-start fallback.
+	TSQ         string `json:"tsQ,omitempty"`
+	TZOffsetMin int    `json:"tzOffsetMin"`
+	Model       string `json:"model"`
+	Acct        string `json:"acct"`
+	AcctQ       string `json:"acctQ"`
+	Q           string `json:"q"`
+	PV          int    `json:"pv"`
+	Session     string `json:"session"`
 	// Workspace is the same git-root folder a prompt for this cwd stores.
 	// It stays off the wire: public usage rows carry no project.
 	Workspace string `json:"-"`

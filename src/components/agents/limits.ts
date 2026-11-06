@@ -79,6 +79,8 @@ export type AccountState = 'ready' | 'blocked' | 'unknown'
 
 export interface Account {
   key: string
+  /** Any reliably attributed snapshot can identify project usage, even without a quota. */
+  projectMeterId?: string
   provider: Provider
   tool: string
   email: string
@@ -366,6 +368,8 @@ function toAccount(rows: LimitRow[], now: number): Account {
 
   return {
     key: groupKey(idRow),
+    projectMeterId: rows.find(r => r.id === week?.key && ['recorded', 'session', 'timeline', 'bounded'].includes(r.acctQ))?.id ??
+      newestRow(rows.filter(r => r.acct && ['recorded', 'session', 'timeline', 'bounded'].includes(r.acctQ)))?.id ?? head.id,
     provider: head.provider,
     tool: TOOL_LABEL[head.source] ?? head.source,
     email,

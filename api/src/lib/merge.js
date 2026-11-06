@@ -80,6 +80,14 @@ function mergeUsage(existing, incoming) {
     out = { ...existing }
     for (const f of TOKEN_FIELDS) out[f] = Math.max(existing[f] ?? 0, incoming[f] ?? 0)
     out.ts = minTs(existing.ts, incoming.ts)
+    // Timing quality is separate from token quality. An actual message time
+    // wins over a conversation-start fallback, whichever machine arrives first.
+    const timingRank = e => e.tsQ === 'event' ? 2 : e.tsQ === 'session-start' ? 1 : 0
+    if (timingRank(existing) !== timingRank(incoming)) {
+      const timed = timingRank(existing) > timingRank(incoming) ? existing : incoming
+      out.ts = timed.ts
+      out.tsQ = timed.tsQ
+    }
     if (existing.q === 'exact' || incoming.q === 'exact') out.q = 'exact'
     // Same pv, better evidence of the client: the usage moves channel and
     // reporter with its activity and prompt (mergeActivity), in any order.
@@ -143,7 +151,7 @@ function mergeActivity(a, b) {
 
 // Fields persisted in the events table (besides partition/row keys).
 const STORED = {
-  usage: ['kind', 'provider', 'source', 'ts', 'tzOffsetMin', 'model', 'acct', 'acctQ', 'q', 'pv', 'session', ...TOKEN_FIELDS, 'machine', 'cc', 'ws'],
+  usage: ['kind', 'provider', 'source', 'ts', 'tsQ', 'tzOffsetMin', 'model', 'acct', 'acctQ', 'q', 'pv', 'session', ...TOKEN_FIELDS, 'machine', 'cc', 'ws'],
   activity: ['kind', 'provider', 'source', 'ts', 'tzOffsetMin', 'acct', 'acctQ', 'session', 'hasUsage', 'machine', 'cc', 'ws'],
 }
 

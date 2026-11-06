@@ -8,6 +8,8 @@ import { upsertLimits } from '../../src/lib/limits.js'
 import { upsertPrompt } from '../../src/lib/ingest.js'
 import { addMonths } from '../../src/lib/months.js'
 import { localDate } from '../../src/lib/validate.js'
+import { validateUsage } from '../../src/lib/validate.js'
+import { mergeEvent, rowToEvent, storedFields } from '../../src/lib/merge.js'
 import { K, ACCT, SESSION, principal, usage, activity, prompt } from '../fixtures.js'
 import { createHarness } from '../harness.js'
 
@@ -159,7 +161,7 @@ test('the HTTP route accepts a persistent owner session and rejects it after log
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => new Promise(resolve => server.close(resolve)))
   const origin = `http://127.0.0.1:${server.address().port}`
-  const path = origin + `/api/limits/${ID}/projects`
+  const path = origin + `/api/limits/${ID}/projects?range=30m`
   assert.equal((await fetch(path)).status, 401)
   const session = await fetch(origin + '/api/session', { method: 'POST', headers: OWNER })
   assert.equal(session.status, 200)
@@ -167,7 +169,97 @@ test('the HTTP route accepts a persistent owner session and rejects it after log
   const response = await fetch(path, { headers: { Cookie: cookie } })
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
-  assert.equal((await response.json()).available, true)
+  const body = await response.json()
+  assert.equal(body.available, true)
+  assert.equal(body.range, '30m')
+  assert.equal(Date.parse(body.until) - Date.parse(body.since), 30 * 60_000)
   await fetch(origin + '/api/session/logout', { headers: { Cookie: cookie }, redirect: 'manual' })
   assert.equal((await fetch(path, { headers: { Cookie: cookie } })).status, 401)
+})
+
+test('every rolling preset filters exact boundaries across local dates and all five providers without resets', async () => {
+  const ranges = { '30m': 30, '1h': 60, '3h': 180, '6h': 360, '12h': 720, '24h': 1440, '3d': 4320, '7d': 10080 }
+  for (const [provider, source] of [['anthropic', 'claude-code'], ['openai', 'codex'], ['xai', 'grok-cli'], ['cursor', 'cursor'], ['google', 'gemini-cli']]) {
+    const f = await fixture({ provider, source, window: 'plan', resetsAt: null })
+    for (const [range, minutes] of Object.entries(ranges)) {
+      const cutoff = NOW.getTime() - minutes * 60_000
+      // Isolate this preset's records by using an independent account.
+      const acct = 'a_' + String(minutes).padStart(16, '0')
+      await upsertLimits(f.store, x => x(), [meter({ provider, source, acct, window: 'plan', resetsAt: null,
+        observedAt: new Date(NOW.getTime() + minutes).toISOString() })])
+      for (const [key, at, amount, tz] of [
+        ['before', cutoff - 1, 1000, -720], ['start', cutoff, 100, 840],
+        ['last', NOW.getTime() - 1, 200, -720], ['end', NOW.getTime(), 2000, 0],
+      ]) {
+        const e = usage(`${provider}-${range}-${key}`, { provider, source, acct, ts: new Date(at).toISOString(), tsQ: 'event',
+          tzOffsetMin: tz, in: amount, out: 0, cacheR: 0, cacheW: 0 })
+        await f.event(e)
+        if (key === 'last') await f.event(e, new Date(at).toISOString().slice(0, 10)) // A second machine's local date.
+      }
+      const b = (await f.read({ query: { range } })).jsonBody
+      assert.equal(b.available, true, `${provider}/${range}`)
+      assert.equal(b.totals.tokens, 300, `${provider}/${range}`)
+      assert.equal(b.projects[0].percent, 100)
+      assert.equal(b.since, new Date(cutoff).toISOString())
+      assert.equal(b.until, NOW.toISOString())
+      assert.equal(b.resetsAt, null)
+    }
+  }
+})
+
+test('shorter ranges recalculate project shares, include unassigned tokens and cross resets independently', async () => {
+  const f = await fixture({ resetsAt: new Date(NOW.getTime() + 6 * 86_400_000).toISOString() })
+  await f.store.table('accounts').create({ partitionKey: 'fleet', rowKey: 'kenc', enc: encryptJson(KEY, 'fleet-k', K.toString('base64')) })
+  await f.addPrompt('alpha', { workspace: '/example/alpha' })
+  await f.addPrompt('beta', { workspace: '/example/beta' })
+  for (const [key, ageHours, tokens, path] of [['a', 0.25, 20, '/example/alpha'], ['b', 0.4, 30, '/example/beta'],
+    ['c', 2, 50, '/example/alpha'], ['d', 48, 100, '/example/beta'], ['e', 0.1, 50, '']]) {
+    await f.event(usage(key, { ts: new Date(NOW.getTime() - ageHours * 3_600_000).toISOString(),
+      in: tokens, cacheW: 0, cacheR: 0, out: 0, ws: path ? ws(path) : '' }))
+  }
+  const short = (await f.read({ query: { range: '30m' } })).jsonBody
+  assert.deepEqual(short.projects.map(p => [p.name, p.percent]), [['Unassigned project', 50], ['beta', 30], ['alpha', 20]])
+  const day = (await f.read({ query: { range: '24h' } })).jsonBody
+  assert.equal(day.projects.find(p => p.name === 'alpha').percent, 100 * 70 / 150)
+  assert.equal((await f.read({ query: { range: '7d' } })).jsonBody.totals.tokens, 250)
+  assert.equal((await f.read({ query: { range: 'reset' } })).jsonBody.totals.tokens, 150)
+  const empty = (await f.read({ query: { range: '30m' }, now: new Date(NOW.getTime() + 86_400_000) })).jsonBody
+  assert.equal(empty.totals.tokens, 0)
+  assert.deepEqual(empty.projects, [])
+})
+
+test('rolling filters keep account and organisation guards and reject unbounded or malformed ranges', async () => {
+  for (const over of [{ acct: '' }, { acctQ: 'inferred' }]) {
+    const f = await fixture({ ...over, window: 'plan', resetsAt: null })
+    assert.equal((await f.read({ query: { range: '1h' } })).jsonBody.reason, 'account-unavailable')
+  }
+  const f = await fixture({ org: 'a_1111111111111111' })
+  await upsertLimits(f.store, x => x(), [meter({ id: 'b'.repeat(32), org: 'a_2222222222222222' })])
+  assert.equal((await f.read({ query: { range: '7d' } })).jsonBody.reason, 'organisation-unavailable')
+  for (const range of ['', 'all', '365d', '__proto__', 'toString', ['1h']]) {
+    const result = await f.read({ query: { range } })
+    assert.equal(result.status, 400)
+  }
+})
+
+test('Cursor includes only event-timed usage; provenance survives validation, storage, reparse and out-of-order merges', async () => {
+  const f = await fixture({ provider: 'cursor', source: 'cursor', window: 'plan', resetsAt: null })
+  for (const [key, tsQ] of [['message', 'event'], ['conversation', 'session-start'], ['legacy', '']]) {
+    await f.event(usage(key, { provider: 'cursor', source: 'cursor', ts: new Date(NOW.getTime() - 60_000).toISOString(), tsQ }))
+  }
+  const b = (await f.read({ query: { range: '1h' } })).jsonBody
+  assert.equal(b.totals.tokens, 1170)
+  assert.equal(b.timingLimited, true)
+  const input = usage('provenance', { source: 'cursor', provider: 'cursor', tsQ: 'event', pv: 2 })
+  const validated = validateUsage(input, NOW)
+  assert.equal(validated.ok, true)
+  const event = validated.value
+  assert.equal(rowToEvent({ rowKey: input.id, ...storedFields(event) }).tsQ, 'event')
+  assert.equal(validateUsage({ ...input, tsQ: 'invented' }, NOW).ok, false)
+  const fallback = { ...event, tsQ: 'session-start', ts: '2026-01-01T00:00:00Z' }
+  for (const [a, c] of [[event, fallback], [fallback, event], [event, { ...fallback, pv: 1 }], [{ ...fallback, pv: 1 }, event]]) {
+    const merged = mergeEvent(a, c)
+    assert.equal(merged.tsQ, 'event')
+    assert.equal(merged.ts, event.ts)
+  }
 })

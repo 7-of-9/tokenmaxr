@@ -7,6 +7,18 @@ const iso = (ms: number) => new Date(NOW + ms).toISOString()
 const H = 3_600_000
 const base = { acct: '', acctQ: 'unknown', observedAt: iso(-60_000), label: 'a@example.com' } as const
 
+// Project queries can use plan-only accounts and keep independently verified same-email logins apart.
+{
+  const rows: LimitRow[] = ['a', 'b'].map(letter => ({ ...base, id: letter.repeat(32), provider: 'openai', source: 'codex',
+    acct: `a_${letter.repeat(16)}`, acctQ: 'recorded', quotaSource: 'account-api', window: 'plan', resetsAt: null }))
+  const accounts = buildAccounts(rows, NOW)
+  assert.equal(accounts.length, 2)
+  assert.deepEqual(accounts.map(account => account.projectMeterId).sort(), rows.map(row => row.id))
+  assert.ok(accounts.every(account => !account.week))
+  const weakWeek = { ...rows[0], id: 'weak-week', window: 'week', acctQ: 'inferred', resetsAt: iso(H), usedPercent: 15 }
+  assert.equal(buildAccounts([rows[0], weakWeek], NOW)[0].projectMeterId, rows[0].id)
+}
+
 // A login switch removes the old login's email from fresh meter rows, but
 // the persisted plan row still maps its account hash to the correct email.
 {

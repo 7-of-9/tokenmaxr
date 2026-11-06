@@ -200,7 +200,9 @@ type Emitter struct {
 	Source   string
 	PV       int
 	Hint     sources.Hint
-	Batch    sources.Batch
+	// TSQ is optional timestamp provenance, independent of exact token counts.
+	TSQ   string
+	Batch sources.Batch
 	// Dir is the raw folder of the events emitted next: the same cwd the
 	// parser passes to Prompt. Usage and activity store its git root.
 	Dir string
@@ -248,6 +250,7 @@ func (e *Emitter) Usage(nativeKey string, ts time.Time, sessionID, modelName str
 		Provider:    e.Provider,
 		Source:      e.Source,
 		TS:          ts,
+		TSQ:         e.TSQ,
 		TZOffsetMin: TZ(e.Env, ts),
 		Model:       modelName,
 		Acct:        acct,

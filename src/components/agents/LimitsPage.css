@@ -188,6 +188,18 @@
 
 .limits-page .limits-projects__head h3 { margin: 0; font-size: 13px; font-weight: 600; }
 .limits-projects__head > span { font-family: var(--gh-mono); font-variant-numeric: tabular-nums; }
+.limits-page .limits-projects__period { margin: 0; color: var(--gh-muted); font-size: 12px; }
+.limits-projects__filter { display: flex; align-items: center; gap: 8px; color: var(--gh-muted); }
+.limits-projects__filter select {
+  padding: 5px 8px;
+  border: 1px solid var(--gh-border);
+  border-radius: 6px;
+  color: var(--gh-fg);
+  background: var(--gh-control);
+  font: inherit;
+  color-scheme: dark;
+}
+.limits-projects__filter select:focus-visible { outline: 2px solid var(--gh-fg); outline-offset: 2px; }
 .limits-projects__table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: auto; }
 .limits-projects__table caption { position: absolute; overflow: hidden; width: 1px; height: 1px; clip-path: inset(50%); }
 .limits-projects__table th,

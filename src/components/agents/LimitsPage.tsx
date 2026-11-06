@@ -251,7 +251,7 @@ function AccountLine({ account, now, onTrack, expansion }: { account: Account; n
       </> : <div className="limits-no-reading">{account.week?.lapsed ? 'Reset passed · awaiting a new reading' : 'No weekly reading available'}</div>}
       </div>
       {supportsProjects && expanded && <div id={panelId} className="limits-projects" role="region" aria-label={`Project usage for ${accountName(account)}`}>
-        <AccountProjects meterId={account.week?.key} resetsAt={account.week?.resetsAt} {...expansion} />
+        <AccountProjects accountKey={account.key} resetsAt={account.week?.resetsAt} {...expansion} />
       </div>}
     </li>
   )
@@ -293,7 +293,7 @@ function OtherAccountLine({ account, onTrack, expansion }: { account: Account; o
       <span className="limits-unmetered__reason">{weeklyMeter(account) ? 'Not tracked' : account.week?.lapsed ? 'Awaiting a new reading' : 'No weekly reading'}</span>
     </div>
     {supportsProjects && expanded && <div id={panelId} className="limits-projects" role="region" aria-label={`Project usage for ${accountName(account)}`}>
-      <AccountProjects meterId={account.week?.key} resetsAt={account.week?.resetsAt} {...expansion} />
+      <AccountProjects accountKey={account.key} resetsAt={account.week?.resetsAt} {...expansion} />
     </div>}
   </li>
 }

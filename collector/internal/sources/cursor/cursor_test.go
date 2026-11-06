@@ -221,6 +221,13 @@ func check(t *testing.T, label string, m sourcetest.Merged) {
 			u.Provider != ProviderName || u.Source != SourceName || u.Q != model.QualityExact || u.PV != pv || u.Acct != "a_cursor" || u.TZOffsetMin != 60 {
 			t.Errorf("%s: usage %s = %+v, want %+v", label, key, u, w)
 		}
+		wantTSQ := "event"
+		if key == compA+":a2" {
+			wantTSQ = "session-start"
+		}
+		if u.TSQ != wantTSQ {
+			t.Errorf("%s: usage %s timestamp quality = %q, want %q", label, key, u.TSQ, wantTSQ)
+		}
 	}
 	if len(m.Prompts) != len(wantPromptAll) || len(m.Activity) != len(wantPromptAll) {
 		t.Errorf("%s: got %d prompts / %d activity, want %d", label, len(m.Prompts), len(m.Activity), len(wantPromptAll))

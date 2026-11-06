@@ -133,6 +133,8 @@ function wrap(fn) {
 // clamped to cacheW (it is a subset); `clamped` lets ingest report it.
 export const validateUsage = wrap((x, now) => {
   const c = common(x, now)
+  const tsQ = str(x, 'tsQ', 16)
+  if (tsQ && tsQ !== 'event' && tsQ !== 'session-start') fail('tsQ must be event or session-start')
   const q = str(x, 'q', 16) || 'exact'
   if (q !== 'exact' && q !== 'estimated') fail('q must be exact or estimated')
   const pv = x.pv ?? 1
@@ -144,6 +146,7 @@ export const validateUsage = wrap((x, now) => {
     ...c,
     model: str(x, 'model', 200),
     q,
+    tsQ,
     pv,
     in: count(x, 'in'),
     cacheW,

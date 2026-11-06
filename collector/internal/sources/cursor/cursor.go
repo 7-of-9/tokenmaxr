@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	pv = 1
+	pv = 2 // Re-read existing bubbles to preserve timestamp provenance.
 
 	// Provider and Source are both "cursor" (SPEC "Providers"): Cursor is
 	// its own provider with its own model catalogue.
@@ -448,8 +448,10 @@ func (r *reader) handle(b bubble) {
 		}
 		r.anyTokens = true
 		ts := b.ts
+		r.e.TSQ = "event"
 		if ts.IsZero() && c != nil {
 			ts = c.CreatedAt
+			r.e.TSQ = "session-start"
 		}
 		if ts.IsZero() {
 			return
