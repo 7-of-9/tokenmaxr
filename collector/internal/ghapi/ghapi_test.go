@@ -174,3 +174,33 @@ func TestVariablesPagesInstallations(t *testing.T) {
 		t.Fatal("API calls must carry the user token")
 	}
 }
+
+// GitHub would otherwise sign API commits with the account's email address and
+// its own time zone offset, public in the history of a public repository.
+func TestCommitsAreSignedWithTheNoReplyAddressInUTC(t *testing.T) {
+	f := ghapitest.New()
+	c := client(t, f)
+	ctx := context.Background()
+	for i, body := range []string{"1", "2"} {
+		if _, err := c.Commit(ctx, "octo/agent-usage", "main", "publish", []File{{Path: "x.json", Content: []byte(body)}}); err != nil {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+	}
+	if len(f.Signatures) != 2 {
+		t.Fatalf("signatures %q", f.Signatures)
+	}
+	for _, s := range f.Signatures {
+		author, committer, _ := strings.Cut(s, " | ")
+		name, rest, _ := strings.Cut(author, " ")
+		email, date, _ := strings.Cut(strings.TrimPrefix(rest, "<"), "> ")
+		if name != "octo" || email != "42+octo@users.noreply.github.com" || committer != author {
+			t.Fatalf("signature %q", s)
+		}
+		if d, err := time.Parse(time.RFC3339, date); err != nil || !strings.HasSuffix(date, "Z") || time.Since(d) > time.Minute {
+			t.Fatalf("date %q is not now in UTC (%v)", date, err)
+		}
+	}
+	if n := strings.Count(strings.Join(f.Requests, "\n"), "GET /user\n"); n > 1 {
+		t.Fatalf("/user read %d times; once per client is enough", n)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -34,6 +35,33 @@ type Client struct {
 	UserAgent string
 	// moved: an API request was answered from another address (Moved).
 	moved atomic.Bool
+	// signer: the commit identity, read once from /user (see signature).
+	signerMu sync.Mutex
+	signer   map[string]any
+}
+
+// signature is the author and committer of every commit: the user's GitHub
+// login and no-reply address, dated in UTC. Without it GitHub signs the commit
+// with the account's email address and the account's own time zone offset,
+// both public in the repository's history.
+func (c *Client) signature(ctx context.Context) (map[string]any, error) {
+	c.signerMu.Lock()
+	defer c.signerMu.Unlock()
+	if c.signer == nil {
+		u, err := c.User(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if u.Login == "" || u.ID == 0 {
+			return nil, errors.New("github: /user named no login")
+		}
+		c.signer = map[string]any{"name": u.Login, "email": fmt.Sprintf("%d+%s@users.noreply.github.com", u.ID, u.Login)}
+	}
+	s := map[string]any{"date": time.Now().UTC().Format(time.RFC3339)}
+	for k, v := range c.signer {
+		s[k] = v
+	}
+	return s, nil
 }
 
 // Moved reports whether an API request since the last call was answered
@@ -497,10 +525,14 @@ func (c *Client) CommitOn(ctx context.Context, repo, branch, parent, message str
 	if tree.SHA == base {
 		return parent, nil // nothing changed
 	}
+	sig, err := c.signature(ctx)
+	if err != nil {
+		return "", err
+	}
 	var commit struct {
 		SHA string `json:"sha"`
 	}
-	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{parent}}, &commit); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.API, "/repos/"+repo+"/git/commits", map[string]any{"message": message, "tree": tree.SHA, "parents": []string{parent}, "author": sig, "committer": sig}, &commit); err != nil {
 		return "", err
 	}
 	// Not forced: GitHub refuses (422) anything but a fast-forward from the

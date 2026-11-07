@@ -43,11 +43,12 @@ interface MockMachine extends PublicMachine {
 }
 
 const MACHINES: MockMachine[] = [
-  { id: 'm_mock_studio', label: 'Studio Mac', cc: 'TH', os: 'darwin', live: true, lastSeenAt: null },
-  { id: 'm_mock_desk', label: 'desktop-win', cc: 'TH', os: 'windows', live: true, lastSeenAt: null },
-  { id: 'm_mock_ldn', label: 'London MBP', cc: 'GB', os: 'darwin', live: false, lastSeenAt: null, trips: [['07-05', '07-24']] },
-  { id: 'm_mock_sg', label: 'sg-devbox', cc: 'SG', os: 'windows', live: false, lastSeenAt: null, trips: [['08-01', '08-14']] },
-  { id: 'm_mock_air', label: 'Travel Air', cc: 'US', os: 'darwin', live: false, lastSeenAt: null },
+  // A fictional fleet: these countries say nothing about any real owner.
+  { id: 'm_mock_studio', label: 'Studio Mac', cc: 'CA', os: 'darwin', live: true, lastSeenAt: null },
+  { id: 'm_mock_desk', label: 'desktop-win', cc: 'CA', os: 'windows', live: true, lastSeenAt: null },
+  { id: 'm_mock_paris', label: 'Paris MBP', cc: 'FR', os: 'darwin', live: false, lastSeenAt: null, trips: [['07-05', '07-24']] },
+  { id: 'm_mock_nyc', label: 'nyc-devbox', cc: 'US', os: 'windows', live: false, lastSeenAt: null, trips: [['08-01', '08-14']] },
+  { id: 'm_mock_air', label: 'Travel Air', cc: 'JP', os: 'darwin', live: false, lastSeenAt: null },
 ]
 
 /** Model mix per provider: [id, weight, first month-day it appears, last month-day]. Real ids from modelPricing.json plus one unpriced. */

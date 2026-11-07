@@ -41,6 +41,9 @@ type Fake struct {
 	// ("path@ref" when read at a ref).
 	Commits int
 	Reads   []string
+	// Signatures lists each created commit's author and committer as
+	// "name <email> date | name <email> date".
+	Signatures []string
 	// Deletes counts paths removed by commits.
 	Deletes int
 	// NoInstall: the user has not installed the App yet.
@@ -301,11 +304,20 @@ func (f *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.trees[t] = next
 		js(201, map[string]string{"sha": t})
 	case path == repo+"/git/commits":
+		type sig struct{ Name, Email, Date string }
 		var req struct {
-			Tree    string
-			Parents []string
+			Tree              string
+			Parents           []string
+			Author, Committer *sig
 		}
 		json.Unmarshal(body, &req)
+		show := func(s *sig) string {
+			if s == nil {
+				return "(none)"
+			}
+			return s.Name + " <" + s.Email + "> " + s.Date
+		}
+		f.Signatures = append(f.Signatures, show(req.Author)+" | "+show(req.Committer))
 		c := f.id("c")
 		f.commits[c] = req.Tree
 		if len(req.Parents) > 0 {
