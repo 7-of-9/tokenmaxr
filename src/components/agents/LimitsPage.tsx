@@ -366,9 +366,6 @@ const LimitsPage = () => {
                   <h1 className="limits-headline">
                     Weekly quota
                   </h1>
-                  <p className="limits-sub">
-                    {tracked.length} {tracked.length === 1 ? 'account' : 'accounts'} tracked · 100% available is a full quota
-                  </p>
                 </div>
                 <button type="button" className="agents-btn" disabled={refreshing} onClick={() => setReloadKey((key) => key + 1)}>
                   {refreshing ? <LoadingIndicator label="Refreshing…" inline /> : 'Refresh'}
@@ -407,7 +404,7 @@ const LimitsPage = () => {
       </div>
 
       <footer className="agents-foot">
-        <span>Latest reported weekly usage · reset times in {TIME_ZONE} · selection saved in this browser</span>
+        <span>Times in {TIME_ZONE}</span>
         <span> · </span>
         <Link to={site.home}>Token usage</Link>
       </footer>

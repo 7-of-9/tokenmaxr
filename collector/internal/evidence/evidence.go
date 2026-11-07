@@ -211,7 +211,8 @@ type prov struct {
 	provider string
 	samples  []sample    // sorted by ts
 	bounds   []time.Time // sorted
-	orgs     map[string]string
+	orgs     map[string][]orgCand
+	probes   []probeSpan
 	sess     map[string][]sessRec // stream -> records, sorted
 	spans    map[string][]span    // grok: stream -> process spans
 	procUser map[string][]sample  // grok: proc -> user_info samples
@@ -241,16 +242,22 @@ func Build(recs []Record, spans []Span) *Index {
 		k := provKey(provider, home)
 		p := ix.provs[k]
 		if p == nil {
-			p = &prov{provider: provider, orgs: map[string]string{}, sess: map[string][]sessRec{}, spans: map[string][]span{},
+			p = &prov{provider: provider, orgs: map[string][]orgCand{}, sess: map[string][]sessRec{}, spans: map[string][]span{},
 				procUser: map[string][]sample{}, winOwner: map[string][]sample{}, accts: map[string]bool{}}
 			ix.provs[k] = p
 		}
 		return p
 	}
-	// Org maps first, so org-only samples resolve to accounts.
+	// Org maps and probe spans first, so org-only samples resolve to accounts.
 	for _, r := range recs {
 		if r.Kind == KindOrgMap && r.Org != "" && r.Acct != "" {
-			get(r.Provider, r.Home).orgs[r.Org] = r.Acct
+			get(r.Provider, r.Home).addOrg(r.Org, r.Acct, orgSourceRank(r.Source))
+		}
+	}
+	for _, s := range spans {
+		if s.Acct != "" {
+			p := get(s.Provider, s.Home)
+			p.probes = append(p.probes, probeSpan{acct: s.Acct, from: s.From, to: s.To})
 		}
 	}
 	var plans = map[string][]Record{}
@@ -258,7 +265,7 @@ func Build(recs []Record, spans []Span) *Index {
 		p := get(r.Provider, r.Home)
 		acct := r.Acct
 		if acct == "" && r.Org != "" {
-			acct = p.resolveOrg(r.Org)
+			acct = p.resolveOrg(r.Org, r.TS)
 		}
 		switch r.Kind {
 		case KindSample:
@@ -347,9 +354,102 @@ func (p *prov) noteFirst(r Record) {
 	}
 }
 
-// resolveOrg maps an org hash to its account, or "" when unmapped.
-func (p *prov) resolveOrg(org string) string {
-	if a, ok := p.orgs[org]; ok {
+// orgCand is one account an org was seen with, ranked by its source.
+type orgCand struct {
+	acct string
+	rank int
+}
+
+// probeSpan is a live probe interval: the account logged in at the time.
+type probeSpan struct {
+	acct     string
+	from, to time.Time
+}
+
+func (s probeSpan) end() time.Time {
+	if s.to.After(s.from) {
+		return s.to
+	}
+	return s.from
+}
+
+// probeSlack covers the gap between an event and the tick that saw its login.
+const probeSlack = 2 * time.Minute
+
+// orgSourceRank orders org map sources by how far they can be trusted. A
+// snapshot of oauthAccount is one write of the login's own pair; a desktop
+// folder pair is a fixed path; a bridge session's owner fields can outlive a
+// /login in the session that registered it.
+func orgSourceRank(source string) int {
+	switch source {
+	case SrcClaudeJSON, SrcClaudeJSONBak, SrcClaudeBackup:
+		return 3
+	case SrcClaudeDesktop:
+		return 2
+	}
+	return 1
+}
+
+// addOrg keeps every account seen with an org, at its best rank. The result
+// never depends on record order.
+func (p *prov) addOrg(org, acct string, rank int) {
+	for i, c := range p.orgs[org] {
+		if c.acct == acct {
+			p.orgs[org][i].rank = max(c.rank, rank)
+			return
+		}
+	}
+	p.orgs[org] = append(p.orgs[org], orgCand{acct, rank})
+}
+
+// probeAt returns the account logged in at ts, or "" when no probe saw it. The
+// latest interval wins inside the slack around a login change.
+func (p *prov) probeAt(ts time.Time) string {
+	acct, from := "", time.Time{}
+	for _, s := range p.probes {
+		if ts.Before(s.from.Add(-probeSlack)) || ts.After(s.end().Add(probeSlack)) {
+			continue
+		}
+		if acct == "" || s.from.After(from) {
+			acct, from = s.acct, s.from
+		}
+	}
+	return acct
+}
+
+// orgAcct maps an org to its account at ts. An org can have several: a Team
+// seat's colleagues, or a pair recorded with a stale owner. The login live at
+// ts decides between them, else the best-ranked source does. certain is false
+// when equally ranked candidates remain and nothing separates them.
+func (p *prov) orgAcct(org string, ts time.Time) (acct string, certain, ok bool) {
+	cands := p.orgs[org]
+	if len(cands) == 0 {
+		return "", false, false
+	}
+	if len(cands) == 1 {
+		return cands[0].acct, true, true
+	}
+	live := p.probeAt(ts)
+	for _, c := range cands {
+		if c.acct == live {
+			return c.acct, true, true
+		}
+	}
+	best := slices.MinFunc(cands, func(a, b orgCand) int {
+		return cmp.Or(cmp.Compare(b.rank, a.rank), cmp.Compare(a.acct, b.acct))
+	})
+	tied := 0
+	for _, c := range cands {
+		if c.rank == best.rank {
+			tied++
+		}
+	}
+	return best.acct, tied == 1, true
+}
+
+// resolveOrg maps an org hash to its account at ts, or to itself when unmapped.
+func (p *prov) resolveOrg(org string, ts time.Time) string {
+	if a, _, ok := p.orgAcct(org, ts); ok {
 		return a
 	}
 	// Unmapped: the org hash stands in for the account (SPEC: hashed with
@@ -409,8 +509,12 @@ func (ix *Index) Recorded(provider, home string, ts time.Time, sessionID string,
 		if h.Kind == sources.HintOrg {
 			a = h.ID
 			if p != nil {
-				if m, ok := p.orgs[h.ID]; ok {
+				if m, certain, ok := p.orgAcct(h.ID, ts); ok {
 					a = m
+					if !certain {
+						hq = model.AcctBounded
+						ix.conflict(provider)
+					}
 				} else {
 					hq = model.AcctBounded
 				}

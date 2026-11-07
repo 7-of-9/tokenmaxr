@@ -177,19 +177,17 @@
 
 .limits-projects__head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px 20px;
-  margin-bottom: 12px;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
   color: var(--gh-fg);
   font-size: 13px;
 }
 
 .limits-page .limits-projects__head h3 { margin: 0; font-size: 13px; font-weight: 600; }
-.limits-projects__head > span { font-family: var(--gh-mono); font-variant-numeric: tabular-nums; }
-.limits-page .limits-projects__period { margin: 0; color: var(--gh-muted); font-size: 12px; }
-.limits-projects__filter { display: flex; align-items: center; gap: 8px; color: var(--gh-muted); }
+.limits-projects__total { margin-left: auto; font-family: var(--gh-mono); font-variant-numeric: tabular-nums; }
+.limits-projects__filter { display: flex; align-items: center; color: var(--gh-muted); }
+.limits-projects__head h3 + .limits-projects__filter { margin-left: auto; }
 .limits-projects__filter select {
   padding: 5px 8px;
   border: 1px solid var(--gh-border);
@@ -211,7 +209,6 @@
 .limits-projects__table th { font-weight: 500; }
 .limits-projects__table tbody { color: var(--gh-fg); }
 .limits-projects__table tbody td { font-family: var(--gh-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.limits-projects__rank { display: inline-block; min-width: 2.5ch; margin-right: 6px; color: var(--gh-muted); font-variant-numeric: tabular-nums; }
 
 .limits-page .limits-projects__note { margin-top: 8px; color: var(--gh-muted); font-size: 12px; line-height: 1.5; }
 .limits-page .limits-projects__empty { margin: 12px 0; color: var(--gh-muted); font-size: 13px; }

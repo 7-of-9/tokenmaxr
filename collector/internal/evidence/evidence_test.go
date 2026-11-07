@@ -414,3 +414,65 @@ func TestHintSurvivesIncrementalRead(t *testing.T) {
 		t.Errorf("codex resumed: %s %s", u.Acct, u.AcctQ)
 	}
 }
+
+// A /login inside a session can leave a bridge record pairing the new org with
+// the old owner. The org must still resolve to the account logged in, in any
+// record order: this mislabelled a MacBook's usage for three days.
+func TestOrgMapStaleBridgeOwnerNeverWins(t *testing.T) {
+	p := model.ProviderAnthropic
+	t0 := time.Date(2026, 11, 4, 4, 9, 0, 0, time.UTC)
+	stale := evidence.Record{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeBridge, Org: "a_org", Acct: "a_old"}
+	login := evidence.Record{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeJSON, Org: "a_org", Acct: "a_new"}
+	hint := sources.Hint{Kind: sources.HintOrg, ID: "a_org", At: t0}
+	for name, recs := range map[string][]evidence.Record{"bridge last": {login, stale}, "bridge first": {stale, login}} {
+		ix := evidence.Build(recs, nil)
+		if a, q, ok := ix.Recorded(p, "", t0.Add(time.Hour), "s", hint); !ok || a != "a_new" || q != model.AcctRecorded {
+			t.Errorf("%s: %s %s %v", name, a, q, ok)
+		}
+		if n := ix.Conflicts()[p]; n != 0 {
+			t.Errorf("%s: a resolved rank difference counted %d conflicts", name, n)
+		}
+	}
+}
+
+// Equally ranked pairs are a Team org's seats, or a bad snapshot. Only the
+// login live at the event can separate them; without it the event is not
+// "recorded", and the conflict is counted.
+func TestOrgMapTieUsesLiveLogin(t *testing.T) {
+	p := model.ProviderAnthropic
+	t0 := time.Date(2026, 11, 4, 4, 9, 0, 0, time.UTC)
+	recs := []evidence.Record{
+		{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeJSON, Org: "a_org", Acct: "a_seat1"},
+		{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeBackup, Org: "a_org", Acct: "a_seat2"},
+	}
+	spans := []evidence.Span{{Provider: p, Acct: "a_seat2", From: t0, To: t0.Add(time.Hour)}}
+	ix := evidence.Build(recs, spans)
+	hint := sources.Hint{Kind: sources.HintOrg, ID: "a_org", At: t0}
+	if a, q, _ := ix.Recorded(p, "", t0.Add(time.Minute), "s", hint); a != "a_seat2" || q != model.AcctRecorded {
+		t.Errorf("inside the probe: %s %s", a, q)
+	}
+	if ix.Conflicts()[p] != 0 {
+		t.Error("the live login settled it: no conflict")
+	}
+	if a, q, _ := ix.Recorded(p, "", t0.Add(5*time.Hour), "s", hint); a != "a_seat1" || q != model.AcctBounded {
+		t.Errorf("outside the probe: %s %s", a, q)
+	}
+	if ix.Conflicts()[p] != 1 {
+		t.Error("an unresolved tie must count as a conflict")
+	}
+}
+
+// The live login also picks a lower-ranked candidate: a colleague's seat known
+// only from a bridge record is still that seat while it is logged in.
+func TestOrgMapLiveLoginBeatsRank(t *testing.T) {
+	p := model.ProviderAnthropic
+	t0 := time.Date(2026, 11, 4, 4, 9, 0, 0, time.UTC)
+	ix := evidence.Build([]evidence.Record{
+		{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeJSON, Org: "a_org", Acct: "a_seat1"},
+		{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeBridge, Org: "a_org", Acct: "a_seat2"},
+	}, []evidence.Span{{Provider: p, Acct: "a_seat2", From: t0, To: t0.Add(time.Hour)}})
+	hint := sources.Hint{Kind: sources.HintOrg, ID: "a_org", At: t0}
+	if a, q, _ := ix.Recorded(p, "", t0.Add(time.Minute), "s", hint); a != "a_seat2" || q != model.AcctRecorded {
+		t.Errorf("%s %s", a, q)
+	}
+}
