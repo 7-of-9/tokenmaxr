@@ -437,6 +437,10 @@ func TestGitHubPublishesSchema2AndTheCountryOnlyOnOptIn(t *testing.T) {
 	tz := machineTZ()
 	for p, c := range f.Files {
 		for _, private := range []string{tz.IANA, tz.WindowsID} {
+			// A UTC zone names no place, and the dashboard spells "UTC" itself (CI runners use it).
+			if private == "UTC" || strings.HasPrefix(private, "Etc/") {
+				continue
+			}
 			if private != "" && strings.Contains(c, private) {
 				t.Fatalf("%s publishes the time zone %q", p, private)
 			}

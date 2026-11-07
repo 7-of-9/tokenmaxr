@@ -3,6 +3,7 @@
 declare const __BUILD_TIME__: string
 declare const __AGENTS_API_ORIGIN__: string
 declare const __CV_DISCOVERABLE__: boolean
+declare const __LOCKDOWN__: boolean
 
 // Google Analytics gtag.js
 interface Window {

@@ -49,6 +49,7 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
     // The site-wide flag the shared shell reads; the dashboard links to no other page.
     __CV_DISCOVERABLE__: JSON.stringify(false),
+    __LOCKDOWN__: JSON.stringify(false),
     // The GitHub sign-in relay (api/src/lib/github-device.js): GitHub's device-flow endpoints send no CORS headers.
     // TOKENMAXR_RELAY_URL=<base> npm run build:pages points a build at another deployment of it.
     __TOKENMAXR_RELAY__: JSON.stringify(relayUrl()),

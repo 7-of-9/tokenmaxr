@@ -337,7 +337,7 @@ export function buildMockPrompts(now: Date, month?: string): PromptsResponse {
     items.push({
       id: `mock${String(i).padStart(4, '0')}${selected.replace('-', '')}`,
       ts: ts.toISOString(),
-      tzOffsetMin: rand() < 0.5 ? 60 : 420,
+      tzOffsetMin: rand() < 0.5 ? 60 : 0,
       provider,
       source: MOCK_SOURCE[provider],
       model: models[Math.floor(rand() * models.length)][0],
