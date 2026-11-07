@@ -263,9 +263,6 @@ function ProviderBox({ tool, accounts, now, onTrack, expansion }: { tool: string
     <section className="limits-box" aria-label={tool}>
       <header className="limits-box__head">
         <h2 className="limits-box__title">{tool}</h2>
-        <span className="limits-box__count">
-          {accounts.length === 1 ? '1 account' : `${accounts.length} accounts`}
-        </span>
       </header>
       <ul className="limits-lines">
         {sortByAvailability(accounts).map((account) => (
@@ -357,7 +354,7 @@ const LimitsPage = () => {
 
       <div className={`${site.sheet ? 'agents-panel ' : ''}agents-sheet`}>
         <div className="agents-sheet__scroll">
-          {(load.status === 'loading' || (refreshing && !items)) && <LoadingIndicator label={owner.status === 'checking' ? 'Checking your sign-in…' : 'Loading weekly quota…'} />}
+          {(load.status === 'loading' || (refreshing && !items)) && <LoadingIndicator label={owner.status === 'checking' ? 'Checking your sign-in' : 'Loading weekly quota'} quiet />}
 
           {items && (
             <>
@@ -368,7 +365,7 @@ const LimitsPage = () => {
                   </h1>
                 </div>
                 <button type="button" className="agents-btn" disabled={refreshing} onClick={() => setReloadKey((key) => key + 1)}>
-                  {refreshing ? <LoadingIndicator label="Refreshing…" inline /> : 'Refresh'}
+                  {refreshing ? <LoadingIndicator label="Refreshing" inline quiet /> : 'Refresh'}
                 </button>
               </div>
 

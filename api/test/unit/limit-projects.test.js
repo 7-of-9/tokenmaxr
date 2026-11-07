@@ -236,7 +236,7 @@ test('rolling filters keep account and organisation guards and reject unbounded 
   const f = await fixture({ org: 'a_1111111111111111' })
   await upsertLimits(f.store, x => x(), [meter({ id: 'b'.repeat(32), org: 'a_2222222222222222' })])
   assert.equal((await f.read({ query: { range: '7d' } })).jsonBody.reason, 'organisation-unavailable')
-  for (const range of ['', 'all', '365d', '__proto__', 'toString', ['1h']]) {
+  for (const range of ['', 'ALL', '365d', '__proto__', 'toString', ['1h']]) {
     const result = await f.read({ query: { range } })
     assert.equal(result.status, 400)
   }
@@ -262,4 +262,44 @@ test('Cursor includes only event-timed usage; provenance survives validation, st
     assert.equal(merged.tsQ, 'event')
     assert.equal(merged.ts, event.ts)
   }
+})
+
+test('range=all answers every period from one read, each equal to its single-range answer', async () => {
+  const f = await fixture({ resetsAt: new Date(NOW.getTime() + 6 * 86_400_000).toISOString() })
+  await f.store.table('accounts').create({ partitionKey: 'fleet', rowKey: 'kenc', enc: encryptJson(KEY, 'fleet-k', K.toString('base64')) })
+  await f.addPrompt('alpha', { workspace: '/example/alpha' })
+  for (const [key, ageHours, tokens] of [['a', 0.25, 100], ['b', 5, 200], ['c', 48, 400]]) {
+    await f.event(usage(key, { ts: new Date(NOW.getTime() - ageHours * 3_600_000).toISOString(),
+      in: tokens, cacheW: 0, cacheR: 0, out: 0, ws: ws('/example/alpha') }))
+  }
+  const all = (await f.read({ query: { range: 'all' } })).jsonBody
+  assert.equal(all.range, 'all')
+  assert.deepEqual(Object.keys(all.ranges).sort(), ['12h', '1h', '24h', '30m', '3d', '3h', '6h', '7d', 'reset'])
+  for (const [range, body] of Object.entries(all.ranges)) {
+    assert.deepEqual(body, (await f.read({ query: { range } })).jsonBody, range)
+  }
+  assert.equal(all.ranges['30m'].totals.tokens, 100)
+  assert.equal(all.ranges['6h'].totals.tokens, 300)
+  assert.equal(all.ranges['7d'].totals.tokens, 700)
+})
+
+test('range=all reports a missing reset for that period only', async () => {
+  const f = await fixture({ resetsAt: null, window: 'plan' })
+  await f.store.table('accounts').create({ partitionKey: 'fleet', rowKey: 'kenc', enc: encryptJson(KEY, 'fleet-k', K.toString('base64')) })
+  const all = (await f.read({ query: { range: 'all' } })).jsonBody
+  assert.equal(all.ranges.reset.available, false)
+  assert.equal(all.ranges.reset.reason, 'reset-unavailable')
+  assert.equal(all.ranges['7d'].available, true)
+})
+
+test('one project on two machines is one row', async () => {
+  const f = await fixture({ resetsAt: new Date(NOW.getTime() + 6 * 86_400_000).toISOString() })
+  await f.store.table('accounts').create({ partitionKey: 'fleet', rowKey: 'kenc', enc: encryptJson(KEY, 'fleet-k', K.toString('base64')) })
+  await f.addPrompt('mac', { workspace: '/Users/someone/acx_custody' })
+  await f.addPrompt('vps', { workspace: '/home/agent/acx_custody' })
+  for (const [key, tokens, path] of [['a', 60, '/Users/someone/acx_custody'], ['b', 40, '/home/agent/acx_custody']]) {
+    await f.event(usage(key, { ts: new Date(NOW.getTime() - 3_600_000).toISOString(), in: tokens, cacheW: 0, cacheR: 0, out: 0, ws: ws(path) }))
+  }
+  const b = (await f.read({ query: { range: '24h' } })).jsonBody
+  assert.deepEqual(b.projects.map(p => [p.name, p.tokens, p.percent]), [['acx_custody', 100, 100]])
 })

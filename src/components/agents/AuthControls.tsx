@@ -2,6 +2,7 @@ import LoadingIndicator from '../LoadingIndicator'
 import { clearAuth, refreshAuth, useAuth, useAuthLinks } from './auth'
 import type { Owner } from './site'
 import './AuthControls.css'
+import { clearProjectCache } from './projectUsage'
 
 /** d0m1.com's header controls (site.ts): GitHub sign-in through Azure Static Web Apps. */
 const AuthControls = ({ owner }: { owner: Owner }) => {
@@ -11,6 +12,7 @@ const AuthControls = ({ owner }: { owner: Owner }) => {
     // Capture navigation ourselves before its href can change under the click.
     event.preventDefault()
     clearAuth()
+    clearProjectCache()
     window.location.assign(signOut)
   }}>Sign out</a>
     : owner.status === 'checking' ? <LoadingIndicator label="Checking sign-in…" inline />

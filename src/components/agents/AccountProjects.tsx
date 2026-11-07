@@ -45,6 +45,7 @@ export default function AccountProjects({ accountKey, resetsAt, mock, usage }: P
   return <>
     <div className="limits-projects__head">
       <h3>Projects</h3>
+      {load?.status === 'ok' && load.stale && <LoadingIndicator label="Updating" inline quiet />}
       {data && data.totals.tokens > 0 && <span className="limits-projects__total" title={`${data.totals.tokens.toLocaleString('en-GB')} tokens · ${DATE.format(new Date(data.since))} – ${DATE.format(new Date(data.until))}`}>{formatCompact(data.totals.tokens)}</span>}
       <label className="limits-projects__filter">
         <select aria-label="Project usage period" value={usage.range(accountKey)} onChange={event => {
@@ -55,7 +56,7 @@ export default function AccountProjects({ accountKey, resetsAt, mock, usage }: P
       </label>
     </div>
     <div aria-live="polite" aria-busy={!load || load.status === 'loading'}>
-    {!load || load.status === 'loading' ? <LoadingIndicator label="Loading…" inline /> :
+    {!load || load.status === 'loading' ? <LoadingIndicator label="Loading project usage" inline quiet /> :
     load.status === 'error' ? <div className="limits-projects__error" role="alert">
     <p>{load.message}</p><button type="button" className="agents-btn" onClick={() => usage.retry(accountKey)}>Try again</button>
     </div> : !load.data.available ? <p className="limits-projects__note">{UNAVAILABLE[load.data.reason]}</p> :

@@ -1,4 +1,5 @@
-// Owner-only recorded project usage in the selected account's current week.
+// Owner-only recorded project usage for an account, by time period. range=all
+// answers every period from one read, so the dashboard never asks again.
 // Read deduplicated events, not daily rollups: a reset can fall within a day.
 import { createHmac } from 'node:crypto'
 import { json } from './http.js'
@@ -16,6 +17,7 @@ const WEEK = 7 * DAY
 const PRIVATE = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 const FIELDS = ['kind', 'provider', 'source', 'ts', 'tsQ', 'pv', 'session', 'acct', 'acctQ', 'ws', 'q', 'in', 'cacheW', 'cacheR', 'out', 'calls']
 const HOURS = { '30m': 0.5, '1h': 1, '3h': 3, '6h': 6, '12h': 12, '24h': 24, '3d': 72, '7d': 168 }
+const ALL_RANGES = ['reset', ...Object.keys(HOURS)]
 const tokenCount = e => e.in + e.cacheW + e.cacheR + e.out
 const joinKey = e => `${e.provider}|${e.session}|${Date.parse(e.ts)}`
 
@@ -104,15 +106,18 @@ export async function handleLimitProjects(req, rawCtx) {
   if (!/^[a-f0-9]{32}$/.test(id || '')) return reply(400, { error: 'invalid account snapshot' })
   // Preserve the original reset window for older deployed clients.
   const range = req.query?.range ?? 'reset'
-  if (typeof range !== 'string' || (range !== 'reset' && !Object.hasOwn(HOURS, range))) return reply(400, { error: 'invalid project time range' })
+  if (typeof range !== 'string' || (range !== 'all' && range !== 'reset' && !Object.hasOwn(HOURS, range))) return reply(400, { error: 'invalid project time range' })
   const { store, env, budgetMs } = resolveCtx(rawCtx)
   const now = req.now ?? new Date()
   const nowMs = now.getTime()
   const snapshots = await readLimits(store, now)
   const meter = snapshots.find(row => row.id === id)
   if (!meter) return reply(404, { error: 'Account snapshot unavailable. Refresh the accounts.' })
-  const base = { range, generatedAt: now.toISOString(), until: now.toISOString(), projects: [] }
-  const unavailable = reason => reply(200, { ...base, available: false, reason })
+  const wanted = range === 'all' ? ALL_RANGES : [range]
+  const stamp = { generatedAt: now.toISOString(), until: now.toISOString() }
+  const respond = body => reply(200, range === 'all' ? { range, ...stamp, ranges: Object.fromEntries(wanted.map(r => [r, body(r)])) } : body(range))
+  const unavailableBody = reason => r => ({ range: r, ...stamp, projects: [], available: false, reason })
+  const unavailable = reason => respond(unavailableBody(reason))
   if (!meter.acct || !labelled(meter.acctQ)) return unavailable('account-unavailable')
   // Event rows identify the login, not its organisation. Do not duplicate
   // that login's usage into distinct personal/Team quota rows.
@@ -121,10 +126,15 @@ export async function handleLimitProjects(req, rawCtx) {
   const weekly = snapshots.filter(r => r.provider === meter.provider && r.acct === meter.acct &&
     (r.org || '') === (meter.org || '') && r.window === 'week' && !r.scope && r.status !== 'disabled' && labelled(r.acctQ))
     .sort((a, b) => b.observedAt.localeCompare(a.observedAt))[0]
-  const window = range === 'reset' ? weeklyRange(weekly?.resetsAt, nowMs) : {
-    since: new Date(nowMs - HOURS[range] * 3_600_000).toISOString(), resetsAt: null, projected: false,
+  const windows = new Map()
+  for (const r of wanted) {
+    const w = r === 'reset' ? weeklyRange(weekly?.resetsAt, nowMs) : {
+      since: new Date(nowMs - HOURS[r] * 3_600_000).toISOString(), resetsAt: null, projected: false,
+    }
+    if (w) windows.set(r, w)
   }
-  if (!window) return unavailable('reset-unavailable')
+  if (!windows.size) return unavailable('reset-unavailable')
+  const earliest = Math.min(...[...windows.values()].map(w => Date.parse(w.since)))
   let key
   try { key = parseKey(env.PROMPT_ENC_KEY) } catch { return reply(503, { error: 'Project names are temporarily unavailable.' }) }
   const budget = deadline(Math.min(budgetMs, 20000))
@@ -145,7 +155,7 @@ export async function handleLimitProjects(req, rawCtx) {
   }
   // Events are partitioned by machine-local dates (+/-14h), but filtered by
   // their UTC timestamps. Read the bordering dates; never prorate a day.
-  const dates = datesBetween(new Date(Date.parse(window.since) - DAY).toISOString(), new Date(nowMs + DAY).toISOString())
+  const dates = datesBetween(new Date(earliest - DAY).toISOString(), new Date(nowMs + DAY).toISOString())
   const [partitions, metadata] = await Promise.all([
     Promise.all(dates.map(d => readDay(d))), getPromptWorkspaces(store, key, nowMs),
   ])
@@ -157,41 +167,48 @@ export async function handleLimitProjects(req, rawCtx) {
   }
   const events = [...unique.values()].filter(event => {
     const ts = Date.parse(event.ts)
-    return Number.isFinite(ts) && ts >= Date.parse(window.since) && ts < nowMs
+    return Number.isFinite(ts) && ts >= earliest && ts < nowMs
   })
   const names = await projectNames(store, key, metadata, events, readDay, checkBudget, nowMs)
   checkBudget()
   const groups = new Map(metadata.workspaces.map(g => [g.key, g]))
-  const totals = { tokens: 0, exactTokens: 0, estimatedTokens: 0, calls: 0, uncertainTokens: 0 }
-  const projects = new Map()
-  let timingLimited = meter.provider === 'cursor'
-  for (const e of events) {
-    if (e.kind !== 'usage') continue
-    if (e.tsQ === 'session-start' || (e.source === 'cursor' && e.tsQ !== 'event')) {
-      timingLimited = true
-      continue
+  const summarise = (r, window) => {
+    const since = Date.parse(window.since)
+    const totals = { tokens: 0, exactTokens: 0, estimatedTokens: 0, calls: 0, uncertainTokens: 0 }
+    const projects = new Map()
+    let timingLimited = meter.provider === 'cursor'
+    for (const e of events) {
+      if (e.kind !== 'usage' || Date.parse(e.ts) < since) continue
+      if (e.tsQ === 'session-start' || (e.source === 'cursor' && e.tsQ !== 'event')) {
+        timingLimited = true
+        continue
+      }
+      const tokens = tokenCount(e)
+      if (!labelled(e.acctQ)) { totals.uncertainTokens += tokens; continue }
+      if (!tokens) continue
+      const group = groups.get(names.get(e.ws))
+      // One row per project name: the same repository on two machines has
+      // two paths, and the owner reads it as one project.
+      const projectKey = group?.label?.toLowerCase() || 'unassigned'
+      let project = projects.get(projectKey)
+      if (!project) {
+        project = { key: group?.key || 'unassigned', name: group?.label || 'Unassigned project', path: group?.path || '', tokens: 0, exactTokens: 0, estimatedTokens: 0, calls: 0 }
+        projects.set(projectKey, project)
+      }
+      const tier = e.q === 'estimated' ? 'estimatedTokens' : 'exactTokens'
+      project.tokens += tokens
+      project[tier] += tokens
+      project.calls += e.calls || 1
+      totals.tokens += tokens
+      totals[tier] += tokens
+      totals.calls += e.calls || 1
     }
-    const tokens = tokenCount(e)
-    if (!labelled(e.acctQ)) { totals.uncertainTokens += tokens; continue }
-    if (!tokens) continue
-    const group = groups.get(names.get(e.ws))
-    const projectKey = group?.key || 'unassigned'
-    let project = projects.get(projectKey)
-    if (!project) {
-      project = { key: projectKey, name: group?.label || 'Unassigned project', path: group?.path || '', tokens: 0, exactTokens: 0, estimatedTokens: 0, calls: 0 }
-      projects.set(projectKey, project)
-    }
-    const tier = e.q === 'estimated' ? 'estimatedTokens' : 'exactTokens'
-    project.tokens += tokens
-    project[tier] += tokens
-    project.calls += e.calls || 1
-    totals.tokens += tokens
-    totals[tier] += tokens
-    totals.calls += e.calls || 1
+    const ranked = [...projects.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name))
+      .map(p => ({ ...p, percent: totals.tokens ? 100 * p.tokens / totals.tokens : 0 }))
+    return { range: r, ...stamp, ...window, available: true, totals, projects: ranked, timingLimited, undecryptablePrompts: metadata.undecryptable }
   }
-  const ranked = [...projects.values()].sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name))
-    .map(p => ({ ...p, percent: totals.tokens ? 100 * p.tokens / totals.tokens : 0 }))
-  return reply(200, { ...base, ...window, available: true, totals, projects: ranked, timingLimited, undecryptablePrompts: metadata.undecryptable })
+  const noReset = unavailableBody('reset-unavailable')
+  return respond(r => windows.has(r) ? summarise(r, windows.get(r)) : noReset(r))
 }
 
 handleLimitProjects.responseHeaders = PRIVATE

@@ -1,6 +1,7 @@
 package evidence_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/claude"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/codex"
 	"github.com/7-of-9/tokenmaxr/collector/internal/sources/grok"
+	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 )
 
 var key = []byte("0123456789abcdef0123456789abcdef")
@@ -474,5 +476,67 @@ func TestOrgMapLiveLoginBeatsRank(t *testing.T) {
 	hint := sources.Hint{Kind: sources.HintOrg, ID: "a_org", At: t0}
 	if a, q, _ := ix.Recorded(p, "", t0.Add(time.Minute), "s", hint); a != "a_seat2" || q != model.AcctRecorded {
 		t.Errorf("%s %s", a, q)
+	}
+}
+
+// The owner's sequence: a session runs on account A, then /login moves it to
+// account B without the session stopping. Real history, snapshot and transcript
+// files, read in two passes like a live collector, including the stale bridge
+// record that once sent B's usage to A.
+func TestLoginInsideRunningSession(t *testing.T) {
+	p := model.ProviderAnthropic
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "projects", "p", "s1.jsonl")
+	login := at("2026-09-29T10:30:00Z")
+	write(t, filepath.Join(home, ".claude", "history.jsonl"),
+		fmt.Sprintf(`{"display":"/login","timestamp":%d,"project":"/x"}`, login.UnixMilli()))
+	write(t, filepath.Join(home, ".claude.json"),
+		`{"oauthAccount":{"accountUuid":"`+acctB+`","emailAddress":"b@example.test","organizationUuid":"`+orgB+`"}}`)
+	before := []string{credOrg(orgA, "2026-09-29T10:00:00Z"), assistant("1", "2026-09-29T10:01:00Z")}
+	after := []string{
+		assistant("2", "2026-09-29T10:31:00Z"), // after /login, before the session names its new org
+		credOrg(orgB, "2026-09-29T10:32:00Z"),
+		`{"type":"bridge-session","sessionId":"s1","bridgeSessionId":"cse_x","ownerAccountUuid":"` + acctA + `","ownerOrganizationUuid":"` + orgB + `"}`,
+		assistant("3", "2026-09-29T10:33:00Z"),
+	}
+	write(t, path, before...)
+	a, b := hash(p, acctA), hash(p, acctB)
+	ivs := []store.Interval{
+		{Provider: p, Acct: a, From: at("2026-09-29T09:00:00Z"), To: at("2026-09-29T10:29:50Z")},
+		{Provider: p, Acct: b, From: at("2026-09-29T10:30:50Z"), To: at("2026-09-29T11:00:00Z")},
+	}
+	got := map[string]string{}
+	marks := map[string]evidence.Mark{}
+	recs := []evidence.Record{{Provider: p, Kind: evidence.KindOrgMap, Source: evidence.SrcClaudeBackup, Org: org(p, orgA), Acct: a}}
+	parse := func(cur sources.Cursor) sources.Cursor {
+		// One harvest per tick with kept marks, as a live collector does: the
+		// snapshot is read on the first tick, the bridge record on a later one.
+		res := evidence.Harvest(evidence.Options{Home: home, Hash: hash}, marks)
+		if !res.Complete {
+			t.Fatal("harvest incomplete")
+		}
+		recs = evidence.Merge(recs, res.Records)
+		ix := evidence.Build(recs, accounts.Spans(ivs))
+		e := env(home, ix)
+		e.Attribute = func(provider string, ts time.Time, sessionID string, h sources.Hint) (string, string) {
+			return accounts.Resolve(ivs, ix, "", provider, ts, sessionID, h)
+		}
+		batch, next, err := claude.New().Parse(e, path, cur)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range batch.Usage {
+			got[u.TS.Format("15:04")] = u.Acct + "/" + u.AcctQ
+		}
+		return next
+	}
+	cur := parse(sources.Cursor{})
+	write(t, path, append(before, after...)...)
+	parse(cur)
+	want := map[string]string{"10:01": a + "/recorded", "10:31": b + "/timeline", "10:33": b + "/recorded"}
+	for ts, w := range want {
+		if got[ts] != w {
+			t.Errorf("%s: got %s, want %s", ts, got[ts], w)
+		}
 	}
 }

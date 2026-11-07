@@ -45,6 +45,9 @@ export type ProjectUsageResponse = ProjectUsage | {
   projects: []
 }
 
+/** Every period of one account, from one request. */
+export type ProjectUsageSet = Record<ProjectRange, ProjectUsageResponse>
+
 export function formatProjectShare(percent: number): string {
   return percent > 0 && percent < 0.01 ? '<0.01%' : `${percent.toLocaleString('en-GB', { maximumFractionDigits: 2 })}%`
 }
@@ -64,4 +67,36 @@ export function mockProjectUsage(resetsAt: number, now = Date.now(), range: Proj
     totals: { tokens: 280_000_000, exactTokens: 280_000_000, estimatedTokens: 0, calls: 970, uncertainTokens: 0 },
     projects, undecryptablePrompts: 0,
   }
+}
+
+export function mockProjectUsageSet(resetsAt: number, now = Date.now()): ProjectUsageSet {
+  return Object.fromEntries(PROJECT_RANGES.map(([range]) => [range, mockProjectUsage(resetsAt, now, range)])) as ProjectUsageSet
+}
+
+const CACHE_STORAGE = 'd0m1.tokens.projects.cache'
+const CACHE_MAX_AGE_MS = 7 * 86_400_000
+export interface CachedProjectUsage { data: ProjectUsageSet; at: number }
+
+/** The last good readings, so a reload paints at once and refreshes behind it. Only the owner's own browser holds this. */
+export function readProjectCache(owner: string, now = Date.now()): Record<string, CachedProjectUsage> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CACHE_STORAGE) || 'null') as { owner?: string; accounts?: Record<string, CachedProjectUsage> } | null
+    if (parsed?.owner !== owner || !parsed.accounts) return {}
+    return Object.fromEntries(Object.entries(parsed.accounts).filter(([, entry]) => now - entry.at < CACHE_MAX_AGE_MS &&
+      PROJECT_RANGES.every(([range]) => Array.isArray(entry.data?.[range]?.projects))))
+  } catch { return {} }
+}
+
+/** Project names only: the full paths stay out of browser storage. */
+export function writeProjectCache(owner: string, accountKey: string, data: ProjectUsageSet, at: number) {
+  try {
+    const stripped = Object.fromEntries(PROJECT_RANGES.map(([range]) => [range, { ...data[range],
+      projects: data[range].projects.map(project => ({ ...project, path: '' })) }])) as ProjectUsageSet
+    const accounts = { ...readProjectCache(owner, at), [accountKey]: { data: stripped, at } }
+    localStorage.setItem(CACHE_STORAGE, JSON.stringify({ owner, accounts }))
+  } catch { /* Storage may be blocked or full: the page simply reads again next time. */ }
+}
+
+export function clearProjectCache() {
+  try { localStorage.removeItem(CACHE_STORAGE) } catch { /* Storage may be blocked. */ }
 }
