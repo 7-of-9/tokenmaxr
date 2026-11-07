@@ -123,8 +123,10 @@ export async function runScenario(t, { call, store }) {
   })
   const allIds = [...A.usage, ...A.activity.slice(0, 2), ...A.prompts].map((x) => x.id)
 
-  const getUsage = async () => {
-    const r = await call('GET', '/api/usage?days=1500')
+  // The owner's view: data checks need the machine names and countries. Signed-out
+  // reads are covered in 'usage totals, machines and privacy'.
+  const getUsage = async (headers = owner) => {
+    const r = await call('GET', '/api/usage?days=1500', { headers })
     assert.equal(r.status, 200, r.raw)
     return r
   }
@@ -229,7 +231,7 @@ export async function runScenario(t, { call, store }) {
   })
 
   await t.test('usage totals, machines and privacy', async () => {
-    const u = await getUsage()
+    const u = await getUsage({})
     assert.match(u.headers.get('cache-control'), /public, max-age=60/)
     const { totals } = u.body
     assert.equal(totals.accounts, 5)
@@ -239,15 +241,40 @@ export async function runScenario(t, { call, store }) {
     assert.ok(u.body.lastIngestAt)
     assert.equal(u.body.firstDate, '2026-09-20')
     assert.equal('ratios' in u.body, false)
-    // Public machine list: cleaned labels and countries from the heartbeats.
-    assert.deepEqual(u.body.machines.map(({ id, label, cc, os, live }) => ({ id, label, cc, os, live })), [
+    // Signed out: numbered machines, no name, country, OS or seen times.
+    assert.deepEqual(u.body.machines, [
+      { id: machine1, label: 'Machine 1', cc: '', os: '', live: true, lastSeenAt: null, firstSeenAt: null },
+      { id: machine2, label: 'Machine 2', cc: '', os: '', live: true, lastSeenAt: null, firstSeenAt: null },
+    ])
+    for (const day of u.body.days) for (const p of Object.values(day.providers)) {
+      assert.deepEqual(Object.keys(p.byCountry || {}).filter((cc) => cc !== 'ZZ'), [], `${day.date} leaks a country`)
+      for (const ws of Object.values(p.byWorkspace || {})) assert.deepEqual(Object.keys(ws.byCountry || {}).filter((cc) => cc !== 'ZZ'), [])
+    }
+    for (const secret of ['Studio PC', 'test-machine-2', '"DE"', '"GB"']) assert.ok(!u.raw.includes(secret), `signed-out usage leaks ${secret}`)
+    // Country totals still add up to the provider totals.
+    const day = u.body.days.find((d) => d.providers.anthropic)
+    const p = day.providers.anthropic
+    const machineIn = Object.values(p.byMachine).reduce((sum, m) => sum + m.in, 0)
+    assert.equal(p.byCountry.ZZ.in, machineIn)
+    // The owner sees the names and countries, privately and uncached.
+    const mine = await call('GET', '/api/usage?days=1500', { headers: owner })
+    assert.match(mine.headers.get('cache-control'), /private, no-store/)
+    assert.deepEqual(mine.body.machines.map(({ id, label, cc, os, live }) => ({ id, label, cc, os, live })), [
       { id: machine1, label: 'Studio PC', cc: 'DE', os: 'windows', live: true },
       { id: machine2, label: 'test-machine-2', cc: 'GB', os: 'windows', live: true },
     ])
-    for (const m of u.body.machines) {
+    for (const m of mine.body.machines) {
       assert.deepEqual(Object.keys(m).sort(), ['cc', 'firstSeenAt', 'id', 'label', 'lastSeenAt', 'live', 'os'])
       assert.ok(Date.parse(m.firstSeenAt) && Date.parse(m.lastSeenAt))
     }
+    assert.ok(mine.body.days.some((d) => Object.values(d.providers).some((p) => p.byCountry && (p.byCountry.DE || p.byCountry.GB))))
+    // A signed-in GitHub user who is not the owner is treated as signed out.
+    const notOwner = await call('GET', '/api/usage?days=1500', { headers: stranger })
+    assert.equal(notOwner.body.machines[0].label, 'Machine 1')
+    // A cross-origin page never gets the owner's view, even with a principal.
+    const crossOrigin = await call('GET', '/api/usage?days=1500', { headers: { ...owner, origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' } })
+    assert.equal(crossOrigin.status, 200)
+    assert.equal(crossOrigin.body.machines[0].label, 'Machine 1')
     // Only the last 2 days: firstDate still reports the first data.
     const recent = await call('GET', '/api/usage?days=2')
     assert.equal(recent.body.firstDate, '2026-09-20')

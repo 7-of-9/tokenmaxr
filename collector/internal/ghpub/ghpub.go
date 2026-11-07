@@ -9,15 +9,17 @@
 // it already has one, so account hashes match a private server), later
 // machines read it.
 //
-// Everything Files produces is public by design: per-machine meta (a public
-// label, never the hostname; the country only when the owner opts in), daily
-// token and prompt totals per provider, source, model, account hash and event
-// quality, and (only when the owner opts in, as UTC days next to local dates
-// reveal the time zone's offset) account history: provider account totals per
-// UTC day with the local tokens per UTC day they reconcile against. No event,
-// prompt text, path or project ever leaves the machine this way. Quota meters
-// (plans, account emails, organisations, reset times) are published only
-// encrypted, for the owner's eyes (owner.go: owner.json).
+// Everything Files produces is public by design: per-machine meta (the random
+// machine id, collector version and publish time: nothing that names or places
+// the machine), daily token and prompt totals per provider, source, model,
+// account hash and event quality, and (only when the owner opts in, as UTC days
+// next to local dates reveal the time zone's offset) account history: provider
+// account totals per UTC day with the local tokens per UTC day they reconcile
+// against. No event, prompt text, path or project ever leaves the machine this
+// way. The machine's label, OS, country (only when the owner opts in) and first
+// and last seen times, and the quota meters (plans, account emails,
+// organisations, reset times), are published only encrypted, for the owner's
+// eyes (owner.go: owner.json).
 //
 // PublishSite (site.go) keeps the repository's dashboard, site/, at the
 // newest build any of its collectors carries.
@@ -55,7 +57,8 @@ const (
 	// Schema is the published file format version. Schema 2 added columns
 	// (readers find them by name in "cols", so schema 1 files still read)
 	// and the meta fields cc, firstSeenAt and lastEventAt, and the file
-	// account-usage.json.
+	// account-usage.json. Since 0.4.31 meta.json no longer carries label, os,
+	// cc, firstSeenAt or lastEventAt: owner.json (v2) does, encrypted.
 	Schema = 2
 )
 
@@ -191,7 +194,9 @@ func NewMachineID() string {
 	return "m_" + hex.EncodeToString(b)
 }
 
-// Machine is how this machine appears in the repository.
+// Machine is how this machine appears in the repository: ID and Collector in
+// the public meta.json, the rest only in the encrypted owner.json
+// (MachineInfo).
 type Machine struct {
 	ID, Label, OS, Collector string
 	// CC is the ISO 3166-1 alpha-2 country of the machine's time zone, set
@@ -275,18 +280,13 @@ func StaleQuota(paths []string) []string {
 	return out
 }
 
+// metaFile is the public meta.json: nothing that names or places the machine
+// (owner.json carries that, encrypted).
 type metaFile struct {
 	Schema    int       `json:"schema"`
 	ID        string    `json:"id"`
-	Label     string    `json:"label"`
-	OS        string    `json:"os"`
 	Collector string    `json:"collector"`
 	UpdatedAt time.Time `json:"updatedAt"`
-	CC        string    `json:"cc,omitempty"`
-	// FirstSeenAt is the machine-local date of the first data.
-	FirstSeenAt string `json:"firstSeenAt,omitempty"`
-	// LastEventAt is RFC 3339 UTC, to the minute.
-	LastEventAt string `json:"lastEventAt,omitempty"`
 }
 
 // country returns cc when it is an upper-case two-letter code, else "".
@@ -305,7 +305,7 @@ func marshal(v any) []byte {
 	return append(b, '\n')
 }
 
-// Files builds the machine's files: meta.json, one usage-YYYY-MM.json per
+// Files builds the machine's public files: meta.json, one usage-YYYY-MM.json per
 // month with data, account-usage.json (none when history has neither totals
 // nor ledger), and the deletion of a quota.json an older collector published
 // (Publish commits it only while that file is published). Deterministic for
@@ -329,20 +329,7 @@ func Files(m Machine, rows []rollup.Row, history AccountHistory, now time.Time) 
 	if f, ok := accountUsage(m.ID, history); ok {
 		files = append(files, ghapi.File{Path: AccountUsagePath(m.ID), Content: marshal(f)})
 	}
-	meta := metaFile{Schema: Schema, ID: m.ID, Label: m.Label, OS: m.OS, Collector: m.Collector, UpdatedAt: now.UTC().Truncate(time.Second), CC: country(m.CC)}
-	for _, r := range rows {
-		if len(r.Date) == len("2006-01-02") && (meta.FirstSeenAt == "" || r.Date < meta.FirstSeenAt) {
-			meta.FirstSeenAt = r.Date
-		}
-	}
-	if !m.LastEventAt.IsZero() {
-		// An event stamped ahead of the clock is never "seen" in the future.
-		last := m.LastEventAt
-		if last.After(now) {
-			last = now
-		}
-		meta.LastEventAt = last.UTC().Truncate(time.Minute).Format(time.RFC3339)
-	}
+	meta := metaFile{Schema: Schema, ID: m.ID, Collector: m.Collector, UpdatedAt: now.UTC().Truncate(time.Second)}
 	files = append(files, ghapi.File{Path: dir + "/meta.json", Content: marshal(meta)})
 	return files
 }
@@ -398,10 +385,11 @@ func Hash(b []byte) string {
 // Hash) in one commit, with meta.json and the data/index.json that lists them
 // (index.go), and returns the new hashes of every committed path of files
 // ("" for a path deleted: a File.Delete is committed only for a path in
-// published). When no data file changed, nothing is committed
-// unless refreshMeta (e.g. a daily "last seen"). A branch moved by another
-// machine is retried: each machine writes only its own paths, and the index
-// anew from the head it commits on.
+// published). When no data file changed, nothing is committed unless
+// refreshMeta (e.g. a daily "last seen", which owner.json carries). label
+// names the commit: the machine id, never its name (the repository's history
+// is public). A branch moved by another machine is retried: each machine
+// writes only its own paths, and the index anew from the head it commits on.
 func Publish(ctx context.Context, c *ghapi.Client, repo, branch, label string, files []ghapi.File, published map[string]string, refreshMeta bool) (map[string]string, error) {
 	var commit []ghapi.File
 	changed := map[string]string{}

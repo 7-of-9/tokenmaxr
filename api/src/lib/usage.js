@@ -1,5 +1,7 @@
 // GET /api/usage?days=371|all (SPEC "Read API"). Public: day aggregates plus
-// the machines list, whose labels and countries are public by owner decision.
+// an anonymous machine list ("Machine 1".."Machine N", no country, OS or seen
+// times; country splits collapse to ZZ). The signed-in owner gets the labels and
+// countries, privately and uncached (owner direction 2026-11-07).
 // Never account/workspace hashes or labels, workspace paths, project names or prompt text.
 import { error, json } from './http.js'
 import { resolveCtx } from './context.js'
@@ -8,6 +10,7 @@ import { num } from './tables.js'
 import { needsRecompute, needsUpgrade, recomputeDay } from './days.js'
 import { ROLLUP_DATA_PROPS, aliasAccts, hasData, legacyShape } from './rollup.js'
 import { PROVIDERS, cleanCountry, cleanLabel } from './validate.js'
+import { ownerDecision } from './auth.js'
 import { privateRollupData, readAccountUsage, reconcileAccountUsage, surroundingDates } from './account-usage.js'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -117,7 +120,8 @@ export async function handleUsage(req, rawCtx) {
   for (const m of machineRows) {
     if (m.lastIngestAt && (!lastIngestAt || m.lastIngestAt > lastIngestAt)) lastIngestAt = m.lastIngestAt
   }
-  const machines = publicMachines(machineRows, now)
+  const owner = ownerDecision(req.headers, (rawCtx?.env ?? process.env).AGENTS_OWNER_IDS || '').status === 200
+  const machines = owner ? publicMachines(machineRows, now) : anonymousMachines(publicMachines(machineRows, now))
 
   const firstDate = reconciled.days.find(hasData)?.date ?? null
 
@@ -125,7 +129,7 @@ export async function handleUsage(req, rawCtx) {
     generatedAt: now.toISOString(),
     lastIngestAt,
     firstDate,
-    days: aliasAccts(dayList),
+    days: owner ? aliasAccts(dayList) : withoutCountries(aliasAccts(dayList)),
     accountUsagePending: reconciled.pending,
     accountUsageConflicts: reconciled.conflicts,
     machines,
@@ -135,7 +139,7 @@ export async function handleUsage(req, rawCtx) {
       machines: machines.length,
       machinesLive: machines.filter((m) => m.live).length,
     },
-  }, { 'Cache-Control': 'public, max-age=60' })
+  }, owner ? { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } : { 'Cache-Control': 'public, max-age=60', Vary: 'Cookie' })
 }
 
 // The public machine list: an explicit allow-list of fields, so nothing else
@@ -152,4 +156,29 @@ export function publicMachines(rows, now) {
       firstSeenAt: m.enrolledAt || null,
     }))
     .sort((a, b) => (a.firstSeenAt || '').localeCompare(b.firstSeenAt || '') || a.id.localeCompare(b.id))
+}
+
+// Signed out: machines keep only their opaque id and liveness, numbered in the
+// order they enrolled. Ids are random and appear nowhere else in public.
+export function anonymousMachines(machines) {
+  return machines.map((m, i) => ({ id: m.id, label: `Machine ${i + 1}`, cc: '', os: '', live: m.live, lastSeenAt: null, firstSeenAt: null }))
+}
+
+const sumPlaces = (places) => {
+  const out = {}
+  for (const place of Object.values(places || {})) for (const [k, v] of Object.entries(place)) if (typeof v === 'number') out[k] = (out[k] || 0) + v
+  return out
+}
+const oneCountry = (byCountry) => (byCountry && Object.keys(byCountry).length ? { ZZ: sumPlaces(byCountry) } : {})
+
+// Every country split becomes one unknown bucket, so totals still add up.
+export function withoutCountries(days) {
+  return days.map((day) => ({
+    ...day,
+    providers: Object.fromEntries(Object.entries(day.providers || {}).map(([name, p]) => [name, {
+      ...p,
+      byCountry: oneCountry(p.byCountry),
+      ...(p.byWorkspace ? { byWorkspace: Object.fromEntries(Object.entries(p.byWorkspace).map(([w, ws]) => [w, { ...ws, byCountry: oneCountry(ws.byCountry) }])) } : {}),
+    }])),
+  }))
 }

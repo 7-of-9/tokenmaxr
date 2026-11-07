@@ -17,8 +17,16 @@ import (
 	"github.com/7-of-9/tokenmaxr/collector/internal/store"
 )
 
-// ownerItems decrypts machine dir's owner.json as the dashboard does.
+// ownerItems decrypts machine dir's owner.json as the dashboard does: its
+// meter rows.
 func ownerItems(t *testing.T, a *App, f *ghapitest.Fake, id string) []map[string]any {
+	t.Helper()
+	items, _ := ownerBody(t, a, f, id)
+	return items
+}
+
+// ownerBody is machine dir's owner.json opened: its rows and the machine.
+func ownerBody(t *testing.T, a *App, f *ghapitest.Fake, id string) ([]map[string]any, map[string]any) {
 	t.Helper()
 	file, ok := f.Files[ghpub.OwnerPath(id)]
 	if !ok {
@@ -29,13 +37,14 @@ func ownerItems(t *testing.T, a *App, f *ghapitest.Fake, id string) []map[string
 		t.Fatal(err)
 	}
 	var body struct {
-		V     int              `json:"v"`
-		Items []map[string]any `json:"items"`
+		V       int              `json:"v"`
+		Items   []map[string]any `json:"items"`
+		Machine map[string]any   `json:"machine"`
 	}
-	if err := json.Unmarshal(pt, &body); err != nil || body.V != 1 {
+	if err := json.Unmarshal(pt, &body); err != nil || body.V != 2 || body.Items == nil || body.Machine == nil {
 		t.Fatalf("plaintext %s: %v", pt, err)
 	}
-	return body.Items
+	return body.Items, body.Machine
 }
 
 // writeClaudeMeter gives the test home's Claude login a weekly meter that
@@ -194,8 +203,9 @@ func TestGitHubSweepsQuotaFilesOnce(t *testing.T) {
 }
 
 // A meter whose account is no longer signed in takes the email from the
-// account's local label; meters only read again ride along with a commit
-// that happens anyway; no fleet key, no owner.json.
+// account's local label; meters only read again, and a newer last event, ride
+// along with a commit that happens anyway; a machine with no meters still has
+// its owner.json (its name); no fleet key, no owner.json.
 func TestOwnerFileRows(t *testing.T) {
 	k := make([]byte, 32)
 	cfg := store.DefaultConfig()
@@ -208,12 +218,14 @@ func TestOwnerFileRows(t *testing.T) {
 	meters := []model.LimitSnapshot{{ID: strings.Repeat("1", 32), Provider: "anthropic", Source: "claude-code", Acct: "a_0123456789abcdef", AcctQ: "recorded",
 		Window: "week", UsedPercent: &used, ObservedAt: now.Add(-time.Minute)}}
 	id := "m_0123456789ab"
-	file, says, err := ownerFile(&cfg, sec, st, id, meters, nil, false, now)
+	info := ghpub.OwnerMachine{Label: "laptop", OS: "windows", CC: "GB", FirstSeenAt: "2026-09-01", LastEventAt: "2026-10-01T11:58:00Z"}
+	file, says, err := ownerFile(&cfg, sec, st, id, info, meters, nil, false, now)
 	if err != nil || file == nil || file.Delete {
 		t.Fatalf("owner file %+v: %v", file, err)
 	}
 	pt, err := ghpub.OpenOwner(k, id, file.Content)
-	if err != nil || !strings.Contains(string(pt), `"label":"old@example.com"`) || strings.Contains(string(pt), "Old Org") {
+	if err != nil || !strings.Contains(string(pt), `"label":"old@example.com"`) || strings.Contains(string(pt), "Old Org") ||
+		!strings.Contains(string(pt), `"machine":{"label":"laptop","os":"windows","cc":"GB","firstSeenAt":"2026-09-01","lastEventAt":"2026-10-01T11:58:00Z"}`) {
 		t.Fatalf("plaintext %s: %v", pt, err)
 	}
 	st.GitHub.Published = map[string]string{ghpub.OwnerPath(id): ghpub.Hash(file.Content)}
@@ -221,20 +233,52 @@ func TestOwnerFileRows(t *testing.T) {
 
 	again := []model.LimitSnapshot{meters[0]}
 	again[0].ObservedAt = now
-	if f, _, _ := ownerFile(&cfg, sec, st, id, again, nil, false, now); f != nil {
+	if f, _, _ := ownerFile(&cfg, sec, st, id, info, again, nil, false, now); f != nil {
 		t.Fatal("read again: committed by itself")
 	}
+	later := info
+	later.LastEventAt = "2026-10-01T12:00:00Z"
+	if f, _, _ := ownerFile(&cfg, sec, st, id, later, again, nil, false, now); f != nil {
+		t.Fatal("a newer last event: committed by itself")
+	}
 	usage := []ghapi.File{{Path: ghpub.MachineDir(id) + "/usage-2026-10.json", Content: []byte("{}")}}
-	if f, _, _ := ownerFile(&cfg, sec, st, id, again, usage, false, now); f == nil {
+	f, _, _ := ownerFile(&cfg, sec, st, id, later, again, usage, false, now)
+	if f == nil {
 		t.Fatal("read again: not with another file's commit")
 	}
-	if f, _, _ := ownerFile(&cfg, sec, st, id, again, nil, true, now); f == nil {
+	if pt, _ := ghpub.OpenOwner(k, id, f.Content); !strings.Contains(string(pt), `"lastEventAt":"2026-10-01T12:00:00Z"`) {
+		t.Fatalf("the newer last event did not ride along: %s", pt)
+	}
+	if f, _, _ := ownerFile(&cfg, sec, st, id, later, again, nil, true, now); f == nil {
 		t.Fatal("read again: not with the daily meta.json refresh")
 	}
-	if f, _, _ := ownerFile(&cfg, store.Secrets{}, st, id, again, usage, false, now); f == nil || !f.Delete {
+	renamed := info
+	renamed.Label = "desk"
+	if f, _, _ := ownerFile(&cfg, sec, st, id, renamed, meters, nil, false, now); f == nil || f.Delete {
+		t.Fatal("a new machine name was not committed")
+	}
+	if f, _, _ := ownerFile(&cfg, store.Secrets{}, st, id, info, again, usage, false, now); f == nil || !f.Delete {
 		t.Fatalf("no fleet key: %+v", f)
 	}
-	if f, _, _ := ownerFile(&cfg, sec, st, id, nil, usage, false, now); f == nil || !f.Delete {
-		t.Fatalf("no meters: %+v", f)
+	if f, _, _ := ownerFile(&cfg, store.Secrets{}, store.NewState(), id, info, again, usage, false, now); f != nil {
+		t.Fatalf("no fleet key, none published: %+v", f)
+	}
+
+	// No meters: the machine alone, committed (it changed), and again only
+	// when it changes.
+	f, says, err = ownerFile(&cfg, sec, st, id, info, nil, usage, false, now)
+	if err != nil || f == nil || f.Delete {
+		t.Fatalf("no meters: %+v %v", f, err)
+	}
+	if pt, err := ghpub.OpenOwner(k, id, f.Content); err != nil || string(pt) != `{"v":2,"items":[],"machine":{"label":"laptop","os":"windows","cc":"GB","firstSeenAt":"2026-09-01","lastEventAt":"2026-10-01T11:58:00Z"}}` {
+		t.Fatalf("no meters plaintext %s: %v", pt, err)
+	}
+	st.GitHub.Owner = says
+	if f, _, _ := ownerFile(&cfg, sec, st, id, later, nil, nil, false, now); f != nil {
+		t.Fatal("no meters, a newer last event: committed by itself")
+	}
+	none := store.NewState()
+	if f, _, _ := ownerFile(&cfg, sec, none, id, info, nil, nil, false, now); f == nil || f.Delete {
+		t.Fatal("no meters, never published: not published")
 	}
 }

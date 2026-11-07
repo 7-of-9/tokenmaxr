@@ -26,6 +26,8 @@ export interface UsageSource {
   pollMs: number
   /** The whole history. Aborting `signal` (with a reason) must reject with that reason. */
   fetchUsage(signal: AbortSignal, progress: (transfer: UsageTransfer) => void): Promise<UsageResponse>
+  /** The response holds what only the owner may see (the Pages dashboard's decrypted machine names): never cached. */
+  isPrivate?(data: UsageResponse): boolean
   /** Per-model prompt counts, or null when the source has none beyond what fetchUsage returned. */
   fetchPromptCounts(signal: AbortSignal): Promise<PromptCountsResponse | null>
   /**
@@ -58,6 +60,8 @@ export function apiSource(origin: string): UsageSource {
     collectorHref: '/collector',
     publicHref: D0M1_PUBLIC_DASHBOARD,
     pollMs: 15_000,
+    // Signed out, the API names machines "Machine N" with no country; anything else is the owner's view.
+    isPrivate: data => (data.machines ?? []).some(m => m.cc !== '' || !/^Machine \d+$/.test(m.label)),
     async fetchUsage(signal, progress) {
       const response = await fetch('/api/usage?days=all', {
         cache: 'no-store',

@@ -22,6 +22,7 @@ interface FlagProps {
 
 const Flag = ({ cc, title }: FlagProps) => {
   const code = (cc || '').toUpperCase()
+  // An empty code means the country is withheld (signed-out view): draw nothing.
   const [svg, setSvg] = useState(() => cache.get(code) ?? null)
 
   useEffect(() => {
@@ -50,6 +51,7 @@ const Flag = ({ cc, title }: FlagProps) => {
     }
   }, [code])
 
+  if (!code) return null
   if (!loaders.has(code)) {
     return (
       <svg className="agents-flag agents-flag--none" viewBox="0 0 18 12" role={title ? 'img' : undefined} aria-label={title} aria-hidden={title ? undefined : true}>

@@ -1,11 +1,13 @@
 package ghpub
 
-// owner.json: the owner's plan limits on the public dashboard, encrypted.
-// GitHub Pages has no sign-in, so what only the owner may read on a server's
-// Agents page (account emails, organisation names, plans, reset times) is
-// published encrypted, one file per machine, and the dashboard decrypts it in
-// the owner's browser with the owner key (pages/dashboard/owner.ts has the
-// contract; pages/dashboard/testdata/owner-vector.json is its test vector):
+// owner.json: the owner's plan limits and machine names on the public
+// dashboard, encrypted. GitHub Pages has no sign-in, so what only the owner may
+// read on a server's Agents page (account emails, organisation names, plans,
+// reset times), and what a server shows only its signed-in owner (machine
+// names, OS, countries, first and last seen), is published encrypted, one file
+// per machine, and the dashboard decrypts it in the owner's browser with the
+// owner key (pages/dashboard/owner.ts has the contract;
+// pages/dashboard/testdata/owner-vector.json is its test vector):
 //
 //   - data/machines/<id>/owner.json = {"schema":1,"machine":"<id>",
 //     "alg":"A256GCM","nonce":"<base64, 12 bytes>","data":"<base64 of
@@ -13,8 +15,10 @@ package ghpub
 //   - owner key = HMAC-SHA256(K, OwnerContext); the dashboard never sees K
 //   - AAD = OwnerContext + "|" + machine id, so a file opens only as its own
 //     machine's
-//   - plaintext = {"v":1,"items":[...]}: the rows GET /api/limits returns on
-//     a server for this machine's snapshots (OwnerRows)
+//   - plaintext = {"v":2,"items":[...],"machine":{...}}: the rows GET
+//     /api/limits returns on a server for this machine's snapshots
+//     (OwnerRows), and the machine as its owner sees it (MachineInfo); v1
+//     (collectors before 0.4.31) has the rows only
 
 import (
 	"bytes"
@@ -36,6 +40,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/7-of-9/tokenmaxr/collector/internal/model"
+	"github.com/7-of-9/tokenmaxr/collector/internal/rollup"
 )
 
 const (
@@ -222,8 +227,42 @@ func OwnerRows(snaps []model.LimitSnapshot, now time.Time) []OwnerRow {
 	return rows
 }
 
-// OwnerPlaintext is the plaintext owner.json carries: {"v":1,"items":rows}.
-func OwnerPlaintext(rows []OwnerRow) []byte {
+// OwnerMachine is the machine as its owner sees it, in owner.json v2: what
+// the public meta.json carried before 0.4.31, in the dashboard's field names
+// (PublicMachine).
+type OwnerMachine struct {
+	Label string `json:"label"`
+	OS    string `json:"os"`
+	// CC only when the owner opted in (Machine.CC).
+	CC string `json:"cc,omitempty"`
+	// FirstSeenAt is the machine-local date of the first data.
+	FirstSeenAt string `json:"firstSeenAt,omitempty"`
+	// LastEventAt is RFC 3339 UTC, to the minute.
+	LastEventAt string `json:"lastEventAt,omitempty"`
+}
+
+// MachineInfo is m as owner.json names it, with rows (the rollup's) at now.
+func MachineInfo(m Machine, rows []rollup.Row, now time.Time) OwnerMachine {
+	info := OwnerMachine{Label: m.Label, OS: m.OS, CC: country(m.CC)}
+	for _, r := range rows {
+		if len(r.Date) == len("2006-01-02") && (info.FirstSeenAt == "" || r.Date < info.FirstSeenAt) {
+			info.FirstSeenAt = r.Date
+		}
+	}
+	if !m.LastEventAt.IsZero() {
+		// An event stamped ahead of the clock is never "seen" in the future.
+		last := m.LastEventAt
+		if last.After(now) {
+			last = now
+		}
+		info.LastEventAt = last.UTC().Truncate(time.Minute).Format(time.RFC3339)
+	}
+	return info
+}
+
+// OwnerPlaintext is the plaintext owner.json carries:
+// {"v":2,"items":rows,"machine":info}.
+func OwnerPlaintext(rows []OwnerRow, info OwnerMachine) []byte {
 	if rows == nil {
 		rows = []OwnerRow{}
 	}
@@ -231,17 +270,18 @@ func OwnerPlaintext(rows []OwnerRow) []byte {
 	e := json.NewEncoder(&b)
 	e.SetEscapeHTML(false) // as JSON.stringify writes it
 	_ = e.Encode(struct {
-		V     int        `json:"v"`
-		Items []OwnerRow `json:"items"`
-	}{1, rows})
+		V       int          `json:"v"`
+		Items   []OwnerRow   `json:"items"`
+		Machine OwnerMachine `json:"machine"`
+	}{2, rows, info})
 	return bytes.TrimSuffix(b.Bytes(), []byte("\n"))
 }
 
 // OwnerDigests identify what an owner.json says without keeping it: data
-// covers the plaintext, meters the same rows without their read times (a
-// meter only read again). Keyed with the owner key, so state.json reveals
-// nothing about the rows.
-func OwnerDigests(k []byte, machine string, rows []OwnerRow) (data, meters string) {
+// covers the plaintext, meters the same without the times that move on their
+// own (each meter's read time, the machine's newest event). Keyed with the
+// owner key, so state.json reveals nothing about the rows or the machine.
+func OwnerDigests(k []byte, machine string, rows []OwnerRow, info OwnerMachine) (data, meters string) {
 	sum := func(pt []byte) string {
 		m := hmac.New(sha256.New, OwnerKey(k))
 		m.Write([]byte(machine + "\n"))
@@ -252,7 +292,9 @@ func OwnerDigests(k []byte, machine string, rows []OwnerRow) (data, meters strin
 	for i := range unread {
 		unread[i].ObservedAt = ""
 	}
-	return sum(OwnerPlaintext(rows)), sum(OwnerPlaintext(unread))
+	still := info
+	still.LastEventAt = ""
+	return sum(OwnerPlaintext(rows, info)), sum(OwnerPlaintext(unread, still))
 }
 
 type ownerFile struct {

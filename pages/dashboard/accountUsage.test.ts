@@ -137,11 +137,15 @@ function serverResponse(evs: Ev[], snaps: AccountSnapshot[]) {
   return { days: aliasAccts(reconciled.days.filter(hasData)) as RollupDay[], pending: reconciled.pending as number, conflicts: reconciled.conflicts as number }
 }
 
-/** What each machine's collector publishes: daily rows (rollup.go) and account-usage.json (ghpub.Files). */
+/**
+ * What each machine's collector publishes: daily rows (rollup.go) and account-usage.json (ghpub.Files), as the owner
+ * reads them (countries from owner.json, as the API's rollup keeps them per event).
+ */
 function collectorFiles(evs: Ev[], published: Record<string, AccountSnapshot[]>, withLedger: (machine: string) => boolean = () => true): Published {
   const machines = [...new Set([...evs.map(e => e.machine), ...Object.keys(published)])].sort()
   return {
     generatedAt: NOW.toISOString(),
+    owner: true,
     machines: machines.map((id): MachineFiles => {
       const mine = evs.filter(e => e.machine === id)
       const cells = new Map<string, number[]>()
@@ -164,7 +168,8 @@ function collectorFiles(evs: Ev[], published: Record<string, AccountSnapshot[]>,
       const cc = mine[0]?.cc
       return {
         id,
-        meta: { id, label: id, ...(cc ? { cc } : {}) },
+        meta: { id },
+        owner: { label: id, ...(cc ? { cc } : {}) },
         usage: [...byMonth].map(([month, rows]) => ({ schema: 2, month, cols: COLS2, rows })),
         accountUsage: published[id] || withLedger(id) ? {
           schema: 2,

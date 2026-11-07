@@ -1,6 +1,7 @@
-// The owner's plan limits on a public dashboard. GitHub Pages has no server to sign in to, so what only the owner may
-// read on d0m1.com/tokens/agents (account emails, organisation names, plans) is published encrypted, one file per
-// machine, and decrypted here, in the owner's browser, with the owner key: derived from the fleet key, which only
+// The owner's plan limits and machine names on a public dashboard. GitHub Pages has no server to sign in to, so what
+// only the owner may read on d0m1.com/tokens/agents (account emails, organisation names, plans) and what d0m1.com/tokens
+// shows only its signed-in owner (machine names, OS, countries, first and last seen) is published encrypted, one file
+// per machine, and decrypted here, in the owner's browser, with the owner key: derived from the fleet key, which only
 // the repository's collaborators can read (signin.ts signs in with GitHub to read it).
 //
 // Contract (the collector writes exactly this; testdata/owner-vector.mjs builds a test vector with node:crypto):
@@ -10,7 +11,9 @@
 // - Owner key (32 bytes) = HMAC-SHA256(key: the fleet key K, message: "tokenmaxr dashboard owner v1"). The page
 //   never sees K, only this key.
 // - AAD = UTF-8 "tokenmaxr dashboard owner v1|" + machine id, so a file only opens as its own machine's.
-// - Plaintext = {"v":1,"items":[...]}: exactly the rows GET /api/limits returns on d0m1.com for this machine.
+// - Plaintext = {"v":2,"items":[...],"machine":{"label","os","cc"?,"firstSeenAt"?,"lastEventAt"?}}: exactly the rows
+//   GET /api/limits returns on d0m1.com for this machine, and the machine as its owner sees it (what the public
+//   meta.json carried before collector 0.4.31). Collectors before 0.4.31 write {"v":1,"items":[...]}: rows only.
 //
 // Signing in, three ways: with GitHub (signin.ts, the device flow, on any device); the collector's settings page
 // ("Open dashboard") opens <dashboard>#unlock and hands the key over with postMessage, so it is never in a URL (see
@@ -80,13 +83,41 @@ function isLimitRow(value: unknown): value is LimitRow {
   return isRecord(value) && ['id', 'provider', 'source', 'window', 'observedAt'].every(field => typeof value[field] === 'string')
 }
 
+/** The machine as its owner sees it (owner.json v2): what PublicMachine needs, each field only when well formed. */
+export interface OwnerMachine {
+  label?: string
+  os?: string
+  /** Only when the owner opted in (ISO 3166-1 alpha-2). */
+  cc?: string
+  /** The machine-local date of its first data. */
+  firstSeenAt?: string
+  /** The newest usage or activity event, RFC 3339 UTC to the minute. */
+  lastEventAt?: string
+}
+
+/** One machine's owner.json, opened: its limit rows, and the machine (null: a v1 file, which has none). */
+export interface OwnerContents {
+  rows: LimitRow[]
+  machine: OwnerMachine | null
+}
+
+function ownerMachine(value: unknown): OwnerMachine | null {
+  if (!isRecord(value)) return null
+  const out: OwnerMachine = {}
+  for (const field of ['label', 'os', 'cc', 'firstSeenAt', 'lastEventAt'] as const) {
+    const v = value[field]
+    if (typeof v === 'string' && v) out[field] = v
+  }
+  return out
+}
+
 /**
- * The limit rows in one machine's owner.json, or null when it does not open for this key and machine (the wrong
- * key, a file altered or moved from another machine, or not an owner file at all). A file that opens but holds
- * an unknown plaintext version gives no rows.
+ * One machine's owner.json opened (v1: rows only; v2: rows and the machine), or null when it does not open for this
+ * key and machine (the wrong key, a file altered or moved from another machine, or not an owner file at all). A file
+ * that opens but holds an unknown plaintext version gives no rows and no machine.
  */
 export async function decryptOwnerFile(file: unknown, machine: string, key: CryptoKey,
-  subtle: SubtleCrypto = globalThis.crypto.subtle): Promise<LimitRow[] | null> {
+  subtle: SubtleCrypto = globalThis.crypto.subtle): Promise<OwnerContents | null> {
   if (!isRecord(file) || file.schema !== 1 || file.alg !== 'A256GCM' || file.machine !== machine ||
     typeof file.nonce !== 'string' || typeof file.data !== 'string' ||
     key.algorithm.name !== 'AES-GCM' || (key.algorithm as AesKeyAlgorithm).length !== KEY_BYTES * 8) return null
@@ -101,9 +132,10 @@ export async function decryptOwnerFile(file: unknown, machine: string, key: Cryp
   }
   try {
     const body: unknown = JSON.parse(new TextDecoder().decode(plain))
-    return isRecord(body) && body.v === 1 && Array.isArray(body.items) ? body.items.filter(isLimitRow) : []
+    if (!isRecord(body) || (body.v !== 1 && body.v !== 2) || !Array.isArray(body.items)) return { rows: [], machine: null }
+    return { rows: body.items.filter(isLimitRow), machine: body.v === 2 ? ownerMachine(body.machine) : null }
   } catch {
-    return []
+    return { rows: [], machine: null }
   }
 }
 

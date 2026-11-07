@@ -172,8 +172,11 @@ func TestFleetSharesTheSignInAndAnotherMachineAdoptsIt(t *testing.T) {
 	if st.GitHub.Rebuild || st.GitHub.LastError != "" || len(usageRows(t, fx.gh, dir)) == 0 {
 		t.Fatalf("not published: rebuild %v error %q files %v", st.GitHub.Rebuild, st.GitHub.LastError, keys(fx.gh.Files))
 	}
-	if meta := fx.gh.Files[dir+"/meta.json"]; !strings.Contains(meta, `"Laptop B"`) {
+	if meta := fx.gh.Files[dir+"/meta.json"]; meta == "" || strings.Contains(meta, "Laptop B") {
 		t.Fatalf("meta %s", meta)
+	}
+	if _, machine := ownerBody(t, b, fx.gh, st.GitHub.MachineID); machine["label"] != "Laptop B" {
+		t.Fatalf("owner machine %v", machine)
 	}
 	if stA.GitHub.MachineID == st.GitHub.MachineID {
 		t.Fatal("the two machines share a folder")

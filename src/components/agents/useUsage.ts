@@ -66,7 +66,9 @@ export function useUsage(mock: boolean, reloadKey: number): UsageState {
         if (!cancelled && controller === request) {
           failures = 0
           const loadedAt = Date.now()
-          try { writeUsageCache(window.sessionStorage, source, { data, loadedAt }) } catch { /* Keep live data without browser storage. */ }
+          if (!usageSource.isPrivate?.(data)) {
+            try { writeUsageCache(window.sessionStorage, source, { data, loadedAt }) } catch { /* Keep live data without browser storage. */ }
+          }
           setState({ data, error: null, loading: false, loadedAt, progress: null, failures: 0 })
         }
       } catch (error) {

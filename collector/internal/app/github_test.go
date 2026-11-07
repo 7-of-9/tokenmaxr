@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -376,8 +377,10 @@ func sumCol(rows []map[string]any, col string) (n float64) {
 	return
 }
 
-// Schema 2 on a real tick: prompts per model and the meta fields, with the
-// country published only once the owner opts in, and never the zone.
+// Schema 2 on a real tick: prompts per model, and the machine (name, OS,
+// first and last seen) only in the encrypted owner.json, with the country only
+// once the owner opts in, and never the zone. The public meta.json names and
+// places nothing, opted in or not.
 func TestGitHubPublishesSchema2AndTheCountryOnlyOnOptIn(t *testing.T) {
 	f, _ := useFakeGitHub(t)
 	a, _, _ := newTestApp(t)
@@ -403,14 +406,19 @@ func TestGitHubPublishesSchema2AndTheCountryOnlyOnOptIn(t *testing.T) {
 	}
 	var meta map[string]any
 	json.Unmarshal([]byte(f.Files[dir+"/meta.json"]), &meta)
-	if _, ok := meta["cc"]; ok {
-		t.Fatalf("country published without opting in: %v", meta)
-	}
-	if meta["schema"] != 2.0 || meta["firstSeenAt"] == nil || meta["lastEventAt"] == nil {
+	if len(meta) != 4 || meta["schema"] != 2.0 || meta["id"] != st.GitHub.MachineID || meta["collector"] == nil || meta["updatedAt"] == nil {
 		t.Fatalf("meta %v", meta)
 	}
+	_, machine := ownerBody(t, a, f, st.GitHub.MachineID)
+	if _, ok := machine["cc"]; ok {
+		t.Fatalf("country published without opting in: %v", machine)
+	}
+	if machine["label"] != "laptop" || machine["os"] != runtime.GOOS || machine["firstSeenAt"] == nil || machine["lastEventAt"] == nil {
+		t.Fatalf("owner machine %v", machine)
+	}
 
-	// Opting in (as the settings page does) republishes meta with the country.
+	// Opting in (as the settings page does) republishes owner.json with the
+	// country.
 	cfg, _ := store.LoadConfig(a.Home)
 	cfg.GitHub.ShowCountry = true
 	store.SaveConfig(a.Home, cfg)
@@ -420,14 +428,18 @@ func TestGitHubPublishesSchema2AndTheCountryOnlyOnOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := f.Files[dir+"/meta.json"]
-	json.Unmarshal([]byte(raw), &meta)
-	if meta["cc"] != "GB" {
+	if strings.Contains(raw, "GB") || strings.Contains(raw, "laptop") || strings.Contains(raw, `"cc"`) {
 		t.Fatalf("opted-in meta %s", raw)
 	}
+	if _, machine = ownerBody(t, a, f, st.GitHub.MachineID); machine["cc"] != "GB" {
+		t.Fatalf("opted-in owner machine %v", machine)
+	}
 	tz := machineTZ()
-	for _, private := range []string{tz.IANA, tz.WindowsID} {
-		if private != "" && strings.Contains(raw, private) {
-			t.Fatalf("meta publishes the time zone %q", private)
+	for p, c := range f.Files {
+		for _, private := range []string{tz.IANA, tz.WindowsID} {
+			if private != "" && strings.Contains(c, private) {
+				t.Fatalf("%s publishes the time zone %q", p, private)
+			}
 		}
 	}
 }

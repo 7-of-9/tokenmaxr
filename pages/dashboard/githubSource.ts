@@ -24,8 +24,9 @@
 // Account history (account-usage.json: provider account totals per UTC day, and each machine's local tokens per
 // UTC day) is reconciled exactly as the API reconciles it (accountUsage.ts, a port of api/src/lib/account-usage.js).
 //
-// The owner's plan limits (the Agents page) come from each machine's owner.json, encrypted for the owner and
-// decrypted in the owner's browser (owner.ts); a page that is not signed in reads none of them.
+// The owner's plan limits (the Agents page) and the machines' names come from each machine's owner.json, encrypted for
+// the owner and decrypted in the owner's browser (owner.ts); a page that is not signed in reads none of them, and shows
+// the machines as d0m1.com shows anyone signed out: "Machine 1".."Machine N", with no country, OS or seen times.
 import {
   ACCOUNT_LEDGER_VERSION, datesBetween, reconcileAccountUsage, surroundingDates,
   type AccountSnapshot, type LedgerDay, type LedgerEntry,
@@ -34,14 +35,14 @@ import { LimitsDenied, type LimitRow } from '../../src/components/agents/limits.
 import type { UsageSource } from '../../src/components/agents/source.ts'
 import type { ModelBucket, PlaceBucket, Provider, ProviderDay, PublicMachine, RollupDay, TokenBucket, UsageResponse } from '../../src/components/agents/types.ts'
 import type { UsageTransfer } from '../../src/components/agents/usageResponse.ts'
-import { decryptOwnerFile, mergeLimitRows, OWNER_FILE } from './owner.ts'
+import { decryptOwnerFile, mergeLimitRows, OWNER_FILE, type OwnerMachine } from './owner.ts'
 
 const PROVIDERS: Provider[] = ['anthropic', 'openai', 'xai', 'cursor', 'google']
 /** Column order of schema 1 files, which some early collectors wrote without "cols". */
 export const SCHEMA1_COLS = ['date', 'provider', 'source', 'model', 'acct', 'in', 'cacheW', 'cacheR', 'out', 'events', 'prompts']
 /**
- * A machine whose newest event is this recent is live: collectors publish hourly by default, and
- * raw.githubusercontent.com keeps a copy for up to 5 minutes.
+ * A machine whose newest event (signed out: its last publish, meta.updatedAt) is this recent is live: collectors
+ * publish hourly by default, and raw.githubusercontent.com keeps a copy for up to 5 minutes.
  */
 export const LIVE_MS = 75 * 60 * 1000
 /**
@@ -64,6 +65,10 @@ export interface IndexFile {
   machines?: Array<{ id: string; files?: string[]; blobs?: Record<string, string> }>
 }
 
+/**
+ * meta.json. Since collector 0.4.31 it holds the id, collector and publish time only; label, os, cc, firstSeenAt and
+ * lastEventAt are older collectors' (owner.json carries them now), shown only to the signed-in owner.
+ */
 export interface MetaFile {
   id?: string
   label?: string
@@ -102,6 +107,8 @@ export interface MachineFiles {
   meta: MetaFile | null
   usage: UsageFile[]
   accountUsage?: AccountUsageFile | null
+  /** The machine as its owner.json names it, decrypted while the owner is signed in (null: none, or a v1 file). */
+  owner?: OwnerMachine | null
 }
 
 export interface Published {
@@ -109,6 +116,8 @@ export interface Published {
   generatedAt?: string
   /** False: read from the deployed copy, so a machine counts as live over DEPLOYED_LIVE_MS (else LIVE_MS). */
   live?: boolean
+  /** Some machine's owner.json opened with the owner's key: the owner's view (names, countries). Else the public one. */
+  owner?: boolean
   machines: MachineFiles[]
 }
 
@@ -262,20 +271,34 @@ export function buildDays(rows: UsageRow[], aliases: Map<string, string>, countr
   })
 }
 
-/** The public machine list, oldest first, as GET /api/usage orders it. */
+/**
+ * The machine list, oldest first, as GET /api/usage orders it. Signed out (published.owner unset), as the API serves
+ * anyone signed out: "Machine 1".."Machine N" in first-seen order (each machine's first date in the public rows), no
+ * country, OS or seen times, and live from the last publish (meta.updatedAt: nothing newer is public); an older
+ * collector's public label, OS, country and times are not shown. Signed in: each machine as its owner.json names it,
+ * or an older collector's meta.json where it has none.
+ */
 export function publicMachines(published: Published, rows: UsageRow[], now: Date): PublicMachine[] {
   const firstRow = new Map<string, string>()
   for (const row of rows) if (!firstRow.has(row.machine) || row.date < firstRow.get(row.machine)!) firstRow.set(row.machine, row.date)
   const liveMs = published.live === false ? DEPLOYED_LIVE_MS : LIVE_MS
-  return published.machines.map(({ id, meta }) => {
-    const lastEventAt = validTime(meta?.lastEventAt)
-    const firstSeenAt = typeof meta?.firstSeenAt === 'string' && DATE_RE.test(meta.firstSeenAt) ? meta.firstSeenAt : firstRow.get(id) ?? null
+  const recent = (at: string | null) => at !== null && now.getTime() - Date.parse(at) < liveMs
+  if (!published.owner) {
+    return published.machines
+      .map(({ id, meta }) => ({ id, first: firstRow.get(id) ?? '', live: recent(validTime(meta?.updatedAt)) }))
+      .sort((a, b) => a.first.localeCompare(b.first) || a.id.localeCompare(b.id))
+      .map(({ id, live }, i) => ({ id, label: `Machine ${i + 1}`, cc: '', os: '', live, lastSeenAt: null, firstSeenAt: null }))
+  }
+  return published.machines.map(({ id, meta, owner }) => {
+    const info: OwnerMachine | null = owner ?? meta
+    const lastEventAt = validTime(info?.lastEventAt)
+    const firstSeenAt = typeof info?.firstSeenAt === 'string' && DATE_RE.test(info.firstSeenAt) ? info.firstSeenAt : firstRow.get(id) ?? null
     return {
       id,
-      label: text(meta?.label).slice(0, 64) || id,
-      cc: country(meta?.cc),
-      os: text(meta?.os).slice(0, 32),
-      live: lastEventAt !== null && now.getTime() - Date.parse(lastEventAt) < liveMs,
+      label: text(info?.label).slice(0, 64) || id,
+      cc: country(info?.cc),
+      os: text(info?.os).slice(0, 32),
+      live: recent(lastEventAt),
       lastSeenAt: lastEventAt ?? validTime(meta?.updatedAt),
       firstSeenAt,
     }
@@ -376,7 +399,8 @@ export function buildUsage(published: Published, now: Date, options: BuildOption
   const all = published.machines.flatMap(m => m.usage.flatMap(file => readUsageRows(m.id, file)))
   const snapshots = published.machines.flatMap(m => readSnapshots(m.accountUsage))
   const aliases = accountAliases(all, snapshots)
-  const countries = new Map(published.machines.map(m => [m.id, country(m.meta?.cc)]))
+  // Signed out, no machine has a country: every split is one unknown (ZZ) bucket, as the API serves it.
+  const countries = new Map(published.machines.map(m => [m.id, published.owner ? country((m.owner ?? m.meta)?.cc) : '']))
   const rows = options.machine === undefined ? all : all.filter(r => r.machine === options.machine)
   const local = buildDays(rows, aliases, id => countries.get(id) ?? '')
   // Account history belongs to no machine (the API files it under machine "unknown"), so one machine's own rows have
@@ -468,6 +492,7 @@ export type GithubSource = UsageSource & {
   fetchIndex(signal?: AbortSignal): Promise<IndexFile>
   fetchLimits(signal: AbortSignal): Promise<LimitRow[]>
   checkOwnerKey(key: CryptoKey, signal?: AbortSignal): Promise<'ok' | 'none' | 'wrong'>
+  isPrivate(data: UsageResponse): boolean
 }
 
 
@@ -476,6 +501,8 @@ export function githubSource({
 }: GithubSourceOptions = {}): GithubSource {
   // The files behind each response, so one machine can be rebuilt exactly from its own rows.
   const behind = new WeakMap<UsageResponse, { published: Published; at: Date }>()
+  // Responses that name the owner's machines (owner.json opened): never kept in browser storage.
+  const owned = new WeakSet<UsageResponse>()
 
   const deployed: Place = { base, live: false }
   // The repository's own files (null: no repository named, or not a name).
@@ -654,19 +681,25 @@ export function githubSource({
     return { ...index, title: await title }
   }
 
-  /** Every machine's owner.json opened with key: how many there are, and the rows of those that open. */
-  const ownerRows = (key: CryptoKey, signal?: AbortSignal) => fromIndex(signal, async (index, place) => {
-    // Only a schema 3 index (build-index.mjs since owner files) lists owner.json; under an older one, look.
+  /** A listed machine's owner.json (null: none). Only a schema 3 index (build-index.mjs since owner files) lists it; under an older one, look. */
+  const readOwner = (index: IndexFile, place: Place, { id, files, blobs }: ReturnType<typeof listed>[number], signal?: AbortSignal,
+    onBytes?: (n: number) => void): Promise<unknown> => {
     const listsOwner = (index.schema ?? 1) >= 3
-    const files = await Promise.all(listed(index).filter(m => listsOwner ? m.files.includes(OWNER_FILE) : m.files.length > 0).map(async ({ id, blobs }) => {
-      const path = `data/machines/${id}/${OWNER_FILE}`
-      if (!listsOwner) optional.add(path)
-      const file = await read(place, path, signal, undefined, blobs.get(OWNER_FILE))
-      return file === null ? null : { id, file }
+    if (listsOwner ? !files.includes(OWNER_FILE) : files.length === 0) return Promise.resolve(null)
+    const path = `data/machines/${id}/${OWNER_FILE}`
+    if (!listsOwner) optional.add(path)
+    return read(place, path, signal, onBytes, blobs.get(OWNER_FILE))
+  }
+
+  /** Every machine's owner.json opened with key: how many there are, and the contents of those that open. */
+  const ownerRows = (key: CryptoKey, signal?: AbortSignal) => fromIndex(signal, async (index, place) => {
+    const files = await Promise.all(listed(index).map(async m => {
+      const file = await readOwner(index, place, m, signal)
+      return file === null ? null : { id: m.id, file }
     }))
     const present = files.filter(f => f !== null)
-    const rows = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
-    return { present: present.length, opened: rows.filter(r => r !== null) }
+    const contents = await Promise.all(present.map(({ id, file }) => decryptOwnerFile(file, id, key)))
+    return { present: present.length, opened: contents.filter(c => c !== null) }
   })
 
   return {
@@ -690,24 +723,32 @@ export function githubSource({
         progress({ phase: 'downloading', received, total: null })
       }
       progress({ phase: 'downloading', received, total: null })
+      // Signed in: each machine's owner.json too, for the names only its owner sees.
+      const key = await ownerKey()
       const loaded = await fromIndex(signal, async (index, place): Promise<Published> => {
         // A schema 1 index (the first template's build-index.mjs) never lists account-usage.json.
         const listsAccountUsage = (index.schema ?? 1) >= 2
-        const machines = await Promise.all(listed(index).map(async ({ id, files, blobs }): Promise<MachineFiles | null> => {
+        let opened = false
+        const machines = await Promise.all(listed(index).map(async (entry): Promise<MachineFiles | null> => {
+          const { id, files, blobs } = entry
           const dir = `data/machines/${id}/`
           const accountPath = dir + 'account-usage.json'
           const lookForAccount = !files.includes('account-usage.json') && !listsAccountUsage && files.includes('meta.json')
           if (lookForAccount) optional.add(accountPath)
-          const [meta, usage, accountUsage] = await Promise.all([
+          const [meta, usage, accountUsage, ownerFile] = await Promise.all([
             files.includes('meta.json') ? read(place, dir + 'meta.json', signal, onBytes, blobs.get('meta.json')) : null,
             Promise.all(files.filter(f => USAGE_FILE_RE.test(f)).map(f => read(place, dir + f, signal, onBytes, blobs.get(f)))),
             files.includes('account-usage.json') || lookForAccount ? read(place, accountPath, signal, onBytes, blobs.get('account-usage.json')) : null,
+            key ? readOwner(index, place, entry, signal, onBytes) : null,
           ])
+          const owner = key && ownerFile !== null ? await decryptOwnerFile(ownerFile, id, key) : null
+          if (owner) opened = true
           const machine: MachineFiles = {
             id,
             meta: isRecord(meta) ? meta as MetaFile : null,
             usage: usage.filter(isRecord) as UsageFile[],
             accountUsage: isRecord(accountUsage) ? accountUsage as AccountUsageFile : null,
+            owner: owner?.machine ?? null,
           }
           // Listed only by the deployed index, and every file gone from the repository: the machine was removed
           // since the last deploy, so it is not shown.
@@ -715,7 +756,7 @@ export function githubSource({
             machine.meta === null && machine.usage.length === 0 && machine.accountUsage === null
           return gone ? null : machine
         }))
-        return { title: index.title, generatedAt: index.generatedAt, live: place.live, machines: machines.filter(m => m !== null) }
+        return { title: index.title, generatedAt: index.generatedAt, live: place.live, owner: opened, machines: machines.filter(m => m !== null) }
       }, true)
       progress({ phase: 'processing', received, total: null })
       const at = now()
@@ -726,8 +767,11 @@ export function githubSource({
       const published: Published = { ...loaded, generatedAt }
       const data = buildUsage(published, at)
       behind.set(data, { published, at })
+      if (published.owner) owned.add(data)
       return data
     },
+
+    isPrivate: data => owned.has(data),
 
     // Per-model prompt counts travel in the usage rows (modelPrompts) and are already on each day.
     async fetchPromptCounts() {
@@ -747,7 +791,7 @@ export function githubSource({
       if (!key) throw new LimitsDenied(401)
       const { present, opened } = await ownerRows(key, signal)
       if (present > 0 && opened.length === 0) throw new LimitsDenied(403)
-      return mergeLimitRows(opened)
+      return mergeLimitRows(opened.map(c => c.rows))
     },
 
     // A key a sign-in derived, before it is kept: does it open the published owner files (none published: none)?

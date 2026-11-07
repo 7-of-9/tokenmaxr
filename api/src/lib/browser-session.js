@@ -28,6 +28,21 @@ async function readSession(req, store) {
   return authenticated(principal) ? { token, principal } : null
 }
 
+/**
+ * For public endpoints that show the owner more: a same-origin browser gets its
+ * session resolved as usual; any other caller is served as anonymous, with any
+ * platform principal removed, and is never refused.
+ */
+export function withOptionalBrowserSession(handler) {
+  const withSession = withBrowserSession(handler)
+  return (req, ctx) => {
+    if (sameOrigin(req.headers)) return withSession(req, ctx)
+    const headers = { ...req.headers }
+    delete headers['x-ms-client-principal']
+    return handler({ ...req, headers }, ctx)
+  }
+}
+
 /** All private handlers still run their existing owner/allowlist authorization. */
 export function withBrowserSession(handler) {
   return async (req, ctx) => {

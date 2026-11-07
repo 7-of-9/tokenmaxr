@@ -154,7 +154,7 @@ const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeD
     const byId = new Map(machines.map((m) => [m.id, m]))
     return placeTotals(days, view, range.from, range.to, 'byMachine').map((t) => {
       const m = byId.get(t.key)
-      return { key: t.key, cc: m?.cc || 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts,
+      return { key: t.key, cc: m ? m.cc : 'ZZ', label: m?.label || (t.key === 'unknown' ? 'Unknown' : 'Unnamed machine'), live: m?.live, value: t.value, prompts: t.prompts,
         assigned: t.assigned, assignedProviders: t.assignedProviders }
     })
   }, [days, view, range, machines])
@@ -314,12 +314,12 @@ const AgentsDetail = ({ days, cells, view, range, machines, today, noun, activeD
           </div>
           <ShareList rows={workstations} noun={noun} title="Workstations" />
         </section>
-        <section className="agents-section agents-box" aria-labelledby="agents-regions-title">
+        {regions.some((row) => row.key !== 'ZZ') && <section className="agents-section agents-box" aria-labelledby="agents-regions-title">
           <div className="agents-section__head">
             <h2 id="agents-regions-title">By region</h2>
           </div>
           <ShareList rows={regions} noun={noun} title="Regions" />
-        </section>
+        </section>}
       </div>
     </div>
   )

@@ -57,10 +57,11 @@ const config: Promise<DashboardConfig> = fetch('tokenmaxr.json', { cache: 'no-ca
   .then(parseDashboardConfig)
 const repository = () => config.then(c => c.repository ?? pagesRepository(window.location.hostname, window.location.pathname))
 
-// The repository's data/ read live when it is public, else the deployed copy (githubSource.ts).
-const source = githubSource({ ownerKey: owner.ready, repository })
 // Sign out / Sign in: the public view or the owner's, per dashboard in this browser (site.ts).
 const view = storedViewToggle(storage, `${name}:signed-out`, window)
+// The repository's data/ read live when it is public, else the deployed copy (githubSource.ts). Signed out (the key
+// kept), nothing is decrypted: the public view names no machine.
+const source = githubSource({ ownerKey: () => owner.ready().then(key => (view.signedOut() ? null : key)), repository })
 // Sign in with GitHub (device flow through the relay): the owner key from the repository's fleet key, checked on
 // the published owner files, kept as the handoff keeps it. A signed-out view flag left from before is cleared.
 const signIn = createDeviceSignIn({

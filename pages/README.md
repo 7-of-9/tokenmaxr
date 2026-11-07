@@ -28,18 +28,23 @@ never touched; to show the dashboard there, add it to your profile README (a
 repository named after your account) or your profile's website.
 
 - `data/machines/<id>/` is written by the collectors, one folder per machine:
-  - `meta.json`: the machine's public label, OS, collector version, when it
-    last published, its first data day and newest event; its country only if
-    the owner turned on `github.showCountry` in the collector config or
-    settings page (off by default; a machine that publishes with the sign-in
-    another machine shared follows that machine's choice, unless it was set
-    on the machine itself).
+  - `meta.json`: the machine's random id, collector version and when it last
+    published; nothing that names or places it. Since collector 0.4.31 its
+    label, OS, first data day and newest event (and its country, only if the
+    owner turned on `github.showCountry` in the collector config or settings
+    page: off by default; a machine that publishes with the sign-in another
+    machine shared follows that machine's choice, unless it was set on the
+    machine itself) are in `owner.json`, encrypted. Signed out, the dashboard
+    shows "Machine 1", "Machine 2"… in the order they first published usage,
+    with no country, OS or seen times.
   - `usage-YYYY-MM.json`: daily totals per provider, tool, model and account
     hash. Rows are read by the names in `cols`, so older files keep working.
     Prompt counts include prompts whose tokens were never recorded
     (`promptsNoUsage`) and, per model, prompts recorded for it
     (`modelPrompts`, a count; never the text).
-  - `owner.json`: the owner's plan limits (the rows d0m1.com's owner-only
+  - `owner.json`: how the owner sees the machine (label, OS, country, first
+    and last seen; collectors from 0.4.31, which publish it with or without
+    plan limits) and the owner's plan limits (the rows d0m1.com's owner-only
     `GET /api/limits` returns: account email, organisation, plan, each
     window's use and reset, and for Claude `org`, the hashed organisation,
     and `orgKind`, `team`, `enterprise` or `personal`, so that one email's

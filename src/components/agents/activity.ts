@@ -124,7 +124,7 @@ export function buildActivity(days: NormDay[], view: ViewOptions, machines: Publ
       // counts on a machine only once assigned to it (attribution.ts); what no machine could take stays out.
       for (const [id, b] of Object.entries(p.byMachine)) {
         const m = byId.get(id)
-        const entry = acc.machines.get(id) ?? { key: id, label: m?.label || (id === 'unknown' ? 'Unknown' : 'Unnamed machine'), cc: m?.cc || 'ZZ',
+        const entry = acc.machines.get(id) ?? { key: id, label: m?.label || (id === 'unknown' ? 'Unknown' : 'Unnamed machine'), cc: m ? m.cc : 'ZZ',
           value: 0, prompts: 0, assigned: 0, assignedProviders: [] }
         const assigned = view.metric === 'tokens' ? b.assigned ?? 0 : 0
         entry.value += metricOf(b, view.metric) - (view.metric === 'tokens' ? (b.unattributed ?? 0) - assigned : 0)

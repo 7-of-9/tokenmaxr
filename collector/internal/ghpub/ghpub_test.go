@@ -137,10 +137,13 @@ func TestFilesArePublicSafeAndDeterministic(t *testing.T) {
 	if q := fileAt(files, "/quota.json"); q == nil || !q.Delete || q.Content != nil {
 		t.Fatalf("quota.json %+v", q)
 	}
-	for _, public := range []string{`"laptop"`, `"claude-x"`, `"a_1"`} {
+	for _, public := range []string{`"claude-x"`, `"a_1"`} {
 		if !strings.Contains(all, public) {
 			t.Errorf("published files lack %s", public)
 		}
+	}
+	if strings.Contains(all, "laptop") || strings.Contains(all, "windows") {
+		t.Error("the machine's name or OS is published in the clear")
 	}
 	again := Files(m, sampleRows(), AccountHistory{}, now)
 	for i := range files {
@@ -299,45 +302,62 @@ func metaOf(t *testing.T, files []ghapi.File) (string, map[string]any) {
 	return string(f.Content), m
 }
 
-func TestMetaCountryIsOptInAndOnlyACountry(t *testing.T) {
+// meta.json names and places nothing: the machine id, collector version and
+// publish time only, whatever the machine is called, where it is (even opted
+// in) and when it was last used. owner.json carries those, encrypted.
+func TestMetaNamesNothing(t *testing.T) {
 	now := time.Date(2026, 10, 4, 12, 0, 30, 0, time.UTC)
-	m := Machine{ID: "m_abc", Label: "laptop", OS: "windows", Collector: "0.4.0", LastEventAt: time.Date(2026, 10, 4, 11, 58, 59, 0, time.UTC)}
-
+	m := Machine{ID: "m_abc", Label: "laptop", OS: "windows", Collector: "0.4.31", CC: "GB", LastEventAt: time.Date(2026, 10, 4, 11, 58, 59, 0, time.UTC)}
 	raw, meta := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
-	if _, ok := meta["cc"]; ok || strings.Contains(raw, `"cc"`) {
-		t.Fatalf("country published without opting in: %s", raw)
-	}
-	if meta["schema"] != 2.0 || meta["firstSeenAt"] != "2026-09-30" || meta["lastEventAt"] != "2026-10-04T11:58:00Z" {
+	want := map[string]any{"schema": 2.0, "id": "m_abc", "collector": "0.4.31", "updatedAt": "2026-10-04T12:00:30Z"}
+	if !maps.Equal(meta, want) {
 		t.Fatalf("meta %s", raw)
 	}
-
-	m.CC = "GB"
-	if raw, meta = metaOf(t, Files(m, sampleRows(), AccountHistory{}, now)); meta["cc"] != "GB" {
-		t.Fatalf("opted-in country missing: %s", raw)
+	for _, private := range []string{"laptop", "windows", "GB", "label", "os", "cc", "firstSeenAt", "lastEventAt", "2026-09-30", "11:58"} {
+		if strings.Contains(raw, `"`+private) {
+			t.Fatalf("meta publishes %q: %s", private, raw)
+		}
 	}
 	again, _ := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
 	if again != raw {
 		t.Fatal("meta not deterministic")
 	}
+}
 
+// The machine as owner.json names it: the country only when opted in and only
+// a country, the first data's date, the newest event to the minute.
+func TestMachineInfoCountryIsOptInAndOnlyACountry(t *testing.T) {
+	now := time.Date(2026, 10, 4, 12, 0, 30, 0, time.UTC)
+	m := Machine{ID: "m_abc", Label: "laptop", OS: "windows", Collector: "0.4.0", LastEventAt: time.Date(2026, 10, 4, 11, 58, 59, 0, time.UTC)}
+
+	info := MachineInfo(m, sampleRows(), now)
+	if info != (OwnerMachine{Label: "laptop", OS: "windows", FirstSeenAt: "2026-09-30", LastEventAt: "2026-10-04T11:58:00Z"}) {
+		t.Fatalf("info %+v", info)
+	}
+	if b, _ := json.Marshal(info); strings.Contains(string(b), `"cc"`) {
+		t.Fatalf("country without opting in: %s", b)
+	}
+	m.CC = "GB"
+	if info = MachineInfo(m, sampleRows(), now); info.CC != "GB" {
+		t.Fatalf("opted-in country missing: %+v", info)
+	}
 	// Anything but a two-letter country (a zone, a Windows zone id, an
 	// offset, lower case) is never published.
 	for _, bad := range []string{"Europe/London", "GMT Standard Time", "+01:00", "UTC", "gb", "G", "ZZZ"} {
 		m.CC = bad
-		raw, _ := metaOf(t, Files(m, sampleRows(), AccountHistory{}, now))
-		if strings.Contains(raw, `"cc"`) || strings.Contains(raw, bad) {
-			t.Fatalf("published %q: %s", bad, raw)
+		if info := MachineInfo(m, sampleRows(), now); info.CC != "" {
+			t.Fatalf("published %q", bad)
 		}
 	}
 
 	// An event stamped ahead of the clock is reported as now; none, omitted.
 	m.CC, m.LastEventAt = "", now.Add(48*time.Hour)
-	if _, meta = metaOf(t, Files(m, sampleRows(), AccountHistory{}, now)); meta["lastEventAt"] != "2026-10-04T12:00:00Z" {
-		t.Fatalf("future last event %v", meta["lastEventAt"])
+	if info = MachineInfo(m, sampleRows(), now); info.LastEventAt != "2026-10-04T12:00:00Z" {
+		t.Fatalf("future last event %v", info.LastEventAt)
 	}
 	m.LastEventAt = time.Time{}
-	if raw, _ = metaOf(t, Files(m, nil, AccountHistory{}, now)); strings.Contains(raw, "lastEventAt") || strings.Contains(raw, "firstSeenAt") {
-		t.Fatalf("empty machine meta %s", raw)
+	if b, _ := json.Marshal(MachineInfo(m, nil, now)); strings.Contains(string(b), "lastEventAt") || strings.Contains(string(b), "firstSeenAt") {
+		t.Fatalf("empty machine info %s", b)
 	}
 }
 

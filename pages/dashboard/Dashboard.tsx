@@ -51,13 +51,20 @@ const Dashboard = ({ source, owner, handoff, view, signIn, repository }: Dashboa
   // One component for the page's life: a new one would remount the panel, which stops a sign-in under way.
   const SignIn = useMemo(() => () => <SignInPanel signIn={signIn} repository={repository} handoff={handoff} />, [signIn, repository, handoff])
   const handoffStatus = useSyncExternalStore(handoff.subscribe, handoff.status)
+  // The owner's view names the machines (owner.json): a usage source of its own, so signing in or out loads usage
+  // again and the session cache keeps only the public view (source.isPrivate).
+  const ownerState = useSyncExternalStore(owner.subscribe, owner.state)
+  const signedOut = useSyncExternalStore(view.subscribe, view.signedOut)
+  const ownerView = ownerState.status === 'unlocked' && !signedOut ? ownerState.version : null
+  const usageSource = useMemo((): GithubSource => ownerView === null ? source
+    : Object.create(source, { cacheKey: { value: `${source.cacheKey}#owner:${ownerView}` } }), [source, ownerView])
   // GitHub's header in place of d0m1.com's "< d0m1 / tokens" (owner direction 2026-10-05: "a github-like top
   // banner"); the title stays in the tab.
   const site = useMemo(() => pagesSite(title, owner, handoffStatus, view, githubUser(window.location.hostname), SignIn, Header),
     [title, owner, handoffStatus, view, SignIn, Header])
 
   return (
-    <UsageSourceContext.Provider value={source}>
+    <UsageSourceContext.Provider value={usageSource}>
       <TokensSiteContext.Provider value={site}>
         <div className="App">
           {/* d0m1.com's page transitions: #/ and #/agents slide between each other as /tokens and /tokens/agents do. */}

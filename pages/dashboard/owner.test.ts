@@ -24,6 +24,7 @@ interface Vector {
   plaintext: string
   items: LimitRow[]
   file: { schema: 1; machine: string; alg: string; nonce: string; data: string }
+  v2: { machineInfo: Record<string, string>; nonce: string; plaintext: string; file: { schema: 1; machine: string; alg: string; nonce: string; data: string } }
 }
 
 const vector = JSON.parse(readFileSync(VECTOR_PATH, 'utf8')) as Vector
@@ -49,17 +50,29 @@ test('the owner key is HMAC-SHA256(fleet key, context), the same under WebCrypto
 })
 
 test('WebCrypto opens the vector to exactly the API rows', async () => {
-  const items = await decryptOwnerFile(vector.file, MACHINE, key)
-  assert.deepEqual(items, vector.items)
+  const opened = await decryptOwnerFile(vector.file, MACHINE, key)
+  assert.deepEqual(opened, { rows: vector.items, machine: null }, 'a v1 file (collectors before 0.4.31): rows only')
   assert.deepEqual(JSON.parse(vector.plaintext), { v: 1, items: vector.items })
   // The rows carry what only the owner may read.
-  assert.ok(items!.some(r => r.label === 'owner@example.com') && items!.some(r => r.name === 'Example Org') && items!.some(r => r.plan === 'Max (20x)'))
+  const items = opened!.rows
+  assert.ok(items.some(r => r.label === 'owner@example.com') && items.some(r => r.name === 'Example Org') && items.some(r => r.plan === 'Max (20x)'))
+})
+
+test('a v2 file opens to the same rows and the machine as its owner sees it', async () => {
+  assert.deepEqual(JSON.parse(vector.v2.plaintext), { v: 2, items: vector.items, machine: vector.v2.machineInfo })
+  assert.deepEqual(await decryptOwnerFile(vector.v2.file, MACHINE, key), { rows: vector.items, machine: vector.v2.machineInfo })
+  assert.equal(await decryptOwnerFile(vector.v2.file, OTHER_MACHINE, key), null)
+  // No meters: the machine alone. Fields that are not strings are dropped; a v2 file without a machine has none.
+  const seal = (body: unknown) => encryptOwnerFile({ ownerKey: Buffer.from(keyBytes), machine: MACHINE, plaintext: JSON.stringify(body), nonce: randomBytes(12) })
+  assert.deepEqual(await decryptOwnerFile(seal({ v: 2, items: [], machine: { label: 'desk', os: 'linux', cc: 7, lastEventAt: null } }), MACHINE, key),
+    { rows: [], machine: { label: 'desk', os: 'linux' } })
+  assert.deepEqual(await decryptOwnerFile(seal({ v: 2, items: [] }), MACHINE, key), { rows: [], machine: null })
 })
 
 test('a round trip with a fresh nonce and another machine', async () => {
   const items = vector.items.slice(0, 2)
   const file = encryptOwnerFile({ ownerKey: Buffer.from(keyBytes), machine: OTHER_MACHINE, plaintext: JSON.stringify({ v: 1, items }), nonce: randomBytes(12) })
-  assert.deepEqual(await decryptOwnerFile(file, OTHER_MACHINE, key), items)
+  assert.deepEqual(await decryptOwnerFile(file, OTHER_MACHINE, key), { rows: items, machine: null })
 })
 
 test('the wrong key, or any tampering, does not open (and never throws)', async () => {
@@ -94,8 +107,8 @@ test('the additional data binds a file to its machine', async () => {
 })
 
 test('an opened file with an unknown version gives no rows (it is not the wrong key)', async () => {
-  const file = encryptOwnerFile({ ownerKey: Buffer.from(keyBytes), machine: MACHINE, plaintext: JSON.stringify({ v: 2, rows: [] }), nonce: randomBytes(12) })
-  assert.deepEqual(await decryptOwnerFile(file, MACHINE, key), [])
+  const file = encryptOwnerFile({ ownerKey: Buffer.from(keyBytes), machine: MACHINE, plaintext: JSON.stringify({ v: 3, items: [], machine: { label: 'x' } }), nonce: randomBytes(12) })
+  assert.deepEqual(await decryptOwnerFile(file, MACHINE, key), { rows: [], machine: null })
 })
 
 test('merged as the API merges: one row per id, the newest reading wins, the API order', () => {
@@ -177,7 +190,7 @@ test('the unlock link: the key leaves the address bar and stays only as a non-ex
   await assert.rejects(crypto.subtle.exportKey('raw', held), 'the key cannot be copied out')
   assert.equal(store.state().status, 'unlocked')
   assert.equal(vault.map.get(name), held)
-  assert.deepEqual(await decryptOwnerFile(vector.file, MACHINE, held), vector.items)
+  assert.deepEqual((await decryptOwnerFile(vector.file, MACHINE, held))?.rows, vector.items)
   assertNothingReadable(storage)
 
   // A later visit (another store over the same vault) is unlocked; another repository's dashboard is not.

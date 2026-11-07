@@ -21,7 +21,7 @@ import { handleLimitProjects } from '../src/lib/limit-projects.js'
 import { handleLink } from '../src/lib/link.js'
 import { handleFleetGitHub } from '../src/lib/fleet-github.js'
 import { handleGithubDevice } from '../src/lib/github-device.js'
-import { handleBrowserSession, withBrowserSession } from '../src/lib/browser-session.js'
+import { handleBrowserSession, withBrowserSession, withOptionalBrowserSession } from '../src/lib/browser-session.js'
 import { resolveConnectionString } from '../scripts/storage-env.js'
 
 const ROUTES = [
@@ -31,7 +31,7 @@ const ROUTES = [
   ['POST', /^\/api\/invite$/, withBrowserSession(handleInvite)],
   ['POST', /^\/api\/link$/, withBrowserSession(handleLink)],
   ['POST', /^\/api\/ingest$/, handleIngest],
-  ['GET', /^\/api\/usage$/, handleUsage],
+  ['GET', /^\/api\/usage$/, withOptionalBrowserSession(handleUsage)],
   ['GET', /^\/api\/prompt-counts$/, handlePromptCounts],
   ['GET', /^\/api\/limits$/, withBrowserSession(handleLimits)],
   ['GET', /^\/api\/limits\/([a-f0-9]{32})\/projects$/, withBrowserSession(handleLimitProjects), 'id'],

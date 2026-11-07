@@ -1,6 +1,7 @@
 // The GitHub Pages adapter against fixtures shaped like the published files, and a parity check against the
 // d0m1 API's own rollup. Run: node --experimental-strip-types --no-warnings pages/dashboard/githubSource.test.ts
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 // @ts-expect-error -- plain JS module without types (the d0m1 API’s rollup).
 import { aliasAccts, computeRollup } from '../../api/src/lib/rollup.js'
@@ -13,6 +14,9 @@ import {
 import {
   blobId, buildUsage, githubSource, RAW_ORIGIN, readUsageRows, SCHEMA1_COLS, type MachineFiles, type Published, type UsageFile,
 } from './githubSource.ts'
+import { importOwnerKey } from './owner.ts'
+// @ts-expect-error -- plain JS module without types (the test vector generator).
+import { deriveOwnerKey, encryptOwnerFile, FLEET_KEY } from './testdata/owner-vector.mjs'
 
 const NOW = new Date('2026-09-30T12:00:00Z')
 const A = 'm_aaaaaaaaaaaa'
@@ -63,6 +67,7 @@ const b0: UsageFile = {
     ['not-a-date', 'anthropic', 'claude-code', '', H1, 0, 0, 0, 0, 0, 9],
   ],
 }
+// Both run collectors older than 0.4.31, whose meta.json still names and places the machine: shown only signed in.
 const machines = (): MachineFiles[] => [
   { id: A, meta: { id: A, label: 'studio', os: 'windows', collector: '0.4.0', updatedAt: '2026-09-30T11:58:00Z',
     cc: 'GB', firstSeenAt: '2026-09-01', lastEventAt: '2026-09-30T11:50:00Z' }, usage: [a2],
@@ -70,6 +75,13 @@ const machines = (): MachineFiles[] => [
   { id: B, meta: { id: B, label: 'laptop', os: 'darwin', collector: '0.3.3', updatedAt: '2026-09-29T08:00:00Z' }, usage: [b1, b0] },
 ]
 const published = (): Published => ({ title: 'My usage', generatedAt: '2026-09-30T11:59:00Z', machines: machines() })
+/** The same files as the owner reads them: A's owner.json (v2) names it; B's collector writes none. */
+const ownerView = (): Published => ({ ...published(), owner: true, machines: machines().map(m => m.id === A
+  ? { ...m, meta: { id: A, collector: '0.4.31', updatedAt: '2026-09-30T11:58:00Z' },
+      owner: { label: 'studio', os: 'windows', cc: 'GB', firstSeenAt: '2026-09-01', lastEventAt: '2026-09-30T11:50:00Z' } }
+  : m) })
+/** What the signed-out page must never show. */
+const PRIVATE = ['studio', 'laptop', 'windows', 'darwin', '"GB"', '11:50', '2026-09-29T08:00']
 
 const FROM = '2026-08-01'
 const TO = '2026-09-30'
@@ -125,16 +137,18 @@ test('the fleet response carries the same nuance as d0m1.com/tokens', () => {
   assert.deepEqual(days[3].providers.anthropic!.promptsByModel, { 'claude-x': 2 })
   assert.equal(sept1.modelPrompts!['openai|gpt-z'], 0)
 
-  // Places: machine ids and countries (unknown is ZZ), tokens and prompts.
+  // Places: machine ids, and (signed out) one unknown country, ZZ, as the API serves anyone signed out.
   assert.deepEqual(Object.keys(p1.byMachine), [A, B])
   assert.equal(tokens(p1.byMachine[B]), 10)
   assert.equal(p1.byMachine[A].prompts, 4)
-  assert.deepEqual(Object.keys(p1.byCountry), ['GB', 'ZZ'])
+  assert.deepEqual(Object.keys(p1.byCountry), ['ZZ'])
+  assert.equal(tokens(p1.byCountry.ZZ), tokens(p1.byMachine[A]) + tokens(p1.byMachine[B]), 'the totals still add up')
 
-  // Machines from meta: live from the newest event, last seen falls back to the last publish.
-  assert.deepEqual(data.machines!.map(m => [m.id, m.label, m.cc, m.live, m.lastSeenAt, m.firstSeenAt]), [
-    [B, 'laptop', '', false, '2026-09-29T08:00:00Z', '2026-08-20'],
-    [A, 'studio', 'GB', true, '2026-09-30T11:50:00Z', '2026-09-01'],
+  // Signed out: "Machine N" in first-seen order (the first date in the public rows), no country, OS or seen times,
+  // live from the last publish; an older collector's public label, OS and country are not shown.
+  assert.deepEqual(data.machines!.map(m => [m.id, m.label, m.cc, m.os, m.live, m.lastSeenAt, m.firstSeenAt]), [
+    [B, 'Machine 1', '', '', false, null, null],
+    [A, 'Machine 2', '', '', true, null, null],
   ])
   assert.deepEqual(data.totals, { accounts: 2, accountsByProvider: { anthropic: 1, openai: 1, xai: 0, cursor: 0, google: 0 }, machines: 2, machinesLive: 1 })
   assert.equal(data.lastIngestAt, '2026-09-30T11:58:00Z')
@@ -145,7 +159,23 @@ test('the fleet response carries the same nuance as d0m1.com/tokens', () => {
   const months = buildActivity(days, DEFAULT_VIEW, data.machines!, FROM, TO)
   assert.equal(months[0].month, '2026-09')
   assert.equal(months[0].promptsNoUsage, 6)
+  assert.deepEqual(months[0].machines.map(m => m.label).sort(), ['Machine 1', 'Machine 2'])
+  for (const secret of PRIVATE) assert.ok(!JSON.stringify(data).includes(secret), `signed out, the response shows ${secret}`)
+})
+
+test('signed in: each machine as its owner.json names it (an older collector’s meta.json where it has none)', () => {
+  const data = buildUsage(ownerView(), NOW)
+  // Live from the newest event, last seen falls back to the last publish.
+  assert.deepEqual(data.machines!.map(m => [m.id, m.label, m.cc, m.os, m.live, m.lastSeenAt, m.firstSeenAt]), [
+    [B, 'laptop', '', 'darwin', false, '2026-09-29T08:00:00Z', '2026-08-20'],
+    [A, 'studio', 'GB', 'windows', true, '2026-09-30T11:50:00Z', '2026-09-01'],
+  ])
+  const p1 = normaliseDays(data)[1].providers.anthropic!
+  assert.deepEqual(Object.keys(p1.byCountry), ['GB', 'ZZ'])
+  const months = buildActivity(normaliseDays(data), DEFAULT_VIEW, data.machines!, FROM, TO)
   assert.deepEqual(months[0].machines.map(m => m.label).sort(), ['laptop', 'studio'])
+  // The same totals as the public view: only names and places differ.
+  assert.deepEqual(data.totals, buildUsage(published(), NOW).totals)
 })
 
 test('account hashes become per-page aliases and never appear in the response', () => {
@@ -155,7 +185,8 @@ test('account hashes become per-page aliases and never appear in the response', 
   const days = normaliseDays(data)
   assert.deepEqual(days[1].providers.anthropic!.accts, ['acct2'])
   assert.deepEqual(days[1].providers.openai!.accts, ['acct1'], 'aliases follow hash order, as the API assigns them')
-  assert.equal(json.includes('"cc":"GB"'), true)
+  assert.equal(json.includes('"cc":"GB"'), false)
+  assert.equal(JSON.stringify(buildUsage(ownerView(), NOW)).includes('"cc":"GB"'), true)
 })
 
 test('one machine is rebuilt exactly from its own rows', async () => {
@@ -172,7 +203,7 @@ test('one machine is rebuilt exactly from its own rows', async () => {
   assert.equal(tokens(a1.exact), 1365)
   assert.deepEqual(a1.promptsByModel, { 'claude-x': 3, 'claude-y': 1, unknown: 1 }, 'per-model prompts are exact for one schema 2 machine')
   assert.deepEqual(Object.keys(a1.byMachine), [A])
-  assert.deepEqual(Object.keys(a1.byCountry), ['GB'])
+  assert.deepEqual(Object.keys(a1.byCountry), ['ZZ'])
   const cellsA = buildCells(scopedA, DEFAULT_VIEW)
   assert.equal(activeDayCount(scopedA, DEFAULT_VIEW, FROM, TO), 2)
   assert.equal(summarise(cellsA, FROM, TO).prompts, 6 + 5 + 3)
@@ -414,13 +445,60 @@ test('a machine only the deployed index lists, whose files are all gone from the
 })
 
 test('a machine is live within 75 minutes of its newest event read live, and 135 minutes from the deployed copy', () => {
-  const at = (minutes: number): Published => ({ machines: [{ id: A, meta: { id: A, lastEventAt: new Date(NOW.getTime() - minutes * 60_000).toISOString() }, usage: [] }] })
+  const ago = (minutes: number) => new Date(NOW.getTime() - minutes * 60_000).toISOString()
+  // Signed in: the newest event (owner.json), whatever the last publish.
+  const at = (minutes: number): Published => ({ owner: true, machines: [{ id: A, meta: { id: A, updatedAt: ago(0) }, owner: { lastEventAt: ago(minutes) }, usage: [] }] })
   const live = (p: Published) => buildUsage(p, NOW).machines![0].live
   assert.equal(live({ ...at(70), live: true }), true)
   assert.equal(live({ ...at(100), live: true }), false)
   assert.equal(live(at(100)), false, 'unspecified: as read live')
   assert.equal(live({ ...at(100), live: false }), true, 'deployed copy: up to another hour behind')
   assert.equal(live({ ...at(140), live: false }), false)
+  // Signed out: the last publish (meta.updatedAt), the newest time that is public; an older collector's public
+  // lastEventAt is not read.
+  const published = (minutes: number): Published => ({ machines: [{ id: A, meta: { id: A, updatedAt: ago(minutes), lastEventAt: ago(0) }, usage: [] }] })
+  assert.equal(live({ ...published(70), live: true }), true)
+  assert.equal(live({ ...published(100), live: true }), false)
+  assert.equal(live({ ...published(100), live: false }), true)
+  assert.equal(live({ ...published(140), live: false }), false)
+  assert.equal(buildUsage(published(0), NOW).machines![0].lastSeenAt, null)
+})
+
+test('loading signed in: owner.json is read and opened, and that response is never cached; signed out or the wrong key: anonymous', async () => {
+  const ownerKey = deriveOwnerKey(FLEET_KEY) as Buffer
+  const seal = (machine: string, body: unknown) => encryptOwnerFile({ ownerKey, machine, plaintext: JSON.stringify(body), nonce: randomBytes(12) })
+  const fixtures = files(published())
+  // A collector since 0.4.31 (A): meta.json names nothing, owner.json (v2) does. B's older collector writes a v1 file.
+  fixtures[`data/machines/${A}/meta.json`] = { id: A, collector: '0.4.31', updatedAt: '2026-09-30T11:58:00Z' }
+  fixtures[`data/machines/${A}/owner.json`] = seal(A, { v: 2, items: [], machine: { label: 'studio', os: 'windows', cc: 'GB', firstSeenAt: '2026-09-01', lastEventAt: '2026-09-30T11:50:00Z' } })
+  fixtures[`data/machines/${B}/owner.json`] = seal(B, { v: 1, items: [] })
+  const index = fixtures['data/index.json'] as { schema: number; machines: Array<{ id: string; files: string[] }> }
+  index.schema = 3
+  for (const m of index.machines) m.files = [...m.files, 'owner.json'].sort()
+  const signal = () => new AbortController().signal
+
+  const key = (await importOwnerKey(Uint8Array.from(ownerKey)))!
+  const source = githubSource({ fetch: fakeFetch(fixtures), now: () => NOW, ownerKey: () => key })
+  const data = await source.fetchUsage(signal(), () => {})
+  assert.deepEqual(data, buildUsage(ownerView(), NOW))
+  assert.equal(source.isPrivate(data), true, 'names the machines: never kept in browser storage')
+  assert.deepEqual(Object.keys(normaliseDays(source.scopeMachine!(data, A)!)[0].providers.anthropic!.byCountry), ['GB'], 'one machine: the owner’s view too')
+
+  // Signed out: owner.json is not even read.
+  const requested: string[] = []
+  const locked = githubSource({ fetch: fakeFetch(fixtures, requested), now: () => NOW })
+  const anonymous = await locked.fetchUsage(signal(), () => {})
+  assert.equal(locked.isPrivate(anonymous), false)
+  assert.ok(!requested.some(url => url.endsWith('owner.json')))
+  assert.deepEqual(anonymous.machines!.map(m => m.label), ['Machine 1', 'Machine 2'])
+  for (const secret of PRIVATE) assert.ok(!JSON.stringify(anonymous).includes(secret), `signed out, the response shows ${secret}`)
+
+  // A key that opens nothing: the public view.
+  const wrong = (await importOwnerKey(Uint8Array.from(ownerKey, b => b ^ 1)))!
+  const other = githubSource({ fetch: fakeFetch(fixtures), now: () => NOW, ownerKey: () => wrong })
+  const unopened = await other.fetchUsage(signal(), () => {})
+  assert.deepEqual(unopened, anonymous)
+  assert.equal(other.isPrivate(unopened), false)
 })
 
 test('the page’s first title and usage loads share one read of each index, and one caller’s abort fails only its own', async () => {
@@ -554,10 +632,12 @@ function collectorFiles(events: Ev[], prompts: Array<{ id: string; machine: stri
     byFile.set(file, [...(byFile.get(file) ?? []), [date, provider, source, model, acct, q, c.in, c.cacheW, c.cacheW1h, c.cacheR, c.out, c.reasoning, c.events, c.prompts, c.promptsNoUsage, c.modelPrompts]])
   }
   const ids = [...new Set(events.map(e => e.machine))].sort()
+  // As the owner reads them: countries come from owner.json (the API's rollup keeps them per event).
   return {
     generatedAt: NOW.toISOString(),
+    owner: true,
     machines: ids.map(id => ({
-      id, meta: { id, label: id, cc: events.find(e => e.machine === id)!.cc || undefined },
+      id, meta: { id }, owner: { label: id, cc: events.find(e => e.machine === id)!.cc || undefined },
       usage: [...byFile].filter(([file]) => file.startsWith(`${id}|`)).map(([file, rows]) => ({ schema: 2, month: file.split('|')[1], cols: COLS2, rows })),
     })),
   }

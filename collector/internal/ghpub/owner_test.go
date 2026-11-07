@@ -29,6 +29,13 @@ type ownerVector struct {
 	Plaintext string          `json:"plaintext"`
 	Items     json.RawMessage `json:"items"`
 	File      json.RawMessage `json:"file"`
+	// V2 is the same rows in a v2 file, with the machine (MachineInfo).
+	V2 struct {
+		Machine   OwnerMachine    `json:"machineInfo"`
+		Nonce     string          `json:"nonce"`
+		Plaintext string          `json:"plaintext"`
+		File      json.RawMessage `json:"file"`
+	} `json:"v2"`
 }
 
 func loadOwnerVector(t *testing.T) (ownerVector, []byte) {
@@ -114,6 +121,17 @@ func TestOwnerFileMatchesTheDashboardVector(t *testing.T) {
 	if pt, err := OpenOwner(k, v.Machine, a); err != nil || string(pt) != v.Plaintext {
 		t.Fatalf("round trip: %v", err)
 	}
+
+	// The v2 file too (the format is the same; the plaintext has the machine).
+	if pt, err := OpenOwner(k, v.Machine, v.V2.File); err != nil || string(pt) != v.V2.Plaintext {
+		t.Fatalf("v2 vector file opens to %q: %v", pt, err)
+	}
+	nonce2, _ := base64.StdEncoding.DecodeString(v.V2.Nonce)
+	file2, err := SealOwner(k, v.Machine, []byte(v.V2.Plaintext), nonce2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameJSON(t, "sealed v2 vector", file2, v.V2.File)
 }
 
 func ptrF(f float64) *float64 { return &f }
@@ -147,11 +165,20 @@ func TestOwnerRowsMatchTheVector(t *testing.T) {
 	for i, s := range snaps {
 		rev[len(snaps)-1-i] = s
 	}
-	pt := OwnerPlaintext(OwnerRows(rev, now))
-	sameJSON(t, "plaintext", pt, []byte(v.Plaintext))
-	if string(pt) != v.Plaintext {
-		t.Logf("same values, other bytes (fine):\n%s\n%s", pt, v.Plaintext)
+	if v.V2.Machine.Label == "" || v.V2.Machine.CC == "" || v.V2.Machine.LastEventAt == "" {
+		t.Fatalf("vector machine %+v", v.V2.Machine)
 	}
+	pt := OwnerPlaintext(OwnerRows(rev, now), v.V2.Machine)
+	sameJSON(t, "plaintext", pt, []byte(v.V2.Plaintext))
+	if string(pt) != v.V2.Plaintext {
+		t.Logf("same values, other bytes (fine):\n%s\n%s", pt, v.V2.Plaintext)
+	}
+	// The rows alone are the v1 file's.
+	var body struct {
+		Items json.RawMessage `json:"items"`
+	}
+	json.Unmarshal(pt, &body)
+	sameJSON(t, "rows", body.Items, v.Items)
 }
 
 // ownerFixtures are snapshots at the edges of the server's validation.
@@ -294,26 +321,49 @@ func TestOwnerRowsAndDigests(t *testing.T) {
 	if len(rows) != 1 || *rows[0].UsedPercent != 50 {
 		t.Fatalf("rows %+v", rows)
 	}
-	data, read := OwnerDigests(k, "m_0123456789ab", rows)
-	if strings.Contains(data+read, "me@example.com") || len(data) != 32 || data == read {
+	info := OwnerMachine{Label: "laptop", OS: "windows", CC: "GB", FirstSeenAt: "2026-09-01", LastEventAt: "2026-10-01T11:58:00Z"}
+	data, read := OwnerDigests(k, "m_0123456789ab", rows, info)
+	if strings.Contains(data+read, "me@example.com") || strings.Contains(data+read, "laptop") || len(data) != 32 || data == read {
 		t.Fatalf("digests %s %s", data, read)
 	}
 	reread := s
 	reread.ObservedAt = newer.ObservedAt.Add(time.Hour)
 	reread.UsedPercent = ptrF(50)
-	d2, r2 := OwnerDigests(k, "m_0123456789ab", OwnerRows([]model.LimitSnapshot{reread}, now.Add(time.Hour)))
+	d2, r2 := OwnerDigests(k, "m_0123456789ab", OwnerRows([]model.LimitSnapshot{reread}, now.Add(time.Hour)), info)
 	if d2 == data || r2 != read {
 		t.Fatal("a meter read again must change data only")
 	}
 	changed := reread
 	changed.UsedPercent = ptrF(51)
-	if _, r3 := OwnerDigests(k, "m_0123456789ab", OwnerRows([]model.LimitSnapshot{changed}, now.Add(time.Hour))); r3 == read {
+	if _, r3 := OwnerDigests(k, "m_0123456789ab", OwnerRows([]model.LimitSnapshot{changed}, now.Add(time.Hour)), info); r3 == read {
 		t.Fatal("a changed meter keeps its digest")
 	}
-	if d4, _ := OwnerDigests(k, "m_ba9876543210", rows); d4 == data {
+	if d4, _ := OwnerDigests(k, "m_ba9876543210", rows, info); d4 == data {
 		t.Fatal("the digest must depend on the machine")
 	}
-	if got := string(OwnerPlaintext(nil)); got != `{"v":1,"items":[]}` {
+
+	// A newer last event changes data only (it rides along with the next
+	// commit); a new name, OS, country or first date is news.
+	later := info
+	later.LastEventAt = "2026-10-01T12:30:00Z"
+	if d5, r5 := OwnerDigests(k, "m_0123456789ab", rows, later); d5 == data || r5 != read {
+		t.Fatal("a newer last event must change data only")
+	}
+	for _, mod := range []func(*OwnerMachine){
+		func(m *OwnerMachine) { m.Label = "desk" },
+		func(m *OwnerMachine) { m.OS = "linux" },
+		func(m *OwnerMachine) { m.CC = "" },
+		func(m *OwnerMachine) { m.FirstSeenAt = "2026-08-01" },
+	} {
+		other := info
+		mod(&other)
+		if _, r6 := OwnerDigests(k, "m_0123456789ab", rows, other); r6 == read {
+			t.Fatalf("a changed machine %+v keeps its digest", other)
+		}
+	}
+
+	// No meters: the machine alone.
+	if got := string(OwnerPlaintext(nil, OwnerMachine{Label: "laptop", OS: "linux"})); got != `{"v":2,"items":[],"machine":{"label":"laptop","os":"linux"}}` {
 		t.Fatalf("empty plaintext %s", got)
 	}
 }

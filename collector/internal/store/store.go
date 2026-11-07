@@ -632,7 +632,8 @@ type GitHubState struct {
 }
 
 // OwnerState identifies what a committed owner.json says without keeping it
-// (ghpub.OwnerDigests): Data its rows, Meters the same without read times.
+// (ghpub.OwnerDigests): Data its rows and machine, Meters the same without
+// read times or the machine's last event.
 type OwnerState struct {
 	Data   string `json:"data,omitempty"`
 	Meters string `json:"meters,omitempty"`

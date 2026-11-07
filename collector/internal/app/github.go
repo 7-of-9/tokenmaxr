@@ -304,9 +304,9 @@ func githubEnabled(cfg *store.Config, sec store.Secrets) bool {
 	return cfg.GitHub != nil && cfg.GitHub.Repo != "" && sec.GitHub != nil && sec.GitHub.Token != ""
 }
 
-// publishGitHub publishes the rollup, and the quota meters encrypted for
-// the owner (owner.json), when due (or forced). Failures are recorded and
-// logged; they never stop collection.
+// publishGitHub publishes the rollup, and the machine's name and quota
+// meters encrypted for the owner (owner.json), when due (or forced).
+// Failures are recorded and logged; they never stop collection.
 func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Secrets, st *store.State, ru *rollup.Rollup, hs []homes.Home, force bool) {
 	if !githubEnabled(cfg, sec) || ru == nil || len(ru.Rows()) == 0 {
 		return // nothing read yet (e.g. the first tick only harvests evidence)
@@ -342,7 +342,7 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	}
 	files := ghpub.Files(m, ru.Rows(), accountHistory(ru, st), now)
 	refreshMeta := st.GitHub.LastPublish.IsZero() || now.Sub(st.GitHub.LastPublish) >= 24*time.Hour
-	owner, ownerSays, err := ownerFile(cfg, sec, st, m.ID, meters, files, refreshMeta, now)
+	owner, ownerSays, err := ownerFile(cfg, sec, st, m.ID, ghpub.MachineInfo(m, ru.Rows(), now), meters, files, refreshMeta, now)
 	if err != nil {
 		st.GitHub.LastError = "owner.json: " + err.Error()
 		a.Log.Printf("github: publish: %s", st.GitHub.LastError)
@@ -365,13 +365,13 @@ func (a *App) publishGitHub(ctx context.Context, cfg *store.Config, sec store.Se
 	if st.GitHub.QuotaSwept != cfg.GitHub.Repo+"@"+cfg.GitHub.BranchOrDefault() {
 		files = append(files, sweepQuota(ctx, c, cfg, st, m.ID)...)
 	}
-	changed, err := ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
+	changed, err := ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), m.ID, files, st.GitHub.Published, refreshMeta)
 	// Moved out of the installation's reach (RepoOutside): every publish
 	// is redirected and refused, and it is looked at again hourly.
 	outside := st.GitHub.RepoOutside != "" && now.Sub(st.GitHub.RepoChecked) < repoLearnEvery
 	if (c.Moved() || !checked && repoMoved(err)) && !outside {
 		if a.checkRepo(ctx, c, cfg, st, now) && err != nil {
-			changed, err = ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), cfg.GitHub.Label, files, st.GitHub.Published, refreshMeta)
+			changed, err = ghpub.Publish(ctx, c, cfg.GitHub.Repo, cfg.GitHub.BranchOrDefault(), m.ID, files, st.GitHub.Published, refreshMeta)
 		}
 	}
 	sweep := cfg.GitHub.Repo + "@" + cfg.GitHub.BranchOrDefault()
@@ -473,13 +473,15 @@ func sweepQuota(ctx context.Context, c *ghapi.Client, cfg *store.Config, st *sto
 // ownerFile is this publish's owner.json (nil: nothing to commit) and what
 // it says (store.OwnerState), to record once it is committed. It holds the
 // quota meters (plans, account emails, organisations) as the owner's server
-// would show them, encrypted with the owner key (ghpub owner.go). It is
-// committed when what it says changed; meters that were only read again
-// wait for a commit that happens anyway (other data, or the daily meta.json
-// refresh), so it never commits by itself every publish. It is deleted when
-// quota meters are off, there are none, or there is no fleet key. Accounts
-// a meter names without an email take the one in its local label.
-func ownerFile(cfg *store.Config, sec store.Secrets, st *store.State, id string, meters []model.LimitSnapshot, files []ghapi.File, refreshMeta bool, now time.Time) (*ghapi.File, store.OwnerState, error) {
+// would show them, and the machine as only its owner sees it (info: name, OS,
+// country, first and last seen), encrypted with the owner key (ghpub
+// owner.go). It is committed when what it says changed; meters that were only
+// read again and a newer last event wait for a commit that happens anyway
+// (other data, or the daily meta.json refresh), so it never commits by itself
+// every publish. It is published whenever there is a fleet key, with no
+// meters too (the machine's name is there), and deleted when there is none.
+// Accounts a meter names without an email take the one in its local label.
+func ownerFile(cfg *store.Config, sec store.Secrets, st *store.State, id string, info ghpub.OwnerMachine, meters []model.LimitSnapshot, files []ghapi.File, refreshMeta bool, now time.Time) (*ghapi.File, store.OwnerState, error) {
 	p := ghpub.OwnerPath(id)
 	_, published := st.GitHub.Published[p]
 	k := sec.Key()
@@ -490,13 +492,13 @@ func ownerFile(cfg *store.Config, sec store.Secrets, st *store.State, id string,
 		}
 	}
 	rows := ghpub.OwnerRows(labelled, now)
-	if k == nil || len(rows) == 0 {
+	if k == nil {
 		if published {
 			return &ghapi.File{Path: p, Delete: true}, store.OwnerState{}, nil
 		}
 		return nil, store.OwnerState{}, nil
 	}
-	data, read := ghpub.OwnerDigests(k, id, rows)
+	data, read := ghpub.OwnerDigests(k, id, rows, info)
 	o := st.GitHub.Owner
 	switch {
 	case published && o.Data == data:
@@ -504,7 +506,7 @@ func ownerFile(cfg *store.Config, sec store.Secrets, st *store.State, id string,
 	case published && o.Meters == read && !refreshMeta && !ghpub.Pending(files, st.GitHub.Published):
 		return nil, o, nil // read again only: with the next commit
 	}
-	b, err := ghpub.SealOwner(k, id, ghpub.OwnerPlaintext(rows), nil)
+	b, err := ghpub.SealOwner(k, id, ghpub.OwnerPlaintext(rows, info), nil)
 	if err != nil {
 		return nil, o, err
 	}
