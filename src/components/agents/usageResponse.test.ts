@@ -4,7 +4,7 @@ import { readUsageCache, writeUsageCache } from './usageCache.ts'
 import type { UsageResponse } from './types.ts'
 
 const data: UsageResponse = { generatedAt: '2026-10-02T05:00:00Z', lastIngestAt: null, days: [],
-  machines: [{ id: 'test', label: 'Café', cc: 'TH', os: 'test', live: true, lastSeenAt: null }],
+  machines: [{ id: 'test', label: 'Café', cc: 'US', os: 'test', live: true, lastSeenAt: null }],
   totals: { accounts: 0, accountsByProvider: {}, machines: 1, machinesLive: 1 } }
 const bytes = new TextEncoder().encode(JSON.stringify(data))
 const stream = () => new ReadableStream<Uint8Array>({ start(controller) {

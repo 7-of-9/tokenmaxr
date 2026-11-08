@@ -646,13 +646,13 @@ function collectorFiles(events: Ev[], prompts: Array<{ id: string; machine: stri
 function synthetic() {
   const events: Ev[] = []
   const prompts: Parameters<typeof collectorFiles>[1] = []
-  const machinesCc: Array<[string, string]> = [[A, 'TH'], [B, '']]
+  const machinesCc: Array<[string, string]> = [[A, 'JP'], [B, '']]
   const models = ['claude-x', 'claude-y', '']
   let n = 0
   // Three weeks across a month boundary, two machines in different time zones (one east of UTC, one west).
   for (let day = 0; day < 21; day++) {
     for (const [mi, [machine, cc]] of machinesCc.entries()) {
-      const tz = mi === 0 ? 420 : -300
+      const tz = mi === 0 ? 540 : -300
       const quiet = (day + mi) % 5 === 0
       const promptOnly = (day + mi) % 7 === 3
       for (let k = 0; k < 4; k++) {

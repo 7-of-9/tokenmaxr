@@ -9,7 +9,7 @@ function group(machine: string, cc: string, tokens: number, model: string): Prov
   return { exact: bucket(tokens), estimated: bucket(), prompts: 2, promptsNoUsage: 1, accts: ['acct1'],
     models: { exact: { [model]: bucket(tokens) }, estimated: {} }, byMachine: { [machine]: place }, byCountry: { [cc]: place } }
 }
-const mac = group('mac', 'TH', 100, 'model-mac')
+const mac = group('mac', 'US', 100, 'model-mac')
 const win = group('win', 'GB', 900, 'model-win')
 const combined: ProviderDay = { exact: bucket(1000), estimated: bucket(), prompts: 4, promptsNoUsage: 2, accts: ['acct1', 'acct2'],
   models: { exact: { ...mac.models.exact, ...win.models.exact }, estimated: {} },
@@ -18,7 +18,7 @@ const response: UsageResponse = { days: [{ date: '2026-10-01', providers: { anth
   totals: { accounts: 2, accountsByProvider: {}, machines: 2, machinesLive: 2 } }
 const days = normaliseDays(response)
 assert.equal(machineDays(days, 'all').days, days)
-for (const [id, want, model, cc] of [['mac', 100, 'model-mac', 'TH'], ['win', 900, 'model-win', 'GB']] as const) {
+for (const [id, want, model, cc] of [['mac', 100, 'model-mac', 'US'], ['win', 900, 'model-win', 'GB']] as const) {
   const result = machineDays(days, id)
   assert.equal(result.partial, false)
   assert.equal(buildCells(result.days, DEFAULT_VIEW).get('2026-10-01')?.total, want)

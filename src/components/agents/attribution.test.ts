@@ -10,11 +10,11 @@ import type { PlaceBucket, ProviderDay, PublicMachine, TokenBucket, UsageRespons
 const bucket = (out = 0, unattributed = 0): TokenBucket => ({ in: 0, out, unattributed, cacheW: 0, cacheW1h: 0, cacheR: 0, reasoning: 0, calls: 0, events: 0 })
 const place = (out = 0, unattributed = 0, prompts = 0): PlaceBucket => ({ in: 0, out, unattributed, cacheW: 0, cacheR: 0, prompts })
 const machines: PublicMachine[] = [
-  { id: 'm_mac', label: 'Mac', cc: 'TH', os: 'darwin', live: false, lastSeenAt: null },
+  { id: 'm_mac', label: 'Mac', cc: 'US', os: 'darwin', live: false, lastSeenAt: null },
   { id: 'm_beast', label: 'BEAST', cc: 'GB', os: 'windows', live: false, lastSeenAt: null },
   { id: 'm_nocc', label: 'No country', cc: '', os: 'linux', live: false, lastSeenAt: null },
 ]
-const CC: Record<string, string> = { m_mac: 'TH', m_beast: 'GB', m_nocc: 'ZZ' }
+const CC: Record<string, string> = { m_mac: 'US', m_beast: 'GB', m_nocc: 'ZZ' }
 
 /**
  * One provider day: `local` machine → recorded tokens (one workspace and one prompt each), plus `history` account
@@ -113,8 +113,8 @@ assert.equal(splitTokens(0, new Map([['a', 1]])).size, 0)
   check(before, after)
   assert.deepEqual(rows(after, 'byMachine'), { m_mac: 1050, m_beast: 350 })
   assert.deepEqual(assigned(after, 'byMachine'), { m_mac: 750, m_beast: 250 })
-  assert.deepEqual(rows(after, 'byCountry'), { TH: 1050, GB: 350 }, 'regions follow the machines')
-  assert.deepEqual(assigned(after, 'byCountry'), { TH: 750, GB: 250 })
+  assert.deepEqual(rows(after, 'byCountry'), { US: 1050, GB: 350 }, 'regions follow the machines')
+  assert.deepEqual(assigned(after, 'byCountry'), { US: 750, GB: 250 })
   assert.equal(attributionFor(providerActivity(before, 'openai'), '2026-09-01', 1000)!.rule, 'same-day')
   // A machine without a country keeps its own region bucket, with its share of the history.
   const nocc = attributeAccountHistory(normaliseDays(response([['2026-09-01', providerDay({ m_nocc: 100, m_beast: 100 }, 1000)]])), machines)
@@ -185,7 +185,7 @@ assert.equal(splitTokens(0, new Map([['a', 1]])).size, 0)
   assert.deepEqual(activity.get('2026-08-31')!.get('m_mac'), { tokens: 0, prompts: 2, unlogged: 2, expected: 600 })
   assert.equal(attributionFor(activity, '2026-08-31', 800)!.rule, 'same-day')
   assert.deepEqual(assigned(after, 'byMachine'), { m_mac: 600, m_beast: 200 })
-  assert.deepEqual(assigned(after, 'byCountry'), { TH: 600, GB: 200 })
+  assert.deepEqual(assigned(after, 'byCountry'), { US: 600, GB: 200 })
   // Less history than those prompts most probably used: all of it is theirs, however much BEAST logged.
   assert.deepEqual(assigned(attributeAccountHistory(days(500), machines), 'byMachine'), { m_mac: 500 })
   // Without the workspace split (GitHub Pages) the day's count of such prompts goes to the machine that logged none.
@@ -250,7 +250,7 @@ assert.equal(splitTokens(0, new Map([['a', 1]])).size, 0)
   const after = attributeAccountHistory(before, machines)
   check(before, after)
   assert.equal(Object.keys(rows(after, 'byMachine')).sort().join(), 'm_beast,m_mac')
-  assert.deepEqual(Object.keys(rows(after, 'byCountry')).sort(), ['GB', 'TH'])
+  assert.deepEqual(Object.keys(rows(after, 'byCountry')).sort(), ['GB', 'US'])
 }
 
 // ---- Per-machine views: the fleet split (machineDays) and an exactly scoped source (addAssignedHistory) ----
@@ -268,10 +268,10 @@ assert.equal(splitTokens(0, new Map([['a', 1]])).size, 0)
     machinesTotal += total(scoped.days)
   }
   assert.equal(machinesTotal, total(before), 'the machine views add up to the fleet')
-  const mac = machineDays(fleet, 'm_mac', 'TH').days
+  const mac = machineDays(fleet, 'm_mac', 'US').days
   // 2026-09-02 has no local Codex: the adjacent days decide (Mac 300 + 50, BEAST 100), 311 / 89.
   assert.equal(total(mac), 300 + 750 + 311 + 50)
-  assert.deepEqual(rows(mac, 'byCountry'), { TH: 1411 })
+  assert.deepEqual(rows(mac, 'byCountry'), { US: 1411 })
   assert.equal(buildCells(mac, DEFAULT_VIEW).get('2026-09-01')!.unattributed, 750)
   assert.equal(buildCells(mac, DEFAULT_VIEW).get('2026-09-02')!.unattributed, 311)
 
@@ -285,7 +285,7 @@ assert.equal(splitTokens(0, new Map([['a', 1]])).size, 0)
   assert.equal(buildCells(withHistory, DEFAULT_VIEW).get('2026-09-01')!.models.find(([model]) => model === 'account-history')?.[1], 250)
   assert.equal(addAssignedHistory(own, before, 'm_beast', 'GB'), own, 'nothing assigned: the same array back')
   // A day the machine logged nothing on gets a provider of its own.
-  const nocc = addAssignedHistory([], fleet, 'm_mac', 'TH')
+  const nocc = addAssignedHistory([], fleet, 'm_mac', 'US')
   assert.deepEqual(nocc.map(d => d.date), ['2026-09-01', '2026-09-02'])
   assert.equal(total(nocc), 750 + 311)
 

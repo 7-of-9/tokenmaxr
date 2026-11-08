@@ -37,7 +37,7 @@ const days = [
   day('2026-02-20', { 'claude-sonnet-5': 25, unknown: 5 }, { m2: 30 }),
   day('2026-04-01', {}, {}, 12),
 ]
-const machines = [{ id: 'm1', label: 'Studio Mac', cc: 'TH', os: 'darwin', live: true, lastSeenAt: null }]
+const machines = [{ id: 'm1', label: 'Studio Mac', cc: 'US', os: 'darwin', live: true, lastSeenAt: null }]
 const feed = buildActivity(days, DEFAULT_VIEW, machines, '2026-01-01', '2026-12-31')
 
 // Newest month first; an empty March is skipped; an activity-only April is kept.

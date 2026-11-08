@@ -146,7 +146,7 @@ func TestLoadMissingAndBadVersion(t *testing.T) {
 func TestLocalDateUsesTheEventsOffset(t *testing.T) {
 	r := New()
 	e := usage("gg01", time.Date(2026, 9, 30, 20, 0, 0, 0, time.UTC), 1, 0)
-	e.TZOffsetMin = 7 * 60 // 03:00 on 1 Oct in UTC+7
+	e.TZOffsetMin = 9 * 60 // 05:00 on 1 Oct in UTC+9
 	r.AddUsage(e, now)
 	if _, ok := r.Days["2026-10-01"]; !ok {
 		t.Fatalf("days %v", r.Days)

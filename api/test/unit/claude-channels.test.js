@@ -30,8 +30,8 @@ async function enrolled(store) {
 
 test('every Claude source is accepted and counts in the anthropic totals; the stored split stays, the response is by provider', () => {
   const events = sources.flatMap((source, i) => [
-    { ...usage(`channel-${i}`, { source, q: estimated.has(source) ? 'estimated' : 'exact', in: 10 + i, cacheW: 20, cacheR: 30, out: 40 + i }), kind: 'usage', machine: `machine-${i}`, cc: 'TH' },
-    { kind: 'activity', provider: 'anthropic', source, hasUsage: i !== 1, machine: `machine-${i}`, cc: 'TH' },
+    { ...usage(`channel-${i}`, { source, q: estimated.has(source) ? 'estimated' : 'exact', in: 10 + i, cacheW: 20, cacheR: 30, out: 40 + i }), kind: 'usage', machine: `machine-${i}`, cc: 'US' },
+    { kind: 'activity', provider: 'anthropic', source, hasUsage: i !== 1, machine: `machine-${i}`, cc: 'US' },
   ])
   for (const event of events.filter(e => e.kind === 'usage')) assert.equal(validateUsage(event, new Date()).ok, true, event.source)
   const day = computeRollup('2026-10-22', events)
@@ -112,7 +112,7 @@ test('a live web turn replaces the swept Native inference of the same turn, toke
   const { mergeEvent } = await import('../../src/lib/merge.js')
   const now = new Date('2026-10-23T12:00:00Z')
   const id = chatId('usage', 'msg:a0a0aaaa-0000-4000-8000-000000000002')
-  const swept = { ...validateUsage(usage('x', { id, source: 'native-claude', q: 'estimated', pv: 1, in: 900, out: 40, cacheR: 0, cacheW: 0, ts: '2026-10-23T07:39:09.000Z' }), now).value, machine: 'sweeper', cc: 'TH' }
+  const swept = { ...validateUsage(usage('x', { id, source: 'native-claude', q: 'estimated', pv: 1, in: 900, out: 40, cacheR: 0, cacheW: 0, ts: '2026-10-23T07:39:09.000Z' }), now).value, machine: 'sweeper', cc: 'US' }
   const live = { ...validateUsage(usage('x', { id, source: 'web-claude', q: 'estimated', pv: 2, in: 1000, out: 50, cacheR: 0, cacheW: 0, ts: '2026-10-23T07:39:09.000Z' }), now).value, machine: 'laptop', cc: 'GB' }
   assert.ok(swept && live, 'both validate')
   for (const [first, second] of [[swept, live], [live, swept]]) {
@@ -159,8 +159,8 @@ test('chat-claude is accepted and kept apart as estimated tokens', () => {
 // keeps its claude-code id; collector pv 3 sends it as native-claude.
 test('a desktop-app line re-sent as native-claude (pv 3) moves channel; an older claude-code copy never moves it back', () => {
   const now = new Date('2026-10-23T12:00:00Z')
-  const code = { ...validateUsage(usage('desk', { pv: 2, in: 5, cacheW: 100, cacheR: 1000, out: 50 }), now).value, machine: 'rabbit', cc: 'TH' }
-  const native = { ...validateUsage(usage('desk', { pv: 3, source: 'native-claude', in: 5, cacheW: 100, cacheR: 1000, out: 50 }), now).value, machine: 'rabbit', cc: 'TH' }
+  const code = { ...validateUsage(usage('desk', { pv: 2, in: 5, cacheW: 100, cacheR: 1000, out: 50 }), now).value, machine: 'desk', cc: 'US' }
+  const native = { ...validateUsage(usage('desk', { pv: 3, source: 'native-claude', in: 5, cacheW: 100, cacheR: 1000, out: 50 }), now).value, machine: 'desk', cc: 'US' }
   assert.equal(code.id, native.id)
   for (const [first, second] of [[code, native], [native, code]]) {
     const merged = mergeEvent(mergeEvent(null, first), second)
@@ -172,7 +172,7 @@ test('a desktop-app line re-sent as native-claude (pv 3) moves channel; an older
     assert.equal(p.bySource['native-claude'].exact.cacheR, 1000)
     assert.equal(p.bySource['claude-code'], undefined)
   }
-  const base = { kind: 'activity', provider: 'anthropic', ts: '2026-09-20T09:59:00.000Z', hasUsage: true, acct: '', acctQ: 'unknown', session: '', ws: '', machine: 'rabbit' }
+  const base = { kind: 'activity', provider: 'anthropic', ts: '2026-09-20T09:59:00.000Z', hasUsage: true, acct: '', acctQ: 'unknown', session: '', ws: '', machine: 'desk' }
   assert.equal(mergeEvent({ ...base, source: 'claude-code' }, { ...base, source: 'native-claude' }).source, 'native-claude')
   assert.equal(mergeEvent({ ...base, source: 'native-claude' }, { ...base, source: 'claude-code' }).source, 'native-claude')
   assert.equal(sourceUpgrade('native-claude', 'claude-code'), false)

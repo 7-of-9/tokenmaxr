@@ -155,7 +155,7 @@ assert.equal(countdown(50 * H), '2d 2h')
 
 // Explicit full status still blocks without a percentage; offset timestamps reset at the exact instant.
 {
-  const row: LimitRow = { ...base, id: 'full', provider: 'anthropic', source: 'claude-code', window: 'week', status: 'full', resetsAt: '2026-10-01T20:00:00+07:00' }
+  const row: LimitRow = { ...base, id: 'full', provider: 'anthropic', source: 'claude-code', window: 'week', status: 'full', resetsAt: '2026-10-01T22:00:00+09:00' }
   const [full] = buildAccounts([row], NOW)
   assert.equal(full.state, 'blocked')
   assert.equal(weeklyMeter(full), undefined)

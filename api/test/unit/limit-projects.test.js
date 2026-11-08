@@ -31,7 +31,7 @@ async function fixture(overrides = {}) {
     await store.table('events').upsertMerge({ partitionKey: day, rowKey: e.id, kind: 'hasUsage' in e ? 'activity' : 'usage', ...e })
   }
   const addPrompt = async (name, over = {}) => {
-    const p = prompt(name, { ts: '2026-10-28T09:00:00.000Z', tzOffsetMin: 420, acctQ: 'recorded', text: 'PRIVATE PROMPT CONTENT', ...over })
+    const p = prompt(name, { ts: '2026-10-28T09:00:00.000Z', tzOffsetMin: 540, acctQ: 'recorded', text: 'PRIVATE PROMPT CONTENT', ...over })
     p.tsMs = Date.parse(p.ts)
     const month = await upsertPrompt(store, f => f(), KEY, p)
     await addMonths(store, f => f(), [month])

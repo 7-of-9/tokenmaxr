@@ -117,7 +117,7 @@ func TestLatestEvent(t *testing.T) {
 }
 
 func TestRollOver(t *testing.T) {
-	loc := time.FixedZone("ICT", 7*3600)
+	loc := time.FixedZone("JST", 9*3600)
 	// The window's "today" is the machine's local date.
 	was := time.Local
 	time.Local = loc
@@ -125,7 +125,7 @@ func TestRollOver(t *testing.T) {
 	now := time.Date(2026, 9, 30, 23, 30, 0, 0, loc)
 	w := newWindow()
 	e := func(id string, ts time.Time) model.UsageEvent {
-		return model.UsageEvent{ID: id, Provider: "cursor", TS: ts, TZOffsetMin: 420, Tokens: model.Tokens{In: 100}}
+		return model.UsageEvent{ID: id, Provider: "cursor", TS: ts, TZOffsetMin: 540, Tokens: model.Tokens{In: 100}}
 	}
 	for d := range 40 {
 		w.Add(e(fmt.Sprintf("d%02d", d), now.AddDate(0, 0, -d)), now)
@@ -140,7 +140,7 @@ func TestRollOver(t *testing.T) {
 	if len(p.Hourly) != Hours {
 		t.Fatalf("hourly %d", len(p.Hourly))
 	}
-	// Local dates follow the event's offset: 23:30 ICT is still the 30th.
+	// Local dates follow the event's offset: 23:30 JST is still the 30th.
 	if last := p.Daily[len(p.Daily)-1]; last.Date != "2026-09-30" {
 		t.Fatalf("last day %s", last.Date)
 	}

@@ -118,7 +118,7 @@ func TestAccountReaderProtocolAndTimeout(t *testing.T) {
 }
 
 func TestSnapshotsIdentityValidationAndNoFabricatedSplit(t *testing.T) {
-	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.FixedZone("UTC+7", 7*3600))
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.FixedZone("UTC+9", 9*3600))
 	home := t.TempDir()
 	codex := filepath.Join(home, ".codex")
 	if err := os.MkdirAll(codex, 0700); err != nil {

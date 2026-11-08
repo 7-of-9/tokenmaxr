@@ -53,7 +53,7 @@ test('UTC comparison covers both adjacent local dates instead of manufacturing t
     roll(date, [event({ ts: '2026-09-19T23:00:00.000Z', in: 900 })]),
     roll('2026-09-21', [event({ ts: '2026-09-20T23:00:00.000Z', in: 500 })])]
   assert.equal(recovered(reconcileAccountUsage(days, [snapshot()])), 100)
-  assert.equal(accountLedger([event({ ts: '2026-09-21T05:00:00+07:00' })]).entries[0].date, date)
+  assert.equal(accountLedger([event({ ts: '2026-09-21T07:00:00+09:00' })]).entries[0].date, date)
 })
 
 test('later local backfill reduces residual; local totals are never discarded when larger', () => {
